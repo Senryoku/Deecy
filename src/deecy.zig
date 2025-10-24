@@ -231,7 +231,6 @@ const Configuration = struct {
     }
 };
 
-pub const TmpDirPath = "/.tmp_deecy"; // Be careful when editing this, it will be deleted on program exit!
 pub const ConfigFile = "/config.json";
 
 pub const MaxSaveStates = 4;
@@ -853,7 +852,7 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
                 deecy_log.err("Could not find GDI file in zip file '{s}'.", .{path});
                 return error.GDIFileNotFound;
             }
-            const tmp_gdi_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), TmpDirPath, gdi_filename });
+            const tmp_gdi_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), "./.tmp_deecy", gdi_filename });
             defer self._allocator.free(tmp_gdi_path);
             deecy_log.info("Found GDI file: '{s}'.", .{gdi_filename});
             deecy_log.info("Extracting zip to '{s}'...", .{tmp_gdi_path});

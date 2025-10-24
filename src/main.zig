@@ -120,10 +120,6 @@ var EnabledHacks: ?[]const Hack = null;
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var allocator = gpa.allocator();
-    defer {
-        // Cleanup temprary directory, if it exists
-        std.fs.cwd().deleteTree(Deecy.TmpDirPath) catch |err| std.log.err("Failed to delete temporary directory ('" ++ Deecy.TmpDirPath ++ "'): {t}", .{err});
-    }
 
     var d = try Deecy.create(allocator);
     defer d.destroy();
