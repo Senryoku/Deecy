@@ -1219,7 +1219,7 @@ pub const Emitter = struct {
                     .mem => |src_m| {
                         switch (src_m.size) {
                             32, 64 => {
-                                if (src_m.size == 64 and !b64) return error.OperandSizeMismatch;
+                                if ((src_m.size == 32 and b64) or (src_m.size == 64 and !b64)) return error.OperandSizeMismatch;
                                 try self.emit_rex_if_needed(.{
                                     .w = b64,
                                     .r = need_rex(dst_reg),
