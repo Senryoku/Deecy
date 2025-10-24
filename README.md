@@ -66,7 +66,7 @@ Keyboard bindings can be customized in the settings. Defaults for controller 1:
 Install the correct zig version (see `.zigversion`). 
 You can use [zigup](https://github.com/marler8997/zigup) to manage your installed zig versions, or get it from https://ziglang.org/download/.
 ```sh
-zigup 0.15.1
+zigup 0.15.2
 ```
 Clone and build. Zig will fetch all dependencies automatically.
 ```sh
