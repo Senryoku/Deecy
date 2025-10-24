@@ -63,10 +63,10 @@ Keyboard bindings can be customized in the settings. Defaults for controller 1:
 
 ## Build
 
-Install the correct zig version (see `.zigversion`, I try to keep up with [Mach nominated version](https://machengine.org/docs/nominated-zig/) when not on a stable release). 
-You can use [zigup](https://github.com/marler8997/zigup) to manage your installed zig versions, or get it from https://machengine.org/docs/nominated-zig/.
+Install the correct zig version (see `.zigversion`). 
+You can use [zigup](https://github.com/marler8997/zigup) to manage your installed zig versions, or get it from https://ziglang.org/download/.
 ```sh
-zigup 0.14.1
+zigup 0.15.1
 ```
 Clone and build. Zig will fetch all dependencies automatically.
 ```sh
@@ -80,7 +80,7 @@ You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files i
 
 ### Linux 
 
-`nfd-zig` (native file dialog) needs these additional dependencies on Linux:
+[nfd-zig](https://github.com/fabioarnold/nfd-zig) (native file dialog) needs this additional dependency on Linux:
 ```sh
 sudo apt install libgtk-3-dev
 ```
