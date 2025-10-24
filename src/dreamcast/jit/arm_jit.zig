@@ -131,6 +131,9 @@ pub const JITContext = struct {
     skipped_instructions: u32 = 0,
 };
 
+// NOTE: With this stupid setup, SavedRegisters[0] is a pointer to the cpu struct and should not be changed.
+//       SavedRegisters[1] is a pointer to wave memory.
+//       SavedRegisters[2] and SavedRegisters[3] are used as temporaries that will survive a function call (e.g. load_mem/store_mem).
 const CPUPointer = SavedRegisters[0];
 const MemPointer = SavedRegisters[1];
 
@@ -298,7 +301,7 @@ pub const ARM7JIT = struct {
 };
 
 fn guest_register(arm_reg: u5) JIT.Operand {
-    return .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(arm7.ARM7, "r") + @sizeOf(u32) * @as(u32, arm_reg), .size = 32 } };
+    return .{ .mem = .{ .base = CPUPointer, .displacement = @offsetOf(arm7.ARM7, "r") + @sizeOf(u32) * @as(u32, arm_reg), .size = 32 } };
 }
 
 fn load_register(b: *IRBlock, host_register: JIT.Register, arm_reg: u5) !void {
@@ -338,8 +341,8 @@ noinline fn write32(address: u32, value: u32) callconv(.c) void {
     @call(.always_inline, arm7.ARM7.write, .{ self, u32, address, value });
 }
 
-fn reset_pipeline(cpu: *arm7.ARM7) callconv(.c) void {
-    @call(.always_inline, arm7.ARM7.reset_pipeline, .{cpu});
+fn reset_pipeline() callconv(.c) void {
+    @call(.always_inline, arm7.ARM7.reset_pipeline, .{get_cpu()});
 }
 
 fn load_wave_memory(b: *IRBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Register, addr: u32) !void {
@@ -501,7 +504,7 @@ fn cpsr_mask(comptime flags: []const u8) u32 {
 
 /// Extracts the specified flags in the CPSR and stores them in ReturnRegister
 fn extract_cpsr_flags(b: *IRBlock, comptime flags: []const u8) !void {
-    try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
+    try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = CPUPointer, .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
     try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = cpsr_mask(flags) } } });
 }
 
@@ -530,7 +533,7 @@ fn handle_condition(b: *IRBlock, ctx: *JITContext, instruction: u32) !?JIT.Patch
             // return !cpu.cpsr.c or cpu.cpsr.z
             std.debug.assert(@bitOffsetOf(arm7.CPSR, "c") < @bitOffsetOf(arm7.CPSR, "z"));
             // FIXME: This is untested.
-            try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
+            try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = CPUPointer, .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
             try b.bit_test(ReturnRegister, @bitOffsetOf(arm7.CPSR, "c")); // Set carry flag to 'c'.
             var do_label = try b.jmp(.NotCarry);
             try b.bit_test(ReturnRegister, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
@@ -576,7 +579,7 @@ fn handle_condition(b: *IRBlock, ctx: *JITContext, instruction: u32) !?JIT.Patch
         },
         .LE => {
             // return cpu.cpsr.z or (cpu.cpsr.n != cpu.cpsr.v)
-            try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
+            try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = CPUPointer, .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
             try b.bit_test(ReturnRegister, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
             var do_label_0 = try b.jmp(.Carry);
 
@@ -624,10 +627,6 @@ pub const InstructionHandlers = [_]*const fn (b: *IRBlock, ctx: *JITContext, ins
     handle_invalid,
 };
 
-// NOTE: With this stupid setup, SavedRegisters[0] is a pointer to the cpu struct and should not be changed.
-//       SavedRegisters[1] is a pointer to wave memory.
-//       SavedRegisters[2] and SavedRegisters[3] are used as temporaries that will survive a function call (e.g. load_mem/store_mem).
-
 fn handle_branch_and_exchange(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
@@ -637,7 +636,8 @@ fn handle_branch_and_exchange(b: *IRBlock, ctx: *JITContext, instruction: u32) !
 
 fn comptime_handle_block_data_transfer(comptime l: u1, comptime w: u1, comptime s: u1, comptime u: u1, comptime p: u1) type {
     return struct {
-        fn handler(cpu: *arm7.ARM7, instruction: u32) callconv(.c) void {
+        fn handler(instruction: u32) callconv(.c) void {
+            const cpu = get_cpu();
             const inst: arm7.BlockDataTransferInstruction = @bitCast(instruction);
 
             std.debug.assert(builtin.is_test or inst.rn != 15); // "R15 shall not be used as the base register in any LDM or STM instruction."
@@ -763,8 +763,7 @@ fn handle_block_data_transfer(b: *IRBlock, ctx: *JITContext, instruction: u32) !
                     inline for (0..2) |u| {
                         inline for (0..2) |p| {
                             if (inst.l == l and inst.w == w and inst.s == s and inst.u == u and inst.p == p) {
-                                try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-                                try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = instruction });
+                                try b.mov(.{ .reg = ArgRegisters[0] }, .{ .imm32 = instruction });
                                 try b.call(comptime_handle_block_data_transfer(l, w, s, u, p).handler);
                             }
                         }
@@ -823,7 +822,8 @@ fn handle_undefined(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
 // a wave_memory_read.
 fn comptime_handle_single_data_transfer(comptime i: u1, comptime u: u1, comptime w: u1, comptime p: u1, comptime l: u1, comptime b: u1) type {
     return struct {
-        fn handler(cpu: *arm7.ARM7, instruction: u32) callconv(.c) void {
+        fn handler(instruction: u32) callconv(.c) void {
+            const cpu = get_cpu();
             const inst: arm7.SingleDataTransferInstruction = @bitCast(instruction);
 
             var offset: u32 = inst.offset;
@@ -908,10 +908,7 @@ fn handle_single_data_transfer(block: *IRBlock, ctx: *JITContext, instruction: u
             }
             try store_register(block, inst.rd, .{ .reg = rd });
 
-            if (inst.rd == 15) {
-                try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-                try block.call(reset_pipeline);
-            }
+            if (inst.rd == 15) try block.call(reset_pipeline);
         }
     } else {
         std.debug.assert(inst.i == 1);
@@ -921,8 +918,7 @@ fn handle_single_data_transfer(block: *IRBlock, ctx: *JITContext, instruction: u
                     inline for (0..2) |l| {
                         inline for (0..2) |b| {
                             if (inst.u == u and inst.w == w and inst.p == p and inst.l == l and inst.b == b) {
-                                try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-                                try block.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = instruction });
+                                try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm32 = instruction });
                                 try block.call(comptime_handle_single_data_transfer(1, u, w, p, l, b).handler);
                             }
                         }
@@ -991,7 +987,7 @@ fn handle_multiply(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     if (inst.a == 1) {
         const rn = ArgRegisters[1];
         try load_register(b, rn, inst.rn);
-        try b.append(.{ .Add = .{ .dst = .{ .reg = rm }, .src = .{ .reg = rn } } });
+        try b.add(.{ .reg = rm }, .{ .reg = rn });
     }
     try store_register(b, inst.rd, .{ .reg = rm });
 
@@ -1056,7 +1052,8 @@ fn handle_msr(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
 
 fn comptime_handle_data_processing(comptime opcode: arm7.Opcode, comptime s: u1, comptime i: u1) type {
     return struct {
-        fn handler(cpu: *arm7.ARM7, instruction: u32) callconv(.c) void {
+        fn handler(instruction: u32) callconv(.c) void {
+            const cpu = get_cpu();
             const inst: arm7.DataProcessingInstruction = @bitCast(instruction);
 
             // TODO: See "Writing to R15"
@@ -1272,7 +1269,7 @@ fn handle_data_processing(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool
             if (sro.register_specified == 0) {
                 const shift_amount = sro.shift_amount.imm;
                 switch (sro.shift_type) {
-                    .LSL => if (shift_amount > 0) try b.append(.{ .Shl = .{ .dst = .{ .reg = rm }, .amount = .{ .imm8 = shift_amount } } }),
+                    .LSL => if (shift_amount > 0) try b.shl(.{ .reg = rm }, .{ .imm8 = shift_amount }),
                     .LSR => {
                         if (shift_amount == 0) {
                             // The form of the shift field which might be expected to correspond to LSR #0 is used to
@@ -1282,7 +1279,7 @@ fn handle_data_processing(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool
                             // specified.
                             try b.mov(op2, .{ .imm32 = 0 });
                         } else {
-                            try b.append(.{ .Shr = .{ .dst = .{ .reg = rm }, .amount = .{ .imm8 = shift_amount } } });
+                            try b.shr(.{ .reg = rm }, JIT.Operand{ .imm8 = shift_amount });
                         }
                     },
                     .ASR => {
@@ -1293,7 +1290,7 @@ fn handle_data_processing(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool
                             // value of bit 31 of Rm.
                             return error.ZeroASRUnimplemented;
                         } else {
-                            try b.append(.{ .Sar = .{ .dst = .{ .reg = rm }, .amount = .{ .imm8 = shift_amount } } });
+                            try b.sar(.{ .reg = rm }, JIT.Operand{ .imm8 = shift_amount });
                         }
                     },
                     .ROR => {
@@ -1332,7 +1329,7 @@ fn handle_data_processing(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool
             .SUB => {
                 // cpu.r(inst.rd).* = op1 -% op2;
                 try load_register(b, ReturnRegister, inst.rn);
-                try b.append(.{ .Sub = .{ .dst = .{ .reg = ReturnRegister }, .src = op2 } });
+                try b.sub(.{ .reg = ReturnRegister }, op2);
                 try store_register(b, inst.rd, .{ .reg = ReturnRegister });
             },
             .RSB => {
@@ -1341,16 +1338,16 @@ fn handle_data_processing(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool
                 if (op2 == .imm32) {
                     try b.mov(.{ .reg = ArgRegisters[0] }, op2);
                 } else std.debug.assert(op2.reg == ArgRegisters[0]);
-                try b.append(.{ .Sub = .{ .dst = .{ .reg = ArgRegisters[0] }, .src = .{ .reg = ReturnRegister } } });
+                try b.sub(.{ .reg = ArgRegisters[0] }, .{ .reg = ReturnRegister });
                 try store_register(b, inst.rd, .{ .reg = ArgRegisters[0] });
             },
             .ADD => {
                 // cpu.r(inst.rd).* = op1 +% op2;
                 if (inst.rd == inst.rn) {
-                    try b.append(.{ .Add = .{ .dst = guest_register(inst.rd), .src = op2 } });
+                    try b.add(guest_register(inst.rd), op2);
                 } else {
                     try load_register(b, ReturnRegister, inst.rn);
-                    try b.append(.{ .Add = .{ .dst = .{ .reg = ReturnRegister }, .src = op2 } });
+                    try b.add(.{ .reg = ReturnRegister }, op2);
                     try store_register(b, inst.rd, .{ .reg = ReturnRegister });
                 }
             },
@@ -1388,16 +1385,13 @@ fn handle_data_processing(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool
         }
 
         // Simulate an additional fetch
-        if (inst.rd == 15) {
-            try b.add(guest_register(15), .{ .imm32 = 4 });
-        }
+        if (inst.rd == 15) try b.add(guest_register(15), .{ .imm32 = 4 });
     } else {
         inline for (0..0x10) |opcode| {
             inline for (0..2) |s| {
                 inline for (0..2) |i| {
                     if (inst.opcode == @as(arm7.Opcode, @enumFromInt(opcode)) and inst.s == s and inst.i == i) {
-                        try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-                        try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = instruction });
+                        try b.mov(.{ .reg = ArgRegisters[0] }, .{ .imm32 = instruction });
                         try b.call(comptime_handle_data_processing(@enumFromInt(opcode), s, i).handler);
                     }
                 }
@@ -1415,20 +1409,19 @@ fn handle_invalid(_: *IRBlock, _: *JITContext, _: u32) !bool {
     @panic("Invalid instruction");
 }
 
-fn interpreter_handler(comptime idx: u8) *const fn (cpu: *arm7.ARM7, instruction: u32) callconv(.c) void {
+fn interpreter_handler(comptime idx: u8) *const fn (instruction: u32) callconv(.c) void {
     return struct {
-        fn handler(cpu: *arm7.ARM7, instruction: u32) callconv(.c) void {
-            @call(.always_inline, arm7.interpreter.InstructionHandlers[idx], .{ cpu, instruction });
+        fn handler(instruction: u32) callconv(.c) void {
+            @call(.always_inline, arm7.interpreter.InstructionHandlers[idx], .{ get_cpu(), instruction });
         }
     }.handler;
 }
 
 fn interpreter_fallback(b: *IRBlock, ctx: *JITContext, instruction: u32) !void {
-    try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-    try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = instruction });
+    try b.mov(.{ .reg = ArgRegisters[0] }, .{ .imm32 = instruction });
     switch (arm7.JumpTable[arm7.ARM7.get_instr_tag(instruction)]) {
         inline 0...arm7.interpreter.InstructionHandlers.len - 1 => |idx| try b.call(interpreter_handler(idx)),
-        else => |idx| std.debug.panic("Invalid index intro InstructionHandlers: {d}", .{idx}),
+        else => |idx| std.debug.panic("Invalid index into InstructionHandlers: {d}", .{idx}),
     }
 
     ctx.did_fallback = true;
