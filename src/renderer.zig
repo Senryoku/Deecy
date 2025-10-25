@@ -3066,6 +3066,7 @@ pub const Renderer = struct {
                         // Close volume pass.
                         // Counts triangles passing the depth test: If odd, the volume intersects the depth buffer.
                         for (ta_lists.opaque_modifier_volumes.items) |volume| {
+                            if (volume.instructions.volume_instruction == .OutsideLastPolygon) if (Once(@src())) renderer_log.warn(termcolor.yellow("TODO: Unimplemented Exclusion Modifier Volume."), .{});
                             if (volume.closed) {
                                 pass.setStencilReference(0x00);
                                 pass.setPipeline(closed_modifier_volume_pipeline);
@@ -3284,6 +3285,7 @@ pub const Renderer = struct {
                                     // Close volume pass.
                                     var volume_index: u32 = 0;
                                     for (ta_lists.translucent_modifier_volumes.items) |volume| {
+                                        if (volume.instructions.volume_instruction == .OutsideLastPolygon) if (Once(@src())) renderer_log.warn(termcolor.yellow("TODO: Unimplemented Exclusion Translucent Modifier Volume."), .{});
                                         if (volume.closed) {
                                             const oit_fs_uniform_mem = gctx.uniformsAllocate(struct { volume_index: u32 }, 1);
                                             oit_fs_uniform_mem.slice[0].volume_index = volume_index;

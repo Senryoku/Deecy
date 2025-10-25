@@ -572,7 +572,7 @@ pub const ParameterControlWord = packed struct(u32) {
     group_control: GroupControl,
     list_type: ListType,
     _: u1,
-    end_of_strip: u1,
+    end_of_strip: bool,
     parameter_type: ParameterType,
 };
 
@@ -943,6 +943,10 @@ const VolumeInstruction = enum(u3) {
     InsideLastPolygon = 1,
     OutsideLastPolygon = 2,
     _,
+
+    pub fn masked(self: VolumeInstruction) VolumeInstruction {
+        return @enumFromInt(@as(u3, @intFromEnum(self) & 0b11));
+    }
 };
 
 const ModifierVolumeInstruction = packed struct(u32) {
@@ -1961,37 +1965,45 @@ pub const Holly = struct {
         } else std.debug.panic("ta_fifo_yuv_converter_path: Unimplemented format: {d}", .{ctrl.format});
     }
 
-    fn ta_list_index(self: *const @This()) u4 {
+    inline fn ta_list_index(self: *const @This()) u4 {
         // Should I record the value of TA_ISP_BASE on LIST_INIT?
         // NOTE: We also assume that TA_OL_BASE is in the same 1MB range here.
         return @truncate((self.read_register(u32, .TA_ISP_BASE) >> 20) & 0xF);
     }
 
-    fn ta_current_lists(self: *@This()) *TALists {
+    inline fn ta_current_lists(self: *@This()) *TALists {
         return &self._ta_lists[self.ta_list_index()].items[self._ta_current_pass];
     }
 
-    fn start_list(self: *@This(), list_type: ListType) void {
+    inline fn start_list(self: *@This(), list_type: ListType) void {
         self._ta_list_type = list_type;
         holly_log.debug("Starting List {t} - TA_NEXT_OPB: {X:0>6}", .{ list_type, self._get_register(u32, .TA_NEXT_OPB).* });
         self.ta_current_lists().check_reset();
     }
 
+    inline fn update_clip_usage(self: *@This(), group_control: GroupControl) void {
+        if (group_control.en == 1) {
+            if (self._ta_user_tile_clip) |*uc| {
+                uc.usage = group_control.user_clip;
+            }
+        }
+    }
+
     pub fn handle_command(self: *@This()) void {
-        if (self._ta_command_buffer_index % 8 != 0) return; // All commands are 8 or 16 bytes long
+        if (self._ta_command_buffer_index % 8 != 0) return; // All commands are 8 or 16 u32 long
+        std.debug.assert(self._ta_command_buffer_index == 8 or self._ta_command_buffer_index == 16);
 
         const parameter_control_word: ParameterControlWord = @bitCast(self._ta_command_buffer[0]);
 
         holly_log.debug(" TA Parameter Type: {}", .{parameter_control_word.parameter_type});
-        for (0..self._ta_command_buffer_index) |i| {
+        for (0..self._ta_command_buffer_index) |i|
             holly_log.debug("      {X:0>8}", .{self._ta_command_buffer[i]});
-        }
 
         switch (parameter_control_word.parameter_type) {
             // Control Parameters
             .EndOfList => {
                 self.check_end_of_modifier_volume();
-                if (self._ta_list_type) |list| { // Apprently this happens?... Why would a game do this?
+                if (self._ta_list_type) |list| { // Apparently this happens?... Why would a game do this?
                     // Fire corresponding interrupt. FIXME: Delay is completely arbitrary, I just need to delay them for testing, for now.
                     self._dc.schedule_interrupt(switch (list) {
                         .Opaque => .{ .EoT_OpaqueList = 1 },
@@ -2019,7 +2031,7 @@ pub const Holly = struct {
                 self._ta_list_type = null;
             },
             .UserTileClip => {
-                const user_tile_clip = @as(*const UserTileClip, @ptrCast(&self._ta_command_buffer)).*;
+                const user_tile_clip: *const UserTileClip = @ptrCast(&self._ta_command_buffer);
                 self._ta_user_tile_clip = .{
                     .usage = .Disable,
                     .x = 32 *| user_tile_clip.user_clip_x_min,
@@ -2033,81 +2045,78 @@ pub const Holly = struct {
             .PolygonOrModifierVolume => {
                 if (self._ta_list_type == null)
                     self.start_list(parameter_control_word.list_type);
+                self.update_clip_usage(parameter_control_word.group_control);
 
                 // NOTE: I have no idea if this is actually an issue, or if it is just ignored when we've already started a list (and thus set the list type).
                 //       But I'm leaning towards "This value is valid in the following four cases" means it's ignored in the others.
-                // if (self._ta_list_type != parameter_control_word.list_type) {
-                //     holly_log.err(termcolor.red("  PolygonOrModifierVolume list type mismatch: Expected {}, got {}"), .{ self._ta_list_type, parameter_control_word.list_type });
-                // }
+                // if (self._ta_list_type != parameter_control_word.list_type)
+                //     holly_log.err(termcolor.red("  PolygonOrModifierVolume list type mismatch: Expected {?}, got {}"), .{ self._ta_list_type, parameter_control_word.list_type });
 
-                if (parameter_control_word.group_control.en == 1) {
-                    if (self._ta_user_tile_clip) |*uc| {
-                        uc.usage = parameter_control_word.group_control.user_clip;
-                    }
-                }
+                switch (self._ta_list_type.?) {
+                    .OpaqueModifierVolume, .TranslucentModifierVolume => {
+                        const modifier_volume: *const ModifierVolumeGlobalParameter = @ptrCast(&self._ta_command_buffer);
+                        // NOTE: Dead or Alive 2 emits a modifier volume with an volume instruction of '4'. The following ignores the extra bit and treats it as the start of a new modifier volume.
+                        switch (modifier_volume.instructions.volume_instruction.masked()) {
+                            .Normal => {
+                                if (self._ta_current_volume == null) { // NOTE: I don't remember why this check is here, and I find it a bit suspicious.
+                                    self._ta_current_volume = .{
+                                        .parameter_control_word = modifier_volume.parameter_control_word,
+                                        .instructions = modifier_volume.instructions,
+                                        .first_triangle_index = @intCast(self.ta_current_lists().volume_triangles.items.len),
+                                        .closed = modifier_volume.parameter_control_word.obj_control.volume == 1,
+                                    };
+                                }
+                            },
+                            .InsideLastPolygon, .OutsideLastPolygon => {
+                                if (self._ta_current_volume) |*cv| {
+                                    self._ta_volume_next_polygon_is_last = true;
+                                    cv.instructions = modifier_volume.instructions;
+                                    cv.closed = modifier_volume.parameter_control_word.obj_control.volume == 1;
+                                }
+                            },
+                            else => holly_log.debug(termcolor.red("Invalid Volume Instruction: {d}") ++ "\n{}", .{ modifier_volume.instructions.volume_instruction, modifier_volume }),
+                        }
+                    },
+                    else => {
+                        // NOTE: "Four bits in the ISP/TSP Instruction Word are overwritten with the corresponding bit values from the Parameter Control Word."
+                        const global_parameter: *GenericGlobalParameter = @ptrCast(&self._ta_command_buffer);
+                        global_parameter.isp_tsp_instruction.texture = global_parameter.parameter_control_word.obj_control.texture;
+                        global_parameter.isp_tsp_instruction.offset = global_parameter.parameter_control_word.obj_control.offset;
+                        global_parameter.isp_tsp_instruction.gouraud = global_parameter.parameter_control_word.obj_control.gouraud;
+                        global_parameter.isp_tsp_instruction.uv_16bit = global_parameter.parameter_control_word.obj_control.uv_16bit;
 
-                if (self._ta_list_type.? == .OpaqueModifierVolume or self._ta_list_type.? == .TranslucentModifierVolume) {
-                    const modifier_volume = @as(*ModifierVolumeGlobalParameter, @ptrCast(&self._ta_command_buffer));
-                    if (self._ta_current_volume == null and modifier_volume.instructions.volume_instruction == .Normal) {
-                        self._ta_current_volume = .{
-                            .parameter_control_word = modifier_volume.*.parameter_control_word,
-                            .instructions = modifier_volume.*.instructions,
-                            .first_triangle_index = @intCast(self.ta_current_lists().volume_triangles.items.len),
-                            .closed = modifier_volume.parameter_control_word.obj_control.volume == 1,
+                        const polygon_type = obj_control_to_polygon_type(parameter_control_word.obj_control);
+                        if (self._ta_command_buffer_index < Polygon.size(polygon_type)) return;
+                        std.debug.assert(self._ta_command_buffer_index == Polygon.size(polygon_type));
+
+                        self._ta_current_polygon = switch (polygon_type) {
+                            .Sprite => std.debug.panic("Invalid polygon format: {}", .{polygon_type}),
+                            inline else => |pt| @unionInit(Polygon, @tagName(pt), @as(*std.meta.TagPayload(Polygon, pt), @ptrCast(&self._ta_command_buffer)).*),
                         };
-                    } else if (modifier_volume.instructions.volume_instruction == .InsideLastPolygon or modifier_volume.instructions.volume_instruction == .OutsideLastPolygon) {
-                        if (modifier_volume.*.instructions.volume_instruction == .OutsideLastPolygon) {
-                            holly_log.warn("Unsupported Exclusion Modifier Volume.", .{});
+
+                        switch (self._ta_current_polygon.?) {
+                            .PolygonType1 => |p| {
+                                self._ta_face_base_color = p.face_color;
+                            },
+                            .PolygonType2 => |p| {
+                                self._ta_face_base_color = p.face_color;
+                                self._ta_face_offset_color = p.face_offset_color;
+                            },
+                            .PolygonType4 => |p| {
+                                // NOTE: In the case of Polygon Type 4 (Intensity, with Two Volumes), the Face Color is used in both the Base Color and the Offset Color.
+                                self._ta_face_base_color = p.face_color_0;
+                                self._ta_area1_face_base_color = p.face_color_1;
+                            },
+                            else => |p| if (p.control_word().obj_control.col_type == .IntensityMode1)
+                                holly_log.warn(termcolor.yellow("Intensity Mode 1 polygon with unexpected Polygon Type {t}: {}"), .{ p.tag(), p }),
                         }
-                        if (self._ta_current_volume) |*cv| {
-                            self._ta_volume_next_polygon_is_last = true;
-                            cv.instructions = modifier_volume.*.instructions;
-                            cv.closed = modifier_volume.parameter_control_word.obj_control.volume == 1;
-                        }
-                    }
-                } else {
-                    // NOTE: "Four bits in the ISP/TSP Instruction Word are overwritten with the corresponding bit values from the Parameter Control Word."
-                    const global_parameter = @as(*GenericGlobalParameter, @ptrCast(&self._ta_command_buffer));
-                    global_parameter.*.isp_tsp_instruction.texture = global_parameter.*.parameter_control_word.obj_control.texture;
-                    global_parameter.*.isp_tsp_instruction.offset = global_parameter.*.parameter_control_word.obj_control.offset;
-                    global_parameter.*.isp_tsp_instruction.gouraud = global_parameter.*.parameter_control_word.obj_control.gouraud;
-                    global_parameter.*.isp_tsp_instruction.uv_16bit = global_parameter.*.parameter_control_word.obj_control.uv_16bit;
-
-                    const polygon_type = obj_control_to_polygon_type(parameter_control_word.obj_control);
-                    if (self._ta_command_buffer_index < Polygon.size(polygon_type)) return;
-
-                    self._ta_current_polygon = switch (polygon_type) {
-                        .Sprite => std.debug.panic("Invalid polygon format: {}", .{polygon_type}),
-                        inline else => |pt| @unionInit(Polygon, @tagName(pt), @as(*std.meta.TagPayload(Polygon, pt), @ptrCast(&self._ta_command_buffer)).*),
-                    };
-
-                    switch (self._ta_current_polygon.?) {
-                        .PolygonType1 => |p| {
-                            self._ta_face_base_color = p.face_color;
-                        },
-                        .PolygonType2 => |p| {
-                            self._ta_face_base_color = p.face_color;
-                            self._ta_face_offset_color = p.face_offset_color;
-                        },
-                        .PolygonType4 => |p| {
-                            // NOTE: In the case of Polygon Type 4 (Intensity, with Two Volumes), the Face Color is used in both the Base Color and the Offset Color.
-                            self._ta_face_base_color = p.face_color_0;
-                            self._ta_area1_face_base_color = p.face_color_1;
-                        },
-                        else => |p| if (self._ta_current_polygon.?.control_word().obj_control.col_type == .IntensityMode1)
-                            holly_log.warn(termcolor.yellow("Intensity Mode 1 polygon with unexpected Polygon Type {t}: {}"), .{ p.tag(), p }),
-                    }
+                    },
                 }
             },
             .SpriteList => {
                 if (self._ta_list_type == null)
                     self.start_list(parameter_control_word.list_type);
-
-                if (parameter_control_word.group_control.en == 1) {
-                    if (self._ta_user_tile_clip) |*uc| {
-                        uc.usage = parameter_control_word.group_control.user_clip;
-                    }
-                }
+                self.update_clip_usage(parameter_control_word.group_control);
 
                 self._ta_current_polygon = .{ .Sprite = @as(*Sprite, @ptrCast(&self._ta_command_buffer)).* };
 
@@ -2117,75 +2126,69 @@ pub const Holly = struct {
             // VertexParameter - Yes it's a category of its own.
             .VertexParameter => {
                 if (self._ta_list_type) |list_type| {
-                    if (list_type == .OpaqueModifierVolume or list_type == .TranslucentModifierVolume) {
-                        if (self._ta_command_buffer_index < @sizeOf(ModifierVolumeParameter) / 4) return;
-                        self.ta_current_lists().volume_triangles.append(self._allocator, @as(*ModifierVolumeParameter, @ptrCast(&self._ta_command_buffer)).*) catch |err| {
-                            holly_log.err(termcolor.red("Failed to append ModifierVolumeParameter: {t}"), .{err});
-                        };
+                    switch (list_type) {
+                        .OpaqueModifierVolume, .TranslucentModifierVolume => {
+                            if (self._ta_command_buffer_index < @sizeOf(ModifierVolumeParameter) / 4) return;
+                            self.ta_current_lists().volume_triangles.append(self._allocator, @as(*ModifierVolumeParameter, @ptrCast(&self._ta_command_buffer)).*) catch |err|
+                                holly_log.err(termcolor.red("Failed to append ModifierVolumeParameter: {t}"), .{err});
 
-                        if (self._ta_volume_next_polygon_is_last) {
-                            self.check_end_of_modifier_volume();
-                        }
-                    } else {
-                        var display_list = self.ta_current_lists().get_list(list_type);
-                        if (self._ta_current_polygon) |*polygon| {
-                            const polygon_obj_control = @as(*const GenericGlobalParameter, @ptrCast(polygon)).parameter_control_word.obj_control;
-                            switch (polygon.*) {
-                                .Sprite => {
-                                    if (parameter_control_word.end_of_strip != 1) { // Sanity check: For Sprites/Quads, each vertex parameter describes an entire polygon.
-                                        holly_log.warn(termcolor.yellow("Unexpected Sprite without end of strip bit:") ++ "\n  {}", .{parameter_control_word});
-                                    }
-                                    if (polygon_obj_control.texture == 0) {
-                                        if (self._ta_command_buffer_index < VertexParameter.size(.SpriteType0)) return;
-                                        display_list.vertex_parameters.append(self._allocator, .{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch |err| {
-                                            holly_log.err(termcolor.red("Failed to append VertexParameter: {t}"), .{err});
-                                        };
-                                    } else {
-                                        if (self._ta_command_buffer_index < VertexParameter.size(.SpriteType1)) return;
-                                        display_list.vertex_parameters.append(self._allocator, .{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* }) catch |err| {
-                                            holly_log.err(termcolor.red("Failed to append VertexParameter: {t}"), .{err});
-                                        };
-                                    }
-                                },
-                                else => {
-                                    const format = obj_control_to_vertex_parameter_format(polygon_obj_control);
-                                    if (self._ta_command_buffer_index < VertexParameter.size(format)) return;
+                            if (self._ta_volume_next_polygon_is_last)
+                                self.check_end_of_modifier_volume();
+                        },
+                        else => {
+                            if (self._ta_current_polygon) |polygon| {
+                                const display_list = self.ta_current_lists().get_list(list_type);
+                                const polygon_obj_control = polygon.control_word().obj_control;
+                                switch (polygon) {
+                                    .Sprite => {
+                                        if (!parameter_control_word.end_of_strip) // Sanity check: For Sprites/Quads, each vertex parameter describes an entire polygon.
+                                            holly_log.warn(termcolor.yellow("Unexpected Sprite without end of strip bit:") ++ "\n  {}", .{parameter_control_word});
 
-                                    display_list.vertex_parameters.append(self._allocator, switch (format) {
-                                        .SpriteType0, .SpriteType1 => unreachable,
-                                        inline else => |t| @unionInit(VertexParameter, @tagName(t), @as(*std.meta.TagPayload(VertexParameter, t), @ptrCast(&self._ta_command_buffer)).*),
-                                    }) catch |err| {
-                                        holly_log.err(termcolor.red("Failed to append VertexParameter: {t}"), .{err});
-                                    };
-                                },
-                            }
-
-                            if (parameter_control_word.end_of_strip == 1) {
-                                display_list.vertex_strips.append(self._allocator, .{
-                                    .global_parameters = .{
-                                        .polygon = polygon.*,
-                                        .face_base_color = self._ta_face_base_color,
-                                        .face_offset_color = self._ta_face_offset_color,
-                                        .area1_face_base_color = self._ta_area1_face_base_color,
-                                        .sprite_face_base_color = self._ta_sprite_face_base_color,
-                                        .sprite_face_offset_color = self._ta_sprite_face_offset_color,
+                                        if (polygon_obj_control.texture == 0) {
+                                            if (self._ta_command_buffer_index < VertexParameter.size(.SpriteType0)) return;
+                                            display_list.vertex_parameters.append(self._allocator, .{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch |err|
+                                                holly_log.err(termcolor.red("Failed to append VertexParameter: {t}"), .{err});
+                                        } else {
+                                            if (self._ta_command_buffer_index < VertexParameter.size(.SpriteType1)) return;
+                                            display_list.vertex_parameters.append(self._allocator, .{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* }) catch |err|
+                                                holly_log.err(termcolor.red("Failed to append VertexParameter: {t}"), .{err});
+                                        }
                                     },
-                                    .user_clip = if (self._ta_user_tile_clip) |uc| if (uc.usage != .Disable) uc else null else null,
-                                    .vertex_parameter_index = display_list.next_first_vertex_parameters_index,
-                                    .vertex_parameter_count = display_list.vertex_parameters.items.len - display_list.next_first_vertex_parameters_index,
-                                }) catch |err| {
-                                    holly_log.err(termcolor.red("Failed to append VertexStrip: {t}"), .{err});
-                                };
+                                    else => {
+                                        const format = obj_control_to_vertex_parameter_format(polygon_obj_control);
+                                        if (self._ta_command_buffer_index < VertexParameter.size(format)) return;
 
-                                display_list.next_first_vertex_parameters_index = display_list.vertex_parameters.items.len;
-                            }
-                        } else {
-                            std.debug.panic(termcolor.red("    No current polygon! Current list type: {t}"), .{list_type});
-                        }
+                                        display_list.vertex_parameters.append(self._allocator, switch (format) {
+                                            .SpriteType0, .SpriteType1 => unreachable,
+                                            inline else => |t| @unionInit(VertexParameter, @tagName(t), @as(*std.meta.TagPayload(VertexParameter, t), @ptrCast(&self._ta_command_buffer)).*),
+                                        }) catch |err|
+                                            holly_log.err(termcolor.red("Failed to append VertexParameter: {t}"), .{err});
+                                    },
+                                }
+
+                                if (parameter_control_word.end_of_strip) {
+                                    display_list.vertex_strips.append(self._allocator, .{
+                                        .global_parameters = .{
+                                            .polygon = polygon,
+                                            .face_base_color = self._ta_face_base_color,
+                                            .face_offset_color = self._ta_face_offset_color,
+                                            .area1_face_base_color = self._ta_area1_face_base_color,
+                                            .sprite_face_base_color = self._ta_sprite_face_base_color,
+                                            .sprite_face_offset_color = self._ta_sprite_face_offset_color,
+                                        },
+                                        .user_clip = if (self._ta_user_tile_clip) |uc| if (uc.usage != .Disable) uc else null else null,
+                                        .vertex_parameter_index = display_list.next_first_vertex_parameters_index,
+                                        .vertex_parameter_count = display_list.vertex_parameters.items.len - display_list.next_first_vertex_parameters_index,
+                                    }) catch |err|
+                                        holly_log.err(termcolor.red("Failed to append VertexStrip: {t}"), .{err});
+
+                                    display_list.next_first_vertex_parameters_index = display_list.vertex_parameters.items.len;
+                                }
+                            } else holly_log.err(termcolor.red("No current polygon! Current list type: {t}"), .{list_type});
+                        },
+                        _ => unreachable,
                     }
-                } else {
-                    holly_log.err(termcolor.red("Received VertexParameter without an active list!"), .{});
-                }
+                } else holly_log.err(termcolor.red("Received VertexParameter without an active list!"), .{});
             },
             _ => std.debug.panic(termcolor.red("    Invalid parameter type: {d}."), .{parameter_control_word.parameter_type}),
         }
