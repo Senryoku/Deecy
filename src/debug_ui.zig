@@ -303,6 +303,14 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
     self.reset_hover();
 
+    if (zgui.begin("Scheduler", .{})) {
+        zgui.text("Global Cycle: {d}", .{dc._global_cycles});
+        for (d.dc.scheduled_events.items) |event| {
+            zgui.text("[{d: >11}] {f} {?f}", .{ event.trigger_cycle -| dc._global_cycles, event.event, event.interrupt });
+        }
+    }
+    zgui.end();
+
     if (zgui.begin("SH4", .{})) {
         if (zgui.button("Dump DC State", .{})) {
             const was_running = d.running;
