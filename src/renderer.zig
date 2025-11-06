@@ -1,7 +1,7 @@
 const std = @import("std");
 const termcolor = @import("termcolor");
 
-const renderer_log = std.log.scoped(.renderer);
+const log = std.log.scoped(.renderer);
 const Once = @import("helpers").Once;
 
 const zgpu = @import("zgpu");
@@ -205,9 +205,11 @@ const VertexTextureInfo = packed struct(u64) {
     palette: PaletteInstructions,
     shading: ShadingInstructions,
 
-    pub fn invalid() VertexTextureInfo {
-        return .{ .index = InvalidTextureIndex, .palette = @bitCast(@as(u16, 0)), .shading = @bitCast(@as(u32, 0)) };
-    }
+    pub const invalid = @This(){
+        .index = InvalidTextureIndex,
+        .palette = @bitCast(@as(u16, 0)),
+        .shading = @bitCast(@as(u32, 0)),
+    };
 };
 
 const Uniforms = extern struct {
@@ -245,20 +247,18 @@ const Vertex = packed struct {
     area1_v: f32 = 0.0,
 
     // Allow constructing a vertex with the optional fields correctly initialized.
-    pub fn undef() Vertex {
-        return .{
-            .x = -0.0,
-            .y = -0.0,
-            .z = -0.0,
-            .primitive_index = 0xFFFFFFFF,
-            .base_color = .{ .r = 255, .g = 0, .b = 0, .a = 255 },
-        };
-    }
+    pub const undef = @This(){
+        .x = -0.0,
+        .y = -0.0,
+        .z = -0.0,
+        .primitive_index = 0xFFFFFFFF,
+        .base_color = .{ .r = 255, .g = 0, .b = 0, .a = 255 },
+    };
 };
 
 const StripMetadata = packed struct(u128) {
     area0_instructions: VertexTextureInfo,
-    area1_instructions: VertexTextureInfo = VertexTextureInfo.invalid(),
+    area1_instructions: VertexTextureInfo = .invalid,
 };
 
 const wgsl_vs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/position_clip.wgsl") ++ @embedFile("./shaders/vs.wgsl");
@@ -399,6 +399,15 @@ const PipelineKey = struct {
     }
 };
 
+const BackgroundPipelineKey = PipelineKey{
+    .translucent = false,
+    .src_blend_factor = .one,
+    .dst_blend_factor = .zero,
+    .depth_compare = .always,
+    .depth_write_enabled = false,
+    .culling_mode = .None,
+};
+
 const DrawCallKey = struct {
     sampler: u8,
     user_clip: ?HollyModule.UserTileClipInfo,
@@ -455,14 +464,13 @@ const RenderPass = struct {
     opaque_pass: PassMetadata,
     punchthrough_pass: PassMetadata,
     translucent_pass: PassMetadata,
-    pre_sorted_translucent_pass: std.ArrayList(SortedDrawCall),
+    pre_sorted_translucent_pass: std.ArrayList(SortedDrawCall) = .empty,
 
     pub fn init() RenderPass {
         return .{
             .opaque_pass = .init(.Opaque),
             .punchthrough_pass = .init(.PunchThrough),
             .translucent_pass = .init(.Translucent),
-            .pre_sorted_translucent_pass = .empty,
         };
     }
 
@@ -482,7 +490,7 @@ const RenderPass = struct {
 };
 
 fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
-    var r: [4]Vertex = @splat(Vertex.undef());
+    var r: [4]Vertex = @splat(Vertex.undef);
 
     // B --- C
     // |  \  |
@@ -576,7 +584,7 @@ pub fn palette_mipmap_offset(u_size: u32) u32 {
         512 => 0x15558,
         1024 => 0x55558,
         else => {
-            renderer_log.err(termcolor.red("Invalid u_size for paletted mip mapped texture"), .{});
+            log.err(termcolor.red("Invalid u_size for paletted mip mapped texture"), .{});
             @panic("Invalid u_size for paletted mip mapped texture");
         },
     };
@@ -592,21 +600,21 @@ pub fn mipmap_offset(u_size: u32) u32 {
         512 => 0x2AAB0,
         1024 => 0xAAAB0,
         else => {
-            renderer_log.err(termcolor.red("Invalid u_size for mip mapped texture"), .{});
+            log.err(termcolor.red("Invalid u_size for mip mapped texture"), .{});
             @panic("Invalid u_size for mip mapped texture");
         },
     };
 }
 
 const VertexAttributes = [_]wgpu.VertexAttribute{
-    .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
-    .{ .format = .uint32, .offset = @offsetOf(Vertex, "primitive_index"), .shader_location = 1 },
-    .{ .format = .uint32, .offset = @offsetOf(Vertex, "base_color"), .shader_location = 2 },
-    .{ .format = .uint32, .offset = @offsetOf(Vertex, "offset_color"), .shader_location = 3 },
-    .{ .format = .uint32, .offset = @offsetOf(Vertex, "area1_base_color"), .shader_location = 4 },
-    .{ .format = .uint32, .offset = @offsetOf(Vertex, "area1_offset_color"), .shader_location = 5 },
-    .{ .format = .float32x2, .offset = @offsetOf(Vertex, "u"), .shader_location = 6 },
-    .{ .format = .float32x2, .offset = @offsetOf(Vertex, "area1_u"), .shader_location = 7 },
+    .{ .shader_location = 0, .format = .float32x3, .offset = @offsetOf(Vertex, "x") },
+    .{ .shader_location = 1, .format = .uint32, .offset = @offsetOf(Vertex, "primitive_index") },
+    .{ .shader_location = 2, .format = .uint32, .offset = @offsetOf(Vertex, "base_color") },
+    .{ .shader_location = 3, .format = .uint32, .offset = @offsetOf(Vertex, "offset_color") },
+    .{ .shader_location = 4, .format = .uint32, .offset = @offsetOf(Vertex, "area1_base_color") },
+    .{ .shader_location = 5, .format = .uint32, .offset = @offsetOf(Vertex, "area1_offset_color") },
+    .{ .shader_location = 6, .format = .float32x2, .offset = @offsetOf(Vertex, "u") },
+    .{ .shader_location = 7, .format = .float32x2, .offset = @offsetOf(Vertex, "area1_u") },
 };
 const VertexBufferLayout = [_]wgpu.VertexBufferLayout{.{
     .array_stride = @sizeOf(Vertex),
@@ -615,7 +623,7 @@ const VertexBufferLayout = [_]wgpu.VertexBufferLayout{.{
 }};
 
 const ModifierVolumeVertexAttributes = [_]wgpu.VertexAttribute{
-    .{ .format = .float32x4, .offset = 0, .shader_location = 0 },
+    .{ .shader_location = 0, .format = .float32x4, .offset = 0 },
 };
 const ModifierVolumeVertexBufferLayout = [_]wgpu.VertexBufferLayout{.{
     .array_stride = 4 * @sizeOf(f32),
@@ -628,24 +636,32 @@ const BlitBindGroupLayout = [_]wgpu.BindGroupLayoutEntry{
     zgpu.samplerEntry(1, .{ .fragment = true }, .filtering),
 };
 
-// FIXME: Temp PoC, do better.
-var fb_mapping_available: bool = false;
-fn signal_fb_mapped(status: zgpu.wgpu.BufferMapAsyncStatus, _: ?*anyopaque) void {
-    switch (status) {
-        .success => {},
-        else => std.log.err(termcolor.red("Failed to map buffer: {t}"), .{status}),
-    }
-    fb_mapping_available = true;
-}
-
 const TextureAndView = struct {
-    texture: zgpu.TextureHandle,
-    view: zgpu.TextureViewHandle,
+    texture: zgpu.TextureHandle = .nil,
+    view: zgpu.TextureViewHandle = .nil,
+
+    pub const Resources = struct { texture: wgpu.Texture, view: wgpu.TextureView };
+    pub inline fn lookup(self: @This(), gctx: *zgpu.GraphicsContext) Resources {
+        return .{
+            .texture = gctx.lookupResource(self.texture).?,
+            .view = gctx.lookupResource(self.view).?,
+        };
+    }
     pub fn release(self: @This(), gctx: *zgpu.GraphicsContext) void {
         gctx.releaseResource(self.view);
         gctx.destroyResource(self.texture);
     }
 };
+
+// FIXME: Temp PoC, do better.
+var fb_mapping_available: bool = false;
+fn signal_fb_mapped(status: zgpu.wgpu.BufferMapAsyncStatus, _: ?*anyopaque) callconv(.c) void {
+    switch (status) {
+        .success => {},
+        else => log.err(termcolor.red("Failed to map buffer: {t}"), .{status}),
+    }
+    fb_mapping_available = true;
+}
 
 pub const Renderer = struct {
     pub const MaxTextures: [8]u16 = .{ 512, 512, 512, 512, 256, 128, 32, 8 }; // Max texture count for each size. FIXME: Not sure what are good values.
@@ -692,8 +708,8 @@ pub const Renderer = struct {
     framebuffer_resize_bind_group: zgpu.BindGroupHandle,
 
     blit_pipeline: zgpu.RenderPipelineHandle = .{},
-    blit_bind_group: zgpu.BindGroupHandle = undefined,
-    blit_bind_group_render_to_texture: zgpu.BindGroupHandle = undefined,
+    blit_bind_group: zgpu.BindGroupHandle = .nil,
+    blit_bind_group_render_to_texture: zgpu.BindGroupHandle = .nil,
     blit_vertex_buffer: zgpu.BufferHandle,
     blit_index_buffer: zgpu.BufferHandle,
     blit_to_window_vertex_buffer: zgpu.BufferHandle,
@@ -718,14 +734,14 @@ pub const Renderer = struct {
     opaque_fragment_shader_module: wgpu.ShaderModule,
     pre_sort_fragment_shader_module: wgpu.ShaderModule,
 
-    bind_group: zgpu.BindGroupHandle = undefined,
-    modifier_volume_bind_group: zgpu.BindGroupHandle = undefined,
-    modifier_volume_apply_bind_group: zgpu.BindGroupHandle = undefined,
-    translucent_bind_group: zgpu.BindGroupHandle = undefined,
-    translucent_modvol_bind_group: zgpu.BindGroupHandle = undefined,
-    translucent_modvol_merge_bind_group: zgpu.BindGroupHandle = undefined,
-    blend_bind_group: zgpu.BindGroupHandle = undefined,
-    blend_bind_group_render_to_texture: zgpu.BindGroupHandle = undefined,
+    bind_group: zgpu.BindGroupHandle = .nil,
+    modifier_volume_bind_group: zgpu.BindGroupHandle = .nil,
+    modifier_volume_apply_bind_group: zgpu.BindGroupHandle = .nil,
+    translucent_bind_group: zgpu.BindGroupHandle = .nil,
+    translucent_modvol_bind_group: zgpu.BindGroupHandle = .nil,
+    translucent_modvol_merge_bind_group: zgpu.BindGroupHandle = .nil,
+    blend_bind_group: zgpu.BindGroupHandle = .nil,
+    blend_bind_group_render_to_texture: zgpu.BindGroupHandle = .nil,
 
     vertex_buffer: zgpu.BufferHandle,
     index_buffer: zgpu.BufferHandle,
@@ -734,12 +750,12 @@ pub const Renderer = struct {
     strips_metadata_buffer: zgpu.BufferHandle,
 
     oit_horizontal_slices: u32 = 4, // Divides the OIT pass into multiple passes to limit memory usage.
-    list_heads_buffer: zgpu.BufferHandle = undefined,
-    linked_list_buffer: zgpu.BufferHandle = undefined,
+    list_heads_buffer: zgpu.BufferHandle = .nil,
+    linked_list_buffer: zgpu.BufferHandle = .nil,
 
-    translucent_modvol_fragment_counts_buffer: zgpu.BufferHandle = undefined,
-    translucent_modvol_fragment_list_buffer: zgpu.BufferHandle = undefined,
-    translucent_modvol_volumes_buffer: zgpu.BufferHandle = undefined,
+    translucent_modvol_fragment_counts_buffer: zgpu.BufferHandle = .nil,
+    translucent_modvol_fragment_list_buffer: zgpu.BufferHandle = .nil,
+    translucent_modvol_volumes_buffer: zgpu.BufferHandle = .nil,
 
     texture_arrays: [8]TextureAndView,
     palette_buffer: zgpu.BufferHandle,
@@ -751,15 +767,15 @@ pub const Renderer = struct {
     framebuffer: TextureAndView,
     /// Target for rendering to a texture (will be read back to guest VRAM using framebuffer_copy_buffer)
     render_to_texture_target: TextureAndView,
-    resized_render_to_texture_target: TextureAndView = undefined,
+    resized_render_to_texture_target: TextureAndView = .{},
     /// Intermediate buffer used to read pixels back to main RAM.
     framebuffer_copy_buffer: zgpu.BufferHandle,
     /// Framebuffer at target resolution to draw on
-    resized_framebuffer: TextureAndView = undefined,
-    resized_framebuffer_area1: TextureAndView = undefined,
+    resized_framebuffer: TextureAndView = .{},
+    resized_framebuffer_area1: TextureAndView = .{},
 
     // NOTE: This should not be needed, but WGPU doesn't handle reading from a storage texture yet.
-    resized_framebuffer_copy: TextureAndView = undefined,
+    resized_framebuffer_copy: TextureAndView = .{},
 
     depth: struct {
         texture: zgpu.TextureHandle,
@@ -795,7 +811,7 @@ pub const Renderer = struct {
 
     pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, gctx_queue_mutex: *std.Thread.Mutex, internal_resolution_factor: u32, display_mode: DisplayMode) !*Renderer {
         const start = std.time.milliTimestamp();
-        defer renderer_log.info("Renderer initialized in {d}ms", .{std.time.milliTimestamp() - start});
+        defer log.info("Renderer initialized in {d}ms", .{std.time.milliTimestamp() - start});
 
         // Writes to texture all rely on that.
         std.debug.assert(zgpu.GraphicsContext.swapchain_format == .bgra8_unorm);
@@ -927,7 +943,7 @@ pub const Renderer = struct {
                 .size = .{
                     .width = @as(u32, 8) << @intCast(i),
                     .height = @as(u32, 8) << @intCast(i),
-                    .depth_or_array_layers = Renderer.MaxTextures[i],
+                    .depth_or_array_layers = MaxTextures[i],
                 },
                 .format = .bgra8_unorm,
                 .mip_level_count = @intCast(4 + i),
@@ -1022,20 +1038,20 @@ pub const Renderer = struct {
         });
         defer gctx.releaseResource(translucent_pipeline_layout);
         const translucent_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-            .vertex = wgpu.VertexState{
+            .vertex = .{
                 .module = opaque_vertex_shader_module,
                 .entry_point = "main",
                 .buffer_count = VertexBufferLayout.len,
                 .buffers = &VertexBufferLayout,
             },
-            .primitive = wgpu.PrimitiveState{
+            .primitive = .{
                 .front_face = .ccw,
                 .cull_mode = .none,
                 .topology = .triangle_strip,
                 .strip_index_format = .uint32,
             },
             .depth_stencil = null, // FIXME: Use opaque depth here rather than sampling it manually in the shader?
-            .fragment = &wgpu.FragmentState{
+            .fragment = &.{
                 .module = translucent_fragment_shader_module,
                 .entry_point = "main",
                 .target_count = color_targets.len,
@@ -1076,18 +1092,18 @@ pub const Renderer = struct {
         const modifier_volume_pipeline_layout = gctx.createPipelineLayout(&.{modifier_volume_group_layout});
 
         const closed_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-            .vertex = wgpu.VertexState{
+            .vertex = .{
                 .module = modifier_volume_vertex_shader_module,
                 .entry_point = "main",
                 .buffer_count = ModifierVolumeVertexBufferLayout.len,
                 .buffers = &ModifierVolumeVertexBufferLayout,
             },
-            .primitive = wgpu.PrimitiveState{
+            .primitive = .{
                 .front_face = .ccw,
                 .cull_mode = .none,
                 .topology = .triangle_list,
             },
-            .depth_stencil = &wgpu.DepthStencilState{
+            .depth_stencil = &.{
                 .format = .depth32_float_stencil8,
                 .depth_write_enabled = false,
                 .depth_compare = DepthCompareFunction,
@@ -1106,7 +1122,7 @@ pub const Renderer = struct {
                     .depth_fail_op = .keep,
                 },
             },
-            .fragment = &wgpu.FragmentState{
+            .fragment = &.{
                 .module = modifier_volume_fragment_shader_module,
                 .entry_point = "main",
                 .target_count = 0,
@@ -1115,18 +1131,18 @@ pub const Renderer = struct {
         };
 
         const shift_stencil_buffer_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-            .vertex = wgpu.VertexState{
+            .vertex = .{
                 .module = modifier_volume_vertex_shader_module,
                 .entry_point = "main",
                 .buffer_count = ModifierVolumeVertexBufferLayout.len,
                 .buffers = &ModifierVolumeVertexBufferLayout,
             },
-            .primitive = wgpu.PrimitiveState{
+            .primitive = .{
                 .front_face = .ccw,
                 .cull_mode = .none,
                 .topology = .triangle_list,
             },
-            .depth_stencil = &wgpu.DepthStencilState{
+            .depth_stencil = &.{
                 .format = .depth32_float_stencil8,
                 .depth_write_enabled = false,
                 .depth_compare = .always,
@@ -1145,7 +1161,7 @@ pub const Renderer = struct {
                     .depth_fail_op = .keep,
                 },
             },
-            .fragment = &wgpu.FragmentState{
+            .fragment = &.{
                 .module = modifier_volume_fragment_shader_module,
                 .entry_point = "main",
                 .target_count = 0,
@@ -1154,18 +1170,18 @@ pub const Renderer = struct {
         };
 
         const open_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-            .vertex = wgpu.VertexState{
+            .vertex = .{
                 .module = modifier_volume_vertex_shader_module,
                 .entry_point = "main",
                 .buffer_count = ModifierVolumeVertexBufferLayout.len,
                 .buffers = &ModifierVolumeVertexBufferLayout,
             },
-            .primitive = wgpu.PrimitiveState{
+            .primitive = .{
                 .front_face = .ccw,
                 .cull_mode = .none,
                 .topology = .triangle_list,
             },
-            .depth_stencil = &wgpu.DepthStencilState{
+            .depth_stencil = &.{
                 .format = .depth32_float_stencil8,
                 .depth_write_enabled = false,
                 .depth_compare = DepthCompareFunction,
@@ -1184,7 +1200,7 @@ pub const Renderer = struct {
                     .depth_fail_op = .keep,
                 },
             },
-            .fragment = &wgpu.FragmentState{
+            .fragment = &.{
                 .module = modifier_volume_fragment_shader_module,
                 .entry_point = "main",
                 .target_count = 0,
@@ -1267,20 +1283,20 @@ pub const Renderer = struct {
             }};
 
             const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-                .vertex = wgpu.VertexState{
+                .vertex = .{
                     .module = blit_vs_module,
                     .entry_point = "main",
                     .buffer_count = blit_vertex_buffers.len,
                     .buffers = &blit_vertex_buffers,
                 },
-                .primitive = wgpu.PrimitiveState{
+                .primitive = .{
                     .front_face = .ccw,
                     .cull_mode = .none,
                     .topology = .triangle_strip,
                     .strip_index_format = .uint32,
                 },
                 .depth_stencil = null,
-                .fragment = &wgpu.FragmentState{
+                .fragment = &.{
                     .module = blit_fs_module,
                     .entry_point = "main",
                     .target_count = blit_color_targets.len,
@@ -1314,19 +1330,19 @@ pub const Renderer = struct {
             }};
 
             const mv_apply_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-                .vertex = wgpu.VertexState{
+                .vertex = .{
                     .module = blit_vs_module,
                     .entry_point = "main",
                     .buffer_count = blit_vertex_buffers.len,
                     .buffers = &blit_vertex_buffers,
                 },
-                .primitive = wgpu.PrimitiveState{
+                .primitive = .{
                     .front_face = .ccw,
                     .cull_mode = .none,
                     .topology = .triangle_strip,
                     .strip_index_format = .uint32,
                 },
-                .depth_stencil = &wgpu.DepthStencilState{
+                .depth_stencil = &.{
                     .format = .depth32_float_stencil8,
                     .depth_write_enabled = false,
                     .depth_compare = .always,
@@ -1344,7 +1360,7 @@ pub const Renderer = struct {
                         .pass_op = .keep,
                     },
                 },
-                .fragment = &wgpu.FragmentState{
+                .fragment = &.{
                     .module = mv_apply_fragment_shader_module,
                     .entry_point = "main",
                     .target_count = mv_apply_color_targets.len,
@@ -1364,18 +1380,18 @@ pub const Renderer = struct {
             });
 
             const translucent_modvol_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-                .vertex = wgpu.VertexState{
+                .vertex = .{
                     .module = modifier_volume_vertex_shader_module,
                     .entry_point = "main",
                     .buffer_count = ModifierVolumeVertexBufferLayout.len,
                     .buffers = &ModifierVolumeVertexBufferLayout,
                 },
-                .primitive = wgpu.PrimitiveState{
+                .primitive = .{
                     .front_face = .ccw,
                     .cull_mode = .none,
                     .topology = .triangle_list,
                 },
-                .depth_stencil = &wgpu.DepthStencilState{
+                .depth_stencil = &.{
                     .format = .depth32_float_stencil8,
                     .depth_write_enabled = false,
                     .depth_compare = DepthCompareFunction,
@@ -1394,7 +1410,7 @@ pub const Renderer = struct {
                         .depth_fail_op = .keep,
                     },
                 },
-                .fragment = &wgpu.FragmentState{
+                .fragment = &.{
                     .module = translucent_modvol_fs_module,
                     .entry_point = "main",
                     .target_count = 0,
@@ -1421,7 +1437,7 @@ pub const Renderer = struct {
         try renderer.opaque_pipelines.ensureTotalCapacity(4 * 2 * std.meta.fields(wgpu.BlendFactor).len * std.meta.fields(wgpu.BlendFactor).len * std.meta.fields(wgpu.CompareFunction).len * 2);
 
         // Asynchronously create some common pipelines ahead of time
-        _ = renderer.get_or_put_pipeline(.{ .translucent = false, .src_blend_factor = .one, .dst_blend_factor = .zero, .depth_compare = .always, .depth_write_enabled = false, .culling_mode = .None }, .Async); // Background
+        _ = renderer.get_or_put_pipeline(BackgroundPipelineKey, .Async);
         _ = renderer.get_or_put_pipeline(.{ .translucent = false, .src_blend_factor = .one, .dst_blend_factor = .zero, .depth_compare = .greater_equal, .depth_write_enabled = true, .culling_mode = .Small }, .Async);
         _ = renderer.get_or_put_pipeline(.{ .translucent = false, .src_blend_factor = .src_alpha, .dst_blend_factor = .one_minus_src_alpha, .depth_compare = .greater_equal, .depth_write_enabled = true, .culling_mode = .Small }, .Async); // Punchthrough
 
@@ -1430,7 +1446,7 @@ pub const Renderer = struct {
         return renderer;
     }
 
-    pub fn destroy(self: *Renderer) void {
+    pub fn destroy(self: *@This()) void {
         for (self.ta_lists.items) |*list| list.deinit(self._allocator);
         self.ta_lists.deinit(self._allocator);
         for (self.ta_lists_to_render.items) |*list| list.deinit(self._allocator);
@@ -1542,7 +1558,7 @@ pub const Renderer = struct {
     pub fn on_render_start(self: *@This(), dc: *Dreamcast) void {
         const render_to_texture = dc.gpu.render_to_texture();
         if (render_to_texture and !self.ExperimentalRenderToTexture) {
-            renderer_log.warn("Render to Texture is disabled.", .{});
+            log.warn("Render to Texture is disabled.", .{});
             return;
         }
 
@@ -1551,7 +1567,7 @@ pub const Renderer = struct {
             defer self._ta_lists_mutex.unlock();
 
             if (self.render_start and !render_to_texture)
-                renderer_log.warn(termcolor.yellow("Woops! Skipped a frame."), .{});
+                log.warn(termcolor.yellow("Woops! Skipped a frame."), .{});
 
             self.on_render_start_param_base = dc.gpu.read_register(u32, .PARAM_BASE);
 
@@ -1562,7 +1578,7 @@ pub const Renderer = struct {
             const list_idx: u4 = @truncate(self.on_render_start_param_base >> 20);
             std.mem.swap(std.ArrayList(HollyModule.TALists), &dc.gpu._ta_lists[list_idx], &self.ta_lists);
             if (self.ta_lists.items[0].opaque_list.vertex_strips.items.len == 0 and self.ta_lists.items[0].punchthrough_list.vertex_strips.items.len == 0 and self.ta_lists.items[0].translucent_list.vertex_strips.items.len == 0) {
-                renderer_log.warn(termcolor.yellow("on_render_start: Empty TA lists submitted. Is the game trying to reuse the previous TA lists?"), .{});
+                log.warn(termcolor.yellow("on_render_start: Empty TA lists submitted. Is the game trying to reuse the previous TA lists?"), .{});
             }
 
             const header_type = dc.gpu.get_region_header_type();
@@ -1573,8 +1589,8 @@ pub const Renderer = struct {
                 if (region_config.empty()) break;
 
                 switch (header_type) {
-                    .Type1 => renderer_log.debug("[{t}] ({d}) {f}", .{ header_type, region_array_idx, region_config }),
-                    .Type2 => renderer_log.debug("[{t}] ({d}) {f}", .{ header_type, region_array_idx, std.fmt.alt(region_config, .formatType1) }),
+                    .Type1 => log.debug("[{t}] ({d}) {f}", .{ header_type, region_array_idx, region_config }),
+                    .Type2 => log.debug("[{t}] ({d}) {f}", .{ header_type, region_array_idx, std.fmt.alt(region_config, .formatType1) }),
                 }
 
                 if (self.render_passes.items.len <= region_array_idx) self.render_passes.append(self._allocator, .init()) catch @panic("Out of memory");
@@ -1592,7 +1608,7 @@ pub const Renderer = struct {
             }
 
             if (region_count != self.ta_lists.items.len)
-                renderer_log.warn(termcolor.yellow("Expected {d} regions, found {d}"), .{ self.ta_lists.items.len, region_count });
+                log.warn(termcolor.yellow("Expected {d} regions, found {d}"), .{ self.ta_lists.items.len, region_count });
 
             if (region_count < self.render_passes.items.len) {
                 for (region_count..self.render_passes.items.len) |i|
@@ -1611,8 +1627,8 @@ pub const Renderer = struct {
             // All resources (including zgpu uniforms!) are shared with standard rendering, so we have to synchronize with the main thread.
             self._gctx_queue_mutex.lock();
             defer self._gctx_queue_mutex.unlock();
-            self.update(&dc.gpu) catch |err| return renderer_log.err(termcolor.red("Failed to update renderer: {t}"), .{err});
-            self.render(&dc.gpu, render_to_texture) catch |err| return renderer_log.err(termcolor.red("Failed to render: {t}"), .{err});
+            self.update(&dc.gpu) catch |err| return log.err(termcolor.red("Failed to update renderer: {t}"), .{err});
+            self.render(&dc.gpu, render_to_texture) catch |err| return log.err(termcolor.red("Failed to render: {t}"), .{err});
         }
     }
 
@@ -1622,9 +1638,9 @@ pub const Renderer = struct {
     }
 
     /// For external use only (e.g. Debug UI)
-    pub fn get_texture_view(self: *const Renderer, control_word: HollyModule.TextureControlWord, tsp_instruction: HollyModule.TSPInstructionWord) ?struct { size_index: u3, index: u32 } {
+    pub fn get_texture_view(self: *const @This(), control_word: HollyModule.TextureControlWord, tsp_instruction: HollyModule.TSPInstructionWord) ?struct { size_index: u3, index: u32 } {
         const size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
-        for (self.texture_metadata[size_index][0..Renderer.MaxTextures[size_index]], 0..) |*entry, idx| {
+        for (self.texture_metadata[size_index][0..MaxTextures[size_index]], 0..) |*entry, idx| {
             if (entry.status != .Invalid and entry.status != .Outdated and entry.match(control_word)) {
                 return .{ .size_index = size_index, .index = @intCast(idx) };
             }
@@ -1632,8 +1648,8 @@ pub const Renderer = struct {
         return null;
     }
 
-    fn get_texture_index(self: *Renderer, gpu: *const HollyModule.Holly, size_index: u3, control_word: HollyModule.TextureControlWord) ?TextureIndex {
-        for (self.texture_metadata[size_index][0..Renderer.MaxTextures[size_index]], 0..) |*entry, idx| {
+    fn get_texture_index(self: *@This(), gpu: *const HollyModule.Holly, size_index: u3, control_word: HollyModule.TextureControlWord) ?TextureIndex {
+        for (self.texture_metadata[size_index][0..MaxTextures[size_index]], 0..) |*entry, idx| {
             if (entry.status != .Invalid and entry.match(control_word)) {
                 if (entry.usage == 0) {
                     // Texture appears to have changed in memory. Mark as outdated.
@@ -1652,9 +1668,9 @@ pub const Renderer = struct {
     }
 
     /// Search for the least recently used texture, preferring an outdated one.
-    fn get_lru_texture_index(self: *Renderer, size_index: u3) TextureIndex {
+    fn get_lru_texture_index(self: *@This(), size_index: u3) TextureIndex {
         var texture_index: TextureIndex = InvalidTextureIndex;
-        for (self.texture_metadata[size_index][0..Renderer.MaxTextures[size_index]], 0..) |*entry, idx| {
+        for (self.texture_metadata[size_index][0..MaxTextures[size_index]], 0..) |*entry, idx| {
             if (texture_index == InvalidTextureIndex) {
                 if (entry.status == .Outdated or entry.status == .Unused) texture_index = @intCast(idx);
             } else {
@@ -1669,13 +1685,13 @@ pub const Renderer = struct {
         return texture_index;
     }
 
-    inline fn bgra_scratch_pad(self: *Renderer) [*][4]u8 {
+    inline fn bgra_scratch_pad(self: *@This()) [*][4]u8 {
         return @as([*][4]u8, @ptrCast(self._scratch_pad.ptr));
     }
 
-    fn upload_texture(self: *Renderer, gpu: *const HollyModule.Holly, tsp_instruction: HollyModule.TSPInstructionWord, texture_control_word: HollyModule.TextureControlWord) TextureIndex {
-        renderer_log.debug("[Upload] tsp_instruction: {any}", .{tsp_instruction});
-        renderer_log.debug("[Upload] texture_control_word: {any}", .{texture_control_word});
+    fn upload_texture(self: *@This(), gpu: *const HollyModule.Holly, tsp_instruction: HollyModule.TSPInstructionWord, texture_control_word: HollyModule.TextureControlWord) TextureIndex {
+        log.debug("[Upload] tsp_instruction: {any}", .{tsp_instruction});
+        log.debug("[Upload] texture_control_word: {any}", .{texture_control_word});
 
         const texture_control_register = gpu.read_register(HollyModule.TEXT_CONTROL, .TEXT_CONTROL);
 
@@ -1700,7 +1716,7 @@ pub const Renderer = struct {
             //        - TSP Instruction Word, U Size:        "The value that is specified here must be greater than the U size of the stride texture.""
             //   I don't know if the U Size "must be greater" or if it is "ignored". Virtua Tennis 2 runs into this issue.
             //   Ignoring the U Size is more problematic for us as we use it to select the correct texture array, so I'll clamp the stride size for now.
-            renderer_log.err(termcolor.red("Texture U size ({d}) is greater than the allocated size ({d})\n") ++ termcolor.grey("  TEXT_CONTROL:    {any}\n  TSP Instruction: {any}\n  Texture Control: {any})"), .{ u_size, alloc_u_size, texture_control_register, tsp_instruction, texture_control_word });
+            log.err(termcolor.red("Texture U size ({d}) is greater than the allocated size ({d})\n") ++ termcolor.grey("  TEXT_CONTROL:    {any}\n  TSP Instruction: {any}\n  Texture Control: {any})"), .{ u_size, alloc_u_size, texture_control_register, tsp_instruction, texture_control_word });
             u_size = alloc_u_size;
             // Virtua Tennis 2 uses a stride value of 640 (texture_control_register.stride = 20) when the issue occurs. I suspect it tries to sample the framebuffer.
         }
@@ -1729,7 +1745,7 @@ pub const Renderer = struct {
 
         // Search for an available texture index.
         var texture_index: TextureIndex = InvalidTextureIndex;
-        for (0..Renderer.MaxTextures[size_index]) |i| {
+        for (0..MaxTextures[size_index]) |i| {
             // Prefer slots that have never been used to keep textures in the cache for as long as possible.
             if (self.texture_metadata[size_index][i].status == .Invalid) {
                 texture_index = @as(TextureIndex, @intCast(i));
@@ -1740,7 +1756,7 @@ pub const Renderer = struct {
             texture_index = self.get_lru_texture_index(size_index);
 
         if (texture_index == InvalidTextureIndex) {
-            renderer_log.err(termcolor.red("Out of textures slot (size index: {d}, {d}x{d})"), .{ size_index, u_size, v_size });
+            log.err(termcolor.red("Out of textures slot (size index: {d}, {d}x{d})"), .{ size_index, u_size, v_size });
             return 0;
         }
 
@@ -1772,12 +1788,10 @@ pub const Renderer = struct {
         const copies = if (repeat_vertically) u_size / v_size else v_size / u_size;
         var tex_source = [2][]u8{ self._scratch_pad[0 .. 4 * u_size * v_size], self._scratch_pad[0 .. 4 * u_size * v_size] };
         // Flip the repetition depending on wrapping settings
-        const clamp_u = tsp_instruction.clamp_uv & 0b10 != 0;
-        const clamp_v = tsp_instruction.clamp_uv & 0b01 != 0;
-        const flip_u = tsp_instruction.flip_uv & 0b10 != 0 and !clamp_u;
-        const flip_v = tsp_instruction.flip_uv & 0b01 != 0 and !clamp_v;
         if (copies > 1) {
-            if ((clamp_u or flip_u) and !repeat_vertically) {
+            const clamp = tsp_instruction.clamp_uv;
+            const flip = tsp_instruction.final_flip_uv();
+            if ((clamp.u or flip.u) and !repeat_vertically) {
                 tex_source[1] = self._scratch_pad[4 * u_size * v_size .. 2 * 4 * u_size * v_size];
                 for (0..v_size) |v| {
                     for (0..u_size) |u| {
@@ -1786,7 +1800,7 @@ pub const Renderer = struct {
                         @memcpy(dst[0..4], src[0..4]);
                     }
                 }
-            } else if ((clamp_v or flip_v) and repeat_vertically) {
+            } else if ((clamp.v or flip.v) and repeat_vertically) {
                 tex_source[1] = self._scratch_pad[4 * u_size * v_size .. 2 * 4 * u_size * v_size];
                 for (0..v_size) |v| {
                     @memcpy(tex_source[1][4 * u_size * v ..][0 .. 4 * u_size], tex_source[0][4 * u_size * (v_size - v - 1) ..][0 .. 4 * u_size]);
@@ -1820,17 +1834,17 @@ pub const Renderer = struct {
         return texture_index;
     }
 
-    fn reset_texture_usage(self: *Renderer) void {
-        for (0..Renderer.MaxTextures.len) |j| {
-            for (0..Renderer.MaxTextures[j]) |i| {
+    fn reset_texture_usage(self: *@This()) void {
+        for (0..MaxTextures.len) |j| {
+            for (0..MaxTextures[j]) |i| {
                 self.texture_metadata[j][i].usage = 0;
             }
         }
     }
 
-    fn check_texture_usage(self: *Renderer) void {
-        for (0..Renderer.MaxTextures.len) |j| {
-            for (0..Renderer.MaxTextures[j]) |i| {
+    fn check_texture_usage(self: *@This()) void {
+        for (0..MaxTextures.len) |j| {
+            for (0..MaxTextures[j]) |i| {
                 if (self.texture_metadata[j][i].status != .Invalid) {
                     if (self.texture_metadata[j][i].status == .Outdated) {
                         self.texture_metadata[j][i].age += 1;
@@ -1945,8 +1959,6 @@ pub const Renderer = struct {
         const skipped_vertex_byte_size: u32 = 4 * (if (parameter_volume_mode) 3 + tag_skip else 3 + 2 * tag_skip);
         const start = addr + 12 + tags.tag_offset * skipped_vertex_byte_size;
 
-        var vertices: [4]Vertex = undefined;
-
         var vertex_byte_size: u32 = 4 * (3 + 1);
         var tex_idx: TextureIndex = 0;
 
@@ -1964,8 +1976,6 @@ pub const Renderer = struct {
         if (isp_tsp_instruction.offset == 1) {
             vertex_byte_size += 4 * 1;
         }
-
-        const use_alpha = tsp_instruction.use_alpha == 1;
 
         const tex = VertexTextureInfo{
             .index = tex_idx,
@@ -1991,6 +2001,8 @@ pub const Renderer = struct {
             },
         };
 
+        const use_alpha = tsp_instruction.use_alpha == 1;
+        var vertices: [4]Vertex = undefined;
         for (0..3) |i| {
             const vp = [_]u32{
                 gpu.read_vram(u32, @intCast(start + i * vertex_byte_size + 0)),
@@ -2022,7 +2034,7 @@ pub const Renderer = struct {
             }
             if (!use_alpha) base_color.a = 255;
 
-            vertices[i] = Vertex{
+            vertices[i] = .{
                 .primitive_index = @intCast(self.strips_metadata.items.len),
                 .x = @bitCast(vp[0]),
                 .y = @bitCast(vp[1]),
@@ -2066,7 +2078,7 @@ pub const Renderer = struct {
         vertices[2].x = 0.0;
         vertices[2].y = screen_height;
 
-        vertices[3] = Vertex{
+        vertices[3] = .{
             .primitive_index = vertices[0].primitive_index,
             .x = vertices[1].x,
             .y = vertices[2].y,
@@ -2105,7 +2117,7 @@ pub const Renderer = struct {
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.palette_buffer).?, 0, u8, self._scratch_pad[0 .. 4 * palette_ram.len]);
     }
 
-    pub fn update(self: *Renderer, gpu: *const HollyModule.Holly) !void {
+    pub fn update(self: *@This(), gpu: *const HollyModule.Holly) !void {
         {
             self._ta_lists_mutex.lock();
             defer self._ta_lists_mutex.unlock();
@@ -2149,7 +2161,7 @@ pub const Renderer = struct {
         //       currently handle, but always resulting in a 480 pixels high framebuffer.
         const ta_glob_tile_clip = gpu.read_register(HollyModule.TA_GLOB_TILE_CLIP, .TA_GLOB_TILE_CLIP);
         if (ta_glob_tile_clip.tile_x_num != 19 and ta_glob_tile_clip.tile_x_num != 39)
-            renderer_log.warn("Unusual TA_GLOB_TILE_CLIP: tile_x_num={d}, tile_y_num={d}.", .{ ta_glob_tile_clip.tile_x_num, ta_glob_tile_clip.tile_y_num });
+            log.warn("Unusual TA_GLOB_TILE_CLIP: tile_x_num={d}, tile_y_num={d}.", .{ ta_glob_tile_clip.tile_x_num, ta_glob_tile_clip.tile_y_num });
         self.guest_framebuffer_size = .{
             .width = 32 * @as(u32, ta_glob_tile_clip.tile_x_num + 1),
             .height = 32 * @as(u32, ta_glob_tile_clip.tile_y_num + 1),
@@ -2212,7 +2224,7 @@ pub const Renderer = struct {
                         //        - Sort fragments with dst=1 separately.
                         //        - When blending, if a fragment with src=1 is encountered, blend all dst=1 fragments with a lower index and use the result as the source. Remove the used fragments.
                         if (Once(@src()))
-                            renderer_log.warn(termcolor.yellow("Secondary Accumulation Buffer usage detected in {t} pass (src_select={d}, dst_select={d}). This is not implemented, these polygons will be skipped."), .{ list_type, tsp_instruction.src_select, tsp_instruction.dst_select });
+                            log.warn(termcolor.yellow("Secondary Accumulation Buffer usage detected in {t} pass (src_select={d}, dst_select={d}). This is not implemented, these polygons will be skipped."), .{ list_type, tsp_instruction.src_select, tsp_instruction.dst_select });
                         continue;
                     }
 
@@ -2501,7 +2513,7 @@ pub const Renderer = struct {
                                     for (self.vertices.items[strip_start..]) |*v| {
                                         if (v.u == one_actually) v.u = 1.0;
                                         if (v.v == one_actually) v.v = 1.0;
-                                        tsp_instruction.clamp_uv = 0b11; // Force UV clamping on to avoid wrapping errors after upscaling. (NOTE: UVs are in [0,1], so the value of flip_uv is irrelevant.)
+                                        tsp_instruction.clamp_uv = .{ .u = true, .v = true }; // Force UV clamping on to avoid wrapping errors after upscaling. (NOTE: UVs are in [0,1], so the value of flip_uv is irrelevant.)
                                     }
                                 } else if (width == texel_width and height == texel_height) {
                                     // Example: Text in the Crazy Taxi menu.
@@ -2524,14 +2536,10 @@ pub const Renderer = struct {
                         self.texture_metadata[texture_size_index][tex_idx_area_1].usage += 1;
                     }
 
-                    const clamp_u = tsp_instruction.clamp_uv & 0b10 != 0;
-                    const clamp_v = tsp_instruction.clamp_uv & 0b01 != 0;
-
-                    const flip_u = tsp_instruction.flip_uv & 0b10 != 0 and !clamp_u;
-                    const flip_v = tsp_instruction.flip_uv & 0b01 != 0 and !clamp_v;
-
-                    const u_addr_mode: wgpu.AddressMode = if (clamp_u) .clamp_to_edge else if (flip_u) .mirror_repeat else .repeat;
-                    const v_addr_mode: wgpu.AddressMode = if (clamp_v) .clamp_to_edge else if (flip_v) .mirror_repeat else .repeat;
+                    const clamp = tsp_instruction.clamp_uv;
+                    const flip = tsp_instruction.final_flip_uv();
+                    const u_addr_mode: wgpu.AddressMode = if (clamp.u) .clamp_to_edge else if (flip.u) .mirror_repeat else .repeat;
+                    const v_addr_mode: wgpu.AddressMode = if (clamp.v) .clamp_to_edge else if (flip.v) .mirror_repeat else .repeat;
 
                     // TODO: Add support for mipmapping (Tri-linear filtering) (And figure out what Pass A and Pass B means!).
                     // Force nearest filtering when using palette textures (we'll be sampling indices into the palette). Filtering will have to be done in the shader.
@@ -2588,7 +2596,7 @@ pub const Renderer = struct {
                             .mipmap_bit = if (area1_texture_control) |tc| tc.mip_mapped else 0,
                             .bump_mapping_bit = if (area1_texture_control) |tc| (if (tc.pixel_format == .BumpMap) 1 else 0) else 0,
                         },
-                    } else VertexTextureInfo.invalid();
+                    } else .invalid;
 
                     try self.strips_metadata.append(self._allocator, .{
                         .area0_instructions = area0_instructions,
@@ -2597,7 +2605,7 @@ pub const Renderer = struct {
 
                     // Triangle Strips
                     if (self.vertices.items.len - strip_first_vertex_index < 3) {
-                        renderer_log.err("Not enough vertices in strip: {d} vertices.", .{self.vertices.items.len - strip_first_vertex_index});
+                        log.err("Not enough vertices in strip: {d} vertices.", .{self.vertices.items.len - strip_first_vertex_index});
                     } else {
                         // "In the case of a flat-shaded polygon, the Shading Color data (the Base Color, Offset Color, and Bump Map parameters) become valid starting with the third vertex after the start of the strip." - Thanks MetalliC for pointing that out!
                         if (isp_tsp_instruction.gouraud == 0) {
@@ -2622,14 +2630,14 @@ pub const Renderer = struct {
                         switch (list_type) {
                             .Opaque => {
                                 if (pipeline_key.src_blend_factor != .one or pipeline_key.dst_blend_factor != .zero) {
-                                    renderer_log.debug("Unexpected blend mode for opaque list: src={t}, dst={t}", .{ pipeline_key.src_blend_factor, pipeline_key.dst_blend_factor });
+                                    log.debug("Unexpected blend mode for opaque list: src={t}, dst={t}", .{ pipeline_key.src_blend_factor, pipeline_key.dst_blend_factor });
                                     pipeline_key.src_blend_factor = .one;
                                     pipeline_key.dst_blend_factor = .zero;
                                 }
                             },
                             .PunchThrough => {
                                 if (pipeline_key.src_blend_factor != .src_alpha or pipeline_key.dst_blend_factor != .one_minus_src_alpha) {
-                                    renderer_log.debug("Unexpected blend mode for punch through list: src={t}, dst={t}", .{ pipeline_key.src_blend_factor, pipeline_key.dst_blend_factor });
+                                    log.debug("Unexpected blend mode for punch through list: src={t}, dst={t}", .{ pipeline_key.src_blend_factor, pipeline_key.dst_blend_factor });
                                     pipeline_key.src_blend_factor = .src_alpha;
                                     pipeline_key.dst_blend_factor = .one_minus_src_alpha;
                                 }
@@ -2753,7 +2761,7 @@ pub const Renderer = struct {
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, @sizeOf(Vertex) * FirstVertex, Vertex, self.vertices.items);
     }
 
-    fn convert_clipping(self: *Renderer, user_clip: ?HollyModule.UserTileClipInfo) HollyModule.UserTileClipInfo {
+    fn convert_clipping(self: *@This(), user_clip: ?HollyModule.UserTileClipInfo) HollyModule.UserTileClipInfo {
         const factor = @divTrunc(self.resolution.width, NativeResolution.width);
         const x = factor * self.global_clip.x.min;
         const y = factor * self.global_clip.y.min;
@@ -2763,7 +2771,7 @@ pub const Renderer = struct {
         if (user_clip) |uc| {
             // FIXME: Handle other usages.
             //        Use Stencil for OutsideEnabled
-            if (uc.usage == .InsideEnabled) {
+            if (uc.usage == .InsideEnabled)
                 return .{
                     .usage = .InsideEnabled,
                     .x = @max(factor *| uc.x, x),
@@ -2771,7 +2779,6 @@ pub const Renderer = struct {
                     .width = @min(factor *| uc.width, width),
                     .height = @min(factor *| uc.height, height),
                 };
-            }
         }
         return .{
             .usage = .InsideEnabled,
@@ -2783,7 +2790,7 @@ pub const Renderer = struct {
     }
 
     // Convert framebuffer from internal resolution to window resolution
-    pub fn blit_framebuffer(self: *Renderer) void {
+    pub fn blit_framebuffer(self: *const @This()) void {
         const gctx = self._gctx;
 
         if (gctx.lookupResource(self.blit_pipeline)) |pipeline| {
@@ -2796,19 +2803,17 @@ pub const Renderer = struct {
 
                 const framebuffer_resize_bind_group = gctx.lookupResource(self.framebuffer_resize_bind_group).?;
 
-                const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                    .view = gctx.lookupResource(self.resized_framebuffer.view).?,
-                    .load_op = .clear,
-                    .store_op = .store,
-                }};
-                const render_pass_info = wgpu.RenderPassDescriptor{
-                    .label = "Blit Framebuffer",
-                    .color_attachment_count = color_attachments.len,
-                    .color_attachments = &color_attachments,
-                };
-
                 {
-                    const pass = encoder.beginRenderPass(render_pass_info);
+                    const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                        .view = gctx.lookupResource(self.resized_framebuffer.view).?,
+                        .load_op = .clear,
+                        .store_op = .store,
+                    }};
+                    const pass = encoder.beginRenderPass(.{
+                        .label = "Blit Framebuffer",
+                        .color_attachment_count = color_attachments.len,
+                        .color_attachments = &color_attachments,
+                    });
                     defer {
                         pass.end();
                         pass.release();
@@ -2831,36 +2836,24 @@ pub const Renderer = struct {
         }
     }
 
-    pub fn render(self: *Renderer, holly: *HollyModule.Holly, render_to_texture: bool) !void {
+    pub fn render(self: *@This(), holly: *HollyModule.Holly, render_to_texture: bool) !void {
         const gctx = self._gctx;
 
         if (render_to_texture) {
-            renderer_log.info("Rendering to texture! [{d},{d}] to [{d},{d}]", .{ self.global_clip.x.min, self.global_clip.y.min, self.global_clip.x.max, self.global_clip.y.max });
+            log.info("Rendering to texture! [{d},{d}] to [{d},{d}]", .{ self.global_clip.x.min, self.global_clip.y.min, self.global_clip.x.max, self.global_clip.y.max });
             if (!self.ExperimentalRenderToTexture) {
-                renderer_log.warn("ExperimentalRenderToTexture is disabled.", .{});
+                log.warn("ExperimentalRenderToTexture is disabled.", .{});
                 return;
             }
         }
 
-        const Target = struct { native: struct { texture: wgpu.Texture, view: wgpu.TextureView }, resized: struct { texture: wgpu.Texture, view: wgpu.TextureView } };
-        const target = if (render_to_texture) Target{
-            .native = .{
-                .texture = gctx.lookupResource(self.render_to_texture_target.texture).?,
-                .view = gctx.lookupResource(self.render_to_texture_target.view).?,
-            },
-            .resized = .{
-                .texture = gctx.lookupResource(self.resized_render_to_texture_target.texture).?,
-                .view = gctx.lookupResource(self.resized_render_to_texture_target.view).?,
-            },
-        } else Target{
-            .native = .{
-                .texture = gctx.lookupResource(self.framebuffer.texture).?,
-                .view = gctx.lookupResource(self.framebuffer.view).?,
-            },
-            .resized = .{
-                .texture = gctx.lookupResource(self.resized_framebuffer.texture).?,
-                .view = gctx.lookupResource(self.resized_framebuffer.view).?,
-            },
+        const Target = struct { native: TextureAndView.Resources, resized: TextureAndView.Resources };
+        const target: Target = if (render_to_texture) .{
+            .native = self.render_to_texture_target.lookup(gctx),
+            .resized = self.resized_render_to_texture_target.lookup(gctx),
+        } else .{
+            .native = self.framebuffer.lookup(gctx),
+            .resized = self.resized_framebuffer.lookup(gctx),
         };
 
         const commands = commands: {
@@ -2871,21 +2864,24 @@ pub const Renderer = struct {
             const ib_info = gctx.lookupResourceInfo(self.index_buffer).?;
 
             const uniform_mem = gctx.uniformsAllocate(Uniforms, 1);
-            uniform_mem.slice[0].depth_min = self.min_depth;
-            uniform_mem.slice[0].depth_max = self.max_depth;
-            uniform_mem.slice[0].framebuffer_width = @floatFromInt(self.guest_framebuffer_size.width);
-            uniform_mem.slice[0].framebuffer_height = @floatFromInt(self.guest_framebuffer_size.height);
-            uniform_mem.slice[0].pt_alpha_ref = self.pt_alpha_ref;
-            uniform_mem.slice[0].fpu_shad_scale = self.fpu_shad_scale;
-            uniform_mem.slice[0].fog_col_pal = self.fog_col_pal;
-            uniform_mem.slice[0].fog_col_vert = self.fog_col_vert;
-            uniform_mem.slice[0].fog_density = self.fog_density;
-            uniform_mem.slice[0].fog_lut = self.fog_lut;
+            uniform_mem.slice[0] = .{
+                .depth_min = self.min_depth,
+                .depth_max = self.max_depth,
+                .framebuffer_width = @floatFromInt(self.guest_framebuffer_size.width),
+                .framebuffer_height = @floatFromInt(self.guest_framebuffer_size.height),
+                .fpu_shad_scale = self.fpu_shad_scale,
+                .fog_density = self.fog_density,
+                .pt_alpha_ref = self.pt_alpha_ref,
+                .fog_col_pal = self.fog_col_pal,
+                .fog_col_vert = self.fog_col_vert,
+                .fog_lut = self.fog_lut,
+            };
 
             const bind_group = gctx.lookupResource(self.bind_group).?;
             const depth_view = gctx.lookupResource(self.depth.view).?;
 
-            skip_background: {
+            // Background
+            if (gctx.lookupResource(self.get_or_put_pipeline(BackgroundPipelineKey, .Async))) |background_pipeline| {
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{
                     .{
                         .view = target.resized.view,
@@ -2898,23 +2894,21 @@ pub const Renderer = struct {
                         .store_op = .store,
                     },
                 };
-                const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
-                    .view = depth_view,
-                    .depth_load_op = .clear,
-                    .depth_store_op = .store,
-                    .depth_clear_value = DepthClearValue,
-                    .stencil_load_op = .clear,
-                    .stencil_store_op = .discard,
-                    .stencil_clear_value = 0,
-                    .stencil_read_only = .false,
-                };
-                const render_pass_info = wgpu.RenderPassDescriptor{
+                const pass = encoder.beginRenderPass(.{
                     .label = "Background",
                     .color_attachment_count = color_attachments.len,
                     .color_attachments = &color_attachments,
-                    .depth_stencil_attachment = &depth_attachment,
-                };
-                const pass = encoder.beginRenderPass(render_pass_info);
+                    .depth_stencil_attachment = &.{
+                        .view = depth_view,
+                        .depth_load_op = .clear,
+                        .depth_store_op = .store,
+                        .depth_clear_value = DepthClearValue,
+                        .stencil_load_op = .clear,
+                        .stencil_store_op = .discard,
+                        .stencil_clear_value = 0,
+                        .stencil_read_only = .false,
+                    },
+                });
                 defer {
                     pass.end();
                     pass.release();
@@ -2925,17 +2919,7 @@ pub const Renderer = struct {
 
                 pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
 
-                // Draw background
-                const background_pipeline = self.get_or_put_pipeline(.{
-                    .translucent = false,
-                    .src_blend_factor = .one,
-                    .dst_blend_factor = .zero,
-                    .depth_compare = .always,
-                    .depth_write_enabled = false,
-                    .culling_mode = .None,
-                }, .Async);
-                const bg_pipeline = gctx.lookupResource(background_pipeline) orelse break :skip_background;
-                pass.setPipeline(bg_pipeline);
+                pass.setPipeline(background_pipeline);
                 pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)]).?, &.{});
                 pass.drawIndexed(FirstIndex, 1, 0, 0, 0);
             }
@@ -2958,23 +2942,21 @@ pub const Renderer = struct {
                                 .store_op = .store,
                             },
                         };
-                        const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
-                            .view = depth_view,
-                            .depth_load_op = if (render_pass.z_clear) .clear else .load,
-                            .depth_store_op = .store,
-                            .depth_clear_value = DepthClearValue,
-                            .stencil_load_op = .clear,
-                            .stencil_store_op = .discard,
-                            .stencil_clear_value = 0,
-                            .stencil_read_only = .false,
-                        };
-                        const render_pass_info = wgpu.RenderPassDescriptor{
+                        const pass = encoder.beginRenderPass(.{
                             .label = "Opaque pass",
                             .color_attachment_count = color_attachments.len,
                             .color_attachments = &color_attachments,
-                            .depth_stencil_attachment = &depth_attachment,
-                        };
-                        const pass = encoder.beginRenderPass(render_pass_info);
+                            .depth_stencil_attachment = &.{
+                                .view = depth_view,
+                                .depth_load_op = if (render_pass.z_clear) .clear else .load,
+                                .depth_store_op = .store,
+                                .depth_clear_value = DepthClearValue,
+                                .stencil_load_op = .clear,
+                                .stencil_store_op = .discard,
+                                .stencil_clear_value = 0,
+                                .stencil_read_only = .false,
+                            },
+                        });
                         defer {
                             pass.end();
                             pass.release();
@@ -2987,7 +2969,7 @@ pub const Renderer = struct {
 
                         // Opaque and PunchThrough geometry
                         // FIXME: PunchThrough should be drawn last? Is there a case where it matters with this setup?
-                        inline for ([2]*const PassMetadata{ &render_pass.opaque_pass, &render_pass.punchthrough_pass }) |metadata| {
+                        inline for (.{ &render_pass.opaque_pass, &render_pass.punchthrough_pass }) |metadata| {
                             for (metadata.steps.items) |step| {
                                 var it = step.iterator();
                                 while (it.next()) |entry| {
@@ -3017,127 +2999,121 @@ pub const Renderer = struct {
                         .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy.texture).? },
                         .{ .width = self.resolution.width, .height = self.resolution.height },
                     );
-                }
 
-                if (!render_pass.opaque_modifier_volume_pointer.empty and ta_lists.opaque_modifier_volumes.items.len > 0) skip_mv: {
-                    const closed_modifier_volume_pipeline = gctx.lookupResource(self.closed_modifier_volume_pipeline) orelse break :skip_mv;
-                    const shift_stencil_buffer_modifier_volume_pipeline = gctx.lookupResource(self.shift_stencil_buffer_modifier_volume_pipeline) orelse break :skip_mv;
-                    const modifier_volume_apply_pipeline = gctx.lookupResource(self.modifier_volume_apply_pipeline) orelse break :skip_mv;
-                    const open_modifier_volume_pipeline = gctx.lookupResource(self.open_modifier_volume_pipeline) orelse break :skip_mv;
+                    if (!render_pass.opaque_modifier_volume_pointer.empty and ta_lists.opaque_modifier_volumes.items.len > 0) skip_mv: {
+                        const closed_modifier_volume_pipeline = gctx.lookupResource(self.closed_modifier_volume_pipeline) orelse break :skip_mv;
+                        const shift_stencil_buffer_modifier_volume_pipeline = gctx.lookupResource(self.shift_stencil_buffer_modifier_volume_pipeline) orelse break :skip_mv;
+                        const modifier_volume_apply_pipeline = gctx.lookupResource(self.modifier_volume_apply_pipeline) orelse break :skip_mv;
+                        const open_modifier_volume_pipeline = gctx.lookupResource(self.open_modifier_volume_pipeline) orelse break :skip_mv;
 
-                    // Write to stencil buffer
-                    {
-                        const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
-                        const vs_uniform_mem = gctx.uniformsAllocate(ModifierVolumeUniforms, 1);
-                        vs_uniform_mem.slice[0].min_depth = self.min_depth;
-                        vs_uniform_mem.slice[0].max_depth = self.max_depth;
-                        vs_uniform_mem.slice[0].framebuffer_width = @floatFromInt(self.guest_framebuffer_size.width);
-                        vs_uniform_mem.slice[0].framebuffer_height = @floatFromInt(self.guest_framebuffer_size.height);
+                        // Write to stencil buffer
+                        {
+                            const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
+                            const vs_uniform_mem = gctx.uniformsAllocate(ModifierVolumeUniforms, 1);
+                            vs_uniform_mem.slice[0] = .{
+                                .min_depth = self.min_depth,
+                                .max_depth = self.max_depth,
+                                .framebuffer_width = @floatFromInt(self.guest_framebuffer_size.width),
+                                .framebuffer_height = @floatFromInt(self.guest_framebuffer_size.height),
+                            };
 
-                        const modifier_volume_vb_info = gctx.lookupResourceInfo(self.modifier_volume_vertex_buffer).?;
+                            const pass = encoder.beginRenderPass(.{
+                                .label = "Modifier Volume Stencil",
+                                .color_attachment_count = 0,
+                                .color_attachments = null,
+                                .depth_stencil_attachment = &.{
+                                    .view = depth_view,
+                                    .depth_load_op = .load,
+                                    .depth_store_op = .store,
+                                    .depth_clear_value = DepthClearValue,
+                                    .depth_read_only = .false,
+                                    .stencil_load_op = .clear,
+                                    .stencil_store_op = .store,
+                                    .stencil_clear_value = 0,
+                                    .stencil_read_only = .false,
+                                },
+                            });
+                            defer {
+                                pass.end();
+                                pass.release();
+                            }
 
-                        const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
-                            .view = depth_view,
-                            .depth_load_op = .load,
-                            .depth_store_op = .store,
-                            .depth_clear_value = DepthClearValue,
-                            .depth_read_only = .false,
-                            .stencil_load_op = .clear,
-                            .stencil_store_op = .store,
-                            .stencil_clear_value = 0,
-                            .stencil_read_only = .false,
-                        };
-                        const render_pass_info = wgpu.RenderPassDescriptor{
-                            .label = "Modifier Volume Stencil",
-                            .color_attachment_count = 0,
-                            .color_attachments = null,
-                            .depth_stencil_attachment = &depth_attachment,
-                        };
+                            const modifier_volume_vb_info = gctx.lookupResourceInfo(self.modifier_volume_vertex_buffer).?;
+                            pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
+                            pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_uniform_mem.offset});
 
-                        const pass = encoder.beginRenderPass(render_pass_info);
-                        defer {
-                            pass.end();
-                            pass.release();
-                        }
+                            // Close volume pass.
+                            // Counts triangles passing the depth test: If odd, the volume intersects the depth buffer.
+                            for (ta_lists.opaque_modifier_volumes.items) |volume| {
+                                if (volume.instructions.volume_instruction == .OutsideLastPolygon and Once(@src())) log.warn(termcolor.yellow("TODO: Unimplemented Exclusion Modifier Volume."), .{});
+                                if (volume.closed) {
+                                    pass.setStencilReference(0x00);
+                                    pass.setPipeline(closed_modifier_volume_pipeline);
+                                    pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
 
-                        pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
-                        pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_uniform_mem.offset});
-
-                        // Close volume pass.
-                        // Counts triangles passing the depth test: If odd, the volume intersects the depth buffer.
-                        for (ta_lists.opaque_modifier_volumes.items) |volume| {
-                            if (volume.instructions.volume_instruction == .OutsideLastPolygon) if (Once(@src())) renderer_log.warn(termcolor.yellow("TODO: Unimplemented Exclusion Modifier Volume."), .{});
-                            if (volume.closed) {
-                                pass.setStencilReference(0x00);
-                                pass.setPipeline(closed_modifier_volume_pipeline);
-                                pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
-
-                                pass.setStencilReference(0x01);
-                                pass.setPipeline(shift_stencil_buffer_modifier_volume_pipeline);
-                                // NOTE: We could draw a single fullscreen quad here.
-                                pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
+                                    pass.setStencilReference(0x01);
+                                    pass.setPipeline(shift_stencil_buffer_modifier_volume_pipeline);
+                                    // NOTE: We could draw a single fullscreen quad here.
+                                    pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
+                                }
+                            }
+                            // Open "volume" pass.
+                            // Triangle passing the depth test immediately set the stencil buffer.
+                            pass.setStencilReference(0x02);
+                            pass.setPipeline(open_modifier_volume_pipeline);
+                            for (ta_lists.opaque_modifier_volumes.items) |volume| {
+                                if (!volume.closed)
+                                    pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
                             }
                         }
-                        // Open "volume" pass.
-                        // Triangle passing the depth test immediately set the stencil buffer.
-                        pass.setStencilReference(0x02);
-                        pass.setPipeline(open_modifier_volume_pipeline);
-                        for (ta_lists.opaque_modifier_volumes.items) |volume| {
-                            if (!volume.closed)
-                                pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
-                        }
-                    }
-                    // Copy 'area 1' colors where the stencil buffer is non-zero.
-                    {
-                        const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
-                        const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
-                        const mva_bind_group = gctx.lookupResource(self.modifier_volume_apply_bind_group).?;
-                        const dest_view = target.resized.view;
+                        // Copy 'area 1' colors where the stencil buffer is non-zero.
+                        {
+                            const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
+                            const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
+                            const mva_bind_group = gctx.lookupResource(self.modifier_volume_apply_bind_group).?;
 
-                        const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
-                            .view = depth_view,
-                            .depth_load_op = .undef,
-                            .depth_store_op = .undef,
-                            .depth_clear_value = DepthClearValue,
-                            .depth_read_only = .true,
-                            .stencil_load_op = .undef,
-                            .stencil_store_op = .undef,
-                            .stencil_clear_value = 0,
-                            .stencil_read_only = .true,
-                        };
-                        const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                            .view = dest_view,
-                            .load_op = .load,
-                            .store_op = .store,
-                        }};
-                        const render_pass_info = wgpu.RenderPassDescriptor{
-                            .label = "Modifier Volume Apply",
-                            .color_attachment_count = color_attachments.len,
-                            .color_attachments = &color_attachments,
-                            .depth_stencil_attachment = &depth_attachment,
-                        };
+                            const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                                .view = target.resized.view,
+                                .load_op = .load,
+                                .store_op = .store,
+                            }};
+                            const pass = encoder.beginRenderPass(.{
+                                .label = "Modifier Volume Apply",
+                                .color_attachment_count = color_attachments.len,
+                                .color_attachments = &color_attachments,
+                                .depth_stencil_attachment = &.{
+                                    .view = depth_view,
+                                    .depth_load_op = .undef,
+                                    .depth_store_op = .undef,
+                                    .depth_clear_value = DepthClearValue,
+                                    .depth_read_only = .true,
+                                    .stencil_load_op = .undef,
+                                    .stencil_store_op = .undef,
+                                    .stencil_clear_value = 0,
+                                    .stencil_read_only = .true,
+                                },
+                            });
+                            defer {
+                                pass.end();
+                                pass.release();
+                            }
 
-                        const pass = encoder.beginRenderPass(render_pass_info);
-                        defer {
-                            pass.end();
-                            pass.release();
+                            pass.setPipeline(modifier_volume_apply_pipeline);
+                            pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
+                            pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
+                            pass.setBindGroup(0, mva_bind_group, &.{});
+
+                            pass.setStencilReference(0x02);
+                            pass.drawIndexed(4, 1, 0, 0, 0);
                         }
 
-                        pass.setPipeline(modifier_volume_apply_pipeline);
-                        pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
-                        pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
-                        pass.setBindGroup(0, mva_bind_group, &.{});
-
-                        pass.setStencilReference(0x02);
-                        pass.drawIndexed(4, 1, 0, 0, 0);
+                        // Copy the result to resized_framebuffer_copy_texture_view too.
+                        encoder.copyTextureToTexture(
+                            .{ .texture = target.resized.texture },
+                            .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy.texture).? },
+                            .{ .width = self.resolution.width, .height = self.resolution.height },
+                        );
                     }
-
-                    // Copy the result to resized_framebuffer_copy_texture_view too.
-                    encoder.copyTextureToTexture(
-                        .{ .texture = target.resized.texture },
-                        .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy.texture).? },
-                        .{ .width = self.resolution.width, .height = self.resolution.height },
-                    );
                 }
 
                 if (!render_pass.translucent_list_pointer.empty) {
@@ -3159,22 +3135,20 @@ pub const Renderer = struct {
                                 .store_op = .store,
                             },
                         };
-                        const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
-                            .view = depth_view,
-                            .depth_load_op = .load,
-                            .depth_store_op = .store,
-                            .stencil_load_op = .clear,
-                            .stencil_store_op = .discard,
-                            .stencil_clear_value = 0,
-                            .stencil_read_only = .false,
-                        };
-                        const render_pass_info = wgpu.RenderPassDescriptor{
+                        const pass = encoder.beginRenderPass(.{
                             .label = "Presorted Translucent pass",
                             .color_attachment_count = color_attachments.len,
                             .color_attachments = &color_attachments,
-                            .depth_stencil_attachment = &depth_attachment,
-                        };
-                        const pass = encoder.beginRenderPass(render_pass_info);
+                            .depth_stencil_attachment = &.{
+                                .view = depth_view,
+                                .depth_load_op = .load,
+                                .depth_store_op = .store,
+                                .stencil_load_op = .clear,
+                                .stencil_store_op = .discard,
+                                .stencil_clear_value = 0,
+                                .stencil_read_only = .false,
+                            },
+                        });
                         defer {
                             pass.end();
                             pass.release();
@@ -3207,27 +3181,12 @@ pub const Renderer = struct {
                             }
                         }
 
-                        // TODO: Support translucent modifier volumes in pre-sorted mode
                         if (ta_lists.translucent_modifier_volumes.items.len > 0 and Once(@src()))
-                            renderer_log.warn(termcolor.yellow("(TODO) Translucent modifier volumes are not supported in pre-sorted mode."), .{});
+                            log.err(termcolor.red("Translucent modifier volumes cannot be used in Pre-sort mode."), .{});
                     } else if (render_pass.translucent_pass.steps.items.len > 0) {
                         // Generate all translucent fragments
                         const translucent_bind_group = gctx.lookupResource(self.translucent_bind_group).?;
                         const blend_bind_group = if (render_to_texture) gctx.lookupResource(self.blend_bind_group_render_to_texture).? else gctx.lookupResource(self.blend_bind_group).?;
-
-                        const oit_color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                            .view = target.resized.view,
-                            .load_op = .load,
-                            .store_op = .store,
-                        }};
-                        const oit_render_pass_info = wgpu.RenderPassDescriptor{
-                            .label = "Translucent Pass",
-                            .color_attachment_count = oit_color_attachments.len,
-                            .color_attachments = &oit_color_attachments,
-                            .depth_stencil_attachment = null, // TODO: Use the depth buffer rather than discarding the fragments manually?
-                            // NOTE: We could need to sample it in the fragment shader to correctly implement "Pre-sort"
-                            //       mode where the depth_compare mode can be set by the user (it is written, but unused).
-                        };
 
                         const slice_size = self.resolution.height / self.oit_horizontal_slices;
                         for (0..self.oit_horizontal_slices) |i| {
@@ -3259,20 +3218,17 @@ pub const Renderer = struct {
 
                                 const modifier_volume_vb_info = gctx.lookupResourceInfo(self.modifier_volume_vertex_buffer).?;
 
-                                const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
-                                    .view = depth_view,
-                                    .depth_read_only = .true,
-                                    .stencil_read_only = .true,
-                                };
-                                const render_pass_info = wgpu.RenderPassDescriptor{
-                                    .label = "Translucent Modifier Volumes",
-                                    .color_attachment_count = 0,
-                                    .color_attachments = null,
-                                    .depth_stencil_attachment = &depth_attachment,
-                                };
-
                                 {
-                                    const pass = encoder.beginRenderPass(render_pass_info);
+                                    const pass = encoder.beginRenderPass(.{
+                                        .label = "Translucent Modifier Volumes",
+                                        .color_attachment_count = 0,
+                                        .color_attachments = null,
+                                        .depth_stencil_attachment = &.{
+                                            .view = depth_view,
+                                            .depth_read_only = .true,
+                                            .stencil_read_only = .true,
+                                        },
+                                    });
                                     defer {
                                         pass.end();
                                         pass.release();
@@ -3285,16 +3241,16 @@ pub const Renderer = struct {
                                     // Close volume pass.
                                     var volume_index: u32 = 0;
                                     for (ta_lists.translucent_modifier_volumes.items) |volume| {
-                                        if (volume.instructions.volume_instruction == .OutsideLastPolygon) if (Once(@src())) renderer_log.warn(termcolor.yellow("TODO: Unimplemented Exclusion Translucent Modifier Volume."), .{});
+                                        if (volume.instructions.volume_instruction == .OutsideLastPolygon) if (Once(@src())) log.warn(termcolor.yellow("TODO: Unimplemented Exclusion Translucent Modifier Volume."), .{});
                                         if (volume.closed) {
                                             const oit_fs_uniform_mem = gctx.uniformsAllocate(struct { volume_index: u32 }, 1);
-                                            oit_fs_uniform_mem.slice[0].volume_index = volume_index;
+                                            oit_fs_uniform_mem.slice[0] = .{ .volume_index = volume_index };
                                             pass.setBindGroup(1, translucent_modvol_bind_group, &.{ oit_mv_uniform_mem.offset, oit_fs_uniform_mem.offset });
                                             volume_index += 1;
 
                                             pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
                                         } else {
-                                            renderer_log.warn(termcolor.yellow("TODO: Unhandled Open Translucent Modifier Volume!"), .{});
+                                            log.warn(termcolor.yellow("TODO: Unhandled Open Translucent Modifier Volume!"), .{});
                                             // TODO: Almost the same thing, but the compute shader is really simple: Take the smallest
                                             //       depth value and add a volume from it to "infinity" (1.0+ depth). Or find a more efficient way :)
                                         }
@@ -3307,7 +3263,7 @@ pub const Renderer = struct {
                                         pass.end();
                                         pass.release();
                                     }
-                                    const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, self.oit_horizontal_slices * 8) };
+                                    const num_groups = .{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, self.oit_horizontal_slices * 8) };
                                     pass.setPipeline(translucent_modvol_merge_pipeline);
 
                                     pass.setBindGroup(0, translucent_modvol_merge_bind_group, &.{oit_mv_uniform_mem.offset});
@@ -3322,10 +3278,18 @@ pub const Renderer = struct {
                                 .start_y = start_y,
                             };
 
-                            skip: {
-                                const pipeline = gctx.lookupResource(self.translucent_pipeline) orelse break :skip;
-
-                                const pass = encoder.beginRenderPass(oit_render_pass_info);
+                            if (gctx.lookupResource(self.translucent_pipeline)) |pipeline| {
+                                const oit_color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                                    .view = target.resized.view,
+                                    .load_op = .load,
+                                    .store_op = .store,
+                                }};
+                                const pass = encoder.beginRenderPass(.{
+                                    .label = "Translucent Pass",
+                                    .color_attachment_count = oit_color_attachments.len,
+                                    .color_attachments = &oit_color_attachments,
+                                    .depth_stencil_attachment = null, // TODO: Use the depth buffer rather than discarding the fragments manually?
+                                });
                                 defer {
                                     pass.end();
                                     pass.release();
@@ -3342,8 +3306,8 @@ pub const Renderer = struct {
                                 for (render_pass.translucent_pass.steps.items) |step| {
                                     var it = step.iterator();
                                     while (it.next()) |entry| {
-                                        if (entry.value_ptr.*.draw_calls.count() > 0) {
-                                            for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
+                                        if (entry.value_ptr.draw_calls.count() > 0) {
+                                            for (entry.value_ptr.draw_calls.values()) |draw_call| {
                                                 if (draw_call.index_count > 0) {
                                                     var clip = self.convert_clipping(draw_call.user_clip);
                                                     const min_max_y = @min(clip.y + clip.height, start_y + slice_size);
@@ -3363,15 +3327,13 @@ pub const Renderer = struct {
                             }
 
                             // Blend the results of the translucent pass
-                            skip_blend: {
-                                const pipeline = gctx.lookupResource(self.blend_pipeline) orelse break :skip_blend;
-
+                            if (gctx.lookupResource(self.blend_pipeline)) |pipeline| {
                                 const pass = encoder.beginComputePass(null);
                                 defer {
                                     pass.end();
                                     pass.release();
                                 }
-                                const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, self.oit_horizontal_slices * 4) };
+                                const num_groups = .{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, self.oit_horizontal_slices * 4) };
                                 pass.setPipeline(pipeline);
                                 pass.setBindGroup(0, blend_bind_group, &.{oit_uniform_mem.offset});
                                 pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
@@ -3382,25 +3344,21 @@ pub const Renderer = struct {
             }
 
             // Blit to native resolution framebuffer texture
-            skip_blit: {
-                const pipeline = gctx.lookupResource(self.blit_pipeline) orelse break :skip_blit;
-
+            if (gctx.lookupResource(self.blit_pipeline)) |pipeline| {
                 const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
                 const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
-                const blit_bind_group = if (render_to_texture) gctx.lookupResource(self.blit_bind_group_render_to_texture).? else gctx.lookupResource(self.blit_bind_group).?;
+                const blit_bind_group = gctx.lookupResource(if (render_to_texture) self.blit_bind_group_render_to_texture else self.blit_bind_group).?;
 
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
                     .view = target.native.view,
                     .load_op = .clear,
                     .store_op = .store,
                 }};
-                const render_pass_info = wgpu.RenderPassDescriptor{
+                const pass = encoder.beginRenderPass(.{
                     .label = "Framebuffer Blit",
                     .color_attachment_count = color_attachments.len,
                     .color_attachments = &color_attachments,
-                };
-
-                const pass = encoder.beginRenderPass(render_pass_info);
+                });
                 defer {
                     pass.end();
                     pass.release();
@@ -3420,7 +3378,7 @@ pub const Renderer = struct {
                 if (!self.ExperimentalRenderToVRAM) {
                     // TODO: How is the minimum value of the global_clip used exactly? (Find a game where it isn't just [0, 0].)
                     if (self.global_clip.x.min != 0 or self.global_clip.y.min != 0)
-                        renderer_log.warn("Render to texture with unusual global_clip:  [{d},{d}] to [{d},{d}]", .{ self.global_clip.x.min, self.global_clip.y.min, self.global_clip.x.max, self.global_clip.y.max });
+                        log.warn("Render to texture with unusual global_clip:  [{d},{d}] to [{d},{d}]", .{ self.global_clip.x.min, self.global_clip.y.min, self.global_clip.x.max, self.global_clip.y.max });
                     const u_size: u3 = @intCast(std.math.log2(try std.math.ceilPowerOfTwo(u32, self.global_clip.x.max >> 3)));
                     const v_size: u3 = @intCast(std.math.log2(try std.math.ceilPowerOfTwo(u32, self.global_clip.y.max >> 3)));
                     const size_index: u3 = @max(u_size, v_size);
@@ -3431,7 +3389,7 @@ pub const Renderer = struct {
                     const pixel_size: u32 = 2;
 
                     var texture_index: TextureIndex = InvalidTextureIndex;
-                    for (0..Renderer.MaxTextures[size_index]) |i| {
+                    for (0..MaxTextures[size_index]) |i| {
                         // Prefer slots that have never been used to keep textures in the cache for as long as possible.
                         if (self.texture_metadata[size_index][i].status == .Invalid) {
                             if (texture_index == InvalidTextureIndex)
@@ -3459,9 +3417,7 @@ pub const Renderer = struct {
                             .{
                                 .texture = self._gctx.lookupResource(self.texture_arrays[size_index].texture).?,
                                 .mip_level = 0,
-                                .origin = .{
-                                    .z = @intCast(texture_index),
-                                },
+                                .origin = .{ .z = @intCast(texture_index) },
                                 .aspect = .all,
                             },
                             .{
@@ -3496,8 +3452,8 @@ pub const Renderer = struct {
                             .mipmap_d_adjust = 0,
                             .supersample_texture = 0,
                             .filter_mode = .Point,
-                            .clamp_uv = 0,
-                            .flip_uv = 0,
+                            .clamp_uv = .{ .u = false, .v = false },
+                            .flip_uv = .{ .u = false, .v = false },
                             .ignore_texture_alpha = 0,
                             .use_alpha = 1,
                             .color_clamp = 0,
@@ -3554,33 +3510,22 @@ pub const Renderer = struct {
         // Read the result and copy it to guest VRAM
         if ((self.ExperimentalFramebufferEmulation or render_to_texture) and self.ExperimentalRenderToVRAM) {
             const copy_buffer = gctx.lookupResource(self.framebuffer_copy_buffer).?;
-            copy_buffer.mapAsync(
-                .{ .read = true },
-                0,
-                4 * Renderer.NativeResolution.width * Renderer.NativeResolution.height,
-                @ptrCast(&signal_fb_mapped),
-                null,
-            );
+            copy_buffer.mapAsync(.{ .read = true }, 0, 4 * NativeResolution.width * NativeResolution.height, &signal_fb_mapped, null);
             // Wait for mapping to be available. There's no synchronous way to do that AFAIK.
             // It needs to be unmapped before the next frame.
-            while (!fb_mapping_available) {
+            while (!fb_mapping_available)
                 gctx.device.tick();
-            }
             fb_mapping_available = false;
 
             defer copy_buffer.unmap();
-            const mapped_pixels = copy_buffer.getConstMappedRange(
-                u8,
-                0,
-                4 * Renderer.NativeResolution.width * Renderer.NativeResolution.height,
-            );
+            const mapped_pixels = copy_buffer.getConstMappedRange(u8, 0, 4 * NativeResolution.width * NativeResolution.height);
             if (mapped_pixels) |pixels| {
                 holly.write_framebuffer(self.write_back_parameters, pixels);
-            } else std.log.err(termcolor.red("Failed to map framebuffer"), .{});
+            } else log.err(termcolor.red("Failed to map framebuffer"), .{});
         }
     }
 
-    pub fn draw(self: *Renderer) void {
+    pub fn draw(self: *const @This()) void {
         if (self._gctx.lookupResource(self.blit_pipeline)) |pipeline| {
             const back_buffer_view = self._gctx.swapchain.getCurrentTextureView();
             defer back_buffer_view.release();
@@ -3600,13 +3545,11 @@ pub const Renderer = struct {
                         .load_op = .clear,
                         .store_op = .store,
                     }};
-                    const render_pass_info = wgpu.RenderPassDescriptor{
+                    const pass = encoder.beginRenderPass(.{
                         .label = "Final Blit",
                         .color_attachment_count = color_attachments.len,
                         .color_attachments = &color_attachments,
-                    };
-
-                    const pass = encoder.beginRenderPass(render_pass_info);
+                    });
                     defer {
                         pass.end();
                         pass.release();
@@ -3629,7 +3572,7 @@ pub const Renderer = struct {
         }
     }
 
-    fn get_or_put_pipeline(self: *Renderer, pipeline_key: PipelineKey, sync: enum { Sync, Async }) zgpu.RenderPipelineHandle {
+    fn get_or_put_pipeline(self: *@This(), pipeline_key: PipelineKey, sync: enum { Sync, Async }) zgpu.RenderPipelineHandle {
         var key = pipeline_key;
         // Deduplicate culling modes None and Small: They resolve to the same pipeline for the renderer.
         if (key.culling_mode == .Small) key.culling_mode = .None;
@@ -3637,20 +3580,20 @@ pub const Renderer = struct {
         if (self.opaque_pipelines.get(key)) |pl|
             return pl;
 
-        renderer_log.info("Creating Pipeline: {f}", .{key});
+        log.info("Creating Pipeline: {f}", .{key});
         const start = std.time.milliTimestamp();
 
         const color_targets = [_]wgpu.ColorTargetState{
             .{
                 .format = zgpu.GraphicsContext.swapchain_format,
-                .blend = &wgpu.BlendState{
+                .blend = &.{
                     .color = .{ .operation = .add, .src_factor = key.src_blend_factor, .dst_factor = key.dst_blend_factor },
                     .alpha = .{ .operation = .add, .src_factor = key.src_blend_factor, .dst_factor = key.dst_blend_factor }, // FIXME: Not sure about this.
                 },
             },
             .{
                 .format = zgpu.GraphicsContext.swapchain_format,
-                .blend = &wgpu.BlendState{
+                .blend = &.{
                     .color = .{ .operation = .add, .src_factor = key.src_blend_factor, .dst_factor = key.dst_blend_factor },
                     .alpha = .{ .operation = .add, .src_factor = key.src_blend_factor, .dst_factor = key.dst_blend_factor },
                 },
@@ -3658,13 +3601,13 @@ pub const Renderer = struct {
         };
 
         const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-            .vertex = wgpu.VertexState{
+            .vertex = .{
                 .module = self.opaque_vertex_shader_module,
                 .entry_point = "main",
                 .buffer_count = VertexBufferLayout.len,
                 .buffers = &VertexBufferLayout,
             },
-            .primitive = wgpu.PrimitiveState{
+            .primitive = .{
                 .front_face = .ccw,
                 .cull_mode = switch (key.culling_mode) {
                     .None => .none,
@@ -3675,12 +3618,12 @@ pub const Renderer = struct {
                 .topology = .triangle_strip,
                 .strip_index_format = .uint32,
             },
-            .depth_stencil = &wgpu.DepthStencilState{
+            .depth_stencil = &.{
                 .format = .depth32_float_stencil8,
                 .depth_write_enabled = key.depth_write_enabled,
                 .depth_compare = key.depth_compare,
             },
-            .fragment = &wgpu.FragmentState{
+            .fragment = &.{
                 .module = if (key.translucent) self.pre_sort_fragment_shader_module else self.opaque_fragment_shader_module,
                 .entry_point = "main",
                 .target_count = color_targets.len,
@@ -3697,12 +3640,12 @@ pub const Renderer = struct {
                 return ptr.*;
             },
             else => {
-                defer renderer_log.info("Pipeline created in {d}ms", .{std.time.milliTimestamp() - start});
+                defer log.info("Pipeline created in {d}ms", .{std.time.milliTimestamp() - start});
                 const pl = self._gctx.createRenderPipeline(self.opaque_pipeline_layout, pipeline_descriptor);
 
                 if (!self._gctx.isResourceValid(pl)) {
-                    renderer_log.err("Error creating pipeline.", .{});
-                    renderer_log.err("{any}", .{pipeline_descriptor});
+                    log.err("Error creating pipeline.", .{});
+                    log.err("{any}", .{pipeline_descriptor});
                 }
 
                 self.opaque_pipelines.putAssumeCapacityNoClobber(key, pl);
@@ -3795,7 +3738,7 @@ pub const Renderer = struct {
         self.update_blit_to_screen_vertex_buffer();
     }
 
-    pub fn update_blit_to_screen_vertex_buffer(self: *@This()) void {
+    pub fn update_blit_to_screen_vertex_buffer(self: *const @This()) void {
         const iw: f32 = @floatFromInt(self.resolution.width);
         const ih: f32 = @floatFromInt(self.resolution.height);
         const tw: f32 = @floatFromInt(self._gctx.swapchain_descriptor.width);
@@ -4013,7 +3956,7 @@ pub const Renderer = struct {
     fn get_max_storage_buffer_binding_size(self: *const @This()) u64 {
         var r: zgpu.wgpu.SupportedLimits = .{};
         if (!self._gctx.device.getLimits(&r)) {
-            renderer_log.err("get_max_storage_buffer_binding_size: Failed to get device limits.", .{});
+            log.err("get_max_storage_buffer_binding_size: Failed to get device limits.", .{});
             return 134217728; // Min WebGPU spec.
         }
         return r.limits.max_storage_buffer_binding_size;

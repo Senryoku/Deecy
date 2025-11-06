@@ -671,8 +671,8 @@ pub const TSPInstructionWord = packed struct(u32) {
     mipmap_d_adjust: u4,
     supersample_texture: u1,
     filter_mode: enum(u2) { Point = 0, Bilinear = 1, TrilinearPassA = 2, TrilinearPassB = 3 },
-    clamp_uv: u2,
-    flip_uv: u2,
+    clamp_uv: packed struct(u2) { v: bool, u: bool },
+    flip_uv: packed struct(u2) { v: bool, u: bool },
     ignore_texture_alpha: u1,
     use_alpha: u1,
     color_clamp: u1,
@@ -688,6 +688,14 @@ pub const TSPInstructionWord = packed struct(u32) {
 
     pub fn get_v_size(self: @This()) u32 {
         return (@as(u32, 8) << self.texture_v_size);
+    }
+
+    /// "If the clamp function is enabled, the flip function is disabled."
+    pub inline fn final_flip_uv(self: @This()) struct { v: bool, u: bool } {
+        return .{
+            .u = self.flip_uv.u and !self.clamp_uv.u,
+            .v = self.flip_uv.v and !self.clamp_uv.v,
+        };
     }
 };
 

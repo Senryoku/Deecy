@@ -290,7 +290,12 @@ fn display_tsp_instruction(tsp_instruction: Holly.TSPInstructionWord) void {
         _ = zgui.tableNextColumn();
         zgui.text("DST: {d}  SRC: {d}", .{ tsp_instruction.dst_select, tsp_instruction.src_select });
         zgui.text("Fog: {t}", .{tsp_instruction.fog_control});
-        zgui.text("UV Clamp: {b:0>2}  Flip: {b:0>2}", .{ tsp_instruction.clamp_uv, tsp_instruction.flip_uv });
+        zgui.text("Clamp: {s}{s}  Flip: {s}{s}", .{
+            if (tsp_instruction.clamp_uv.u) "U" else "_",
+            if (tsp_instruction.clamp_uv.v) "V" else "_",
+            if (tsp_instruction.flip_uv.u) "U" else "_",
+            if (tsp_instruction.flip_uv.v) "V" else "_",
+        });
         zgui.text("DST: {t}  SRC: {t}", .{ tsp_instruction.dst_alpha_instr, tsp_instruction.src_alpha_instr });
         colored(tsp_instruction.supersample_texture == 1, "Supersample", .{});
 
