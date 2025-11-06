@@ -3,7 +3,8 @@ const termcolor = @import("termcolor");
 
 const holly_log = std.log.scoped(.holly);
 
-const Dreamcast = @import("dreamcast.zig").Dreamcast;
+const DreamcastModule = @import("dreamcast.zig");
+const Dreamcast = DreamcastModule.Dreamcast;
 
 pub const Colors = @import("colors.zig");
 const PackedColor = Colors.PackedColor;
@@ -1583,43 +1584,36 @@ pub const Holly = struct {
             2 => @as(u32, spg_status.scanline) + 1,
             else => std.debug.panic("Invalid hblank_int_mode: {d}", .{spg_hblank_int.hblank_int_mode}),
         }) % max_scanline;
-
+        // NOTE: Interlace does not matter here.
         const line_diff: i64 = if (spg_status.scanline < target_scanline)
             target_scanline - spg_status.scanline
         else
             (if (max_scanline >= spg_status.scanline) max_scanline - spg_status.scanline else 0) + target_scanline;
-
         const pixel_diff: i64 = @as(i64, @intCast(spg_hblank_int.hblank_in_interrupt)) - @as(i64, @intCast(self._pixel));
         const hcount: i64 = spg_load.hcount;
         const pixels: u64 = @intCast((hcount + 1) * line_diff + pixel_diff);
 
         self._dc.schedule_event(.HBlankIn, self.pixels_to_sh4_cycles(pixels));
     }
-    pub fn schedule_vblank_in(self: *@This()) void {
+    inline fn schedule_event_at_scanline(self: *@This(), event: DreamcastModule.ScheduledEvent.Event, target_scanline: u64) void {
+        const spg_control = self.read_register(SPG_CONTROL, .SPG_CONTROL);
         const spg_load = self.read_register(SPG_LOAD, .SPG_LOAD);
-        const target_scanline = self.read_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).vblank_in_interrupt_line_number;
         const spg_status = self.read_register(SPG_STATUS, .SPG_STATUS);
-        const max_scanline = spg_load.vcount + 1;
-        const line_diff: u64 = if (spg_status.scanline < target_scanline)
+        const max_scanline = @as(u32, spg_load.vcount) + 1;
+        var line_diff: u64 = if (spg_status.scanline < target_scanline)
             target_scanline - spg_status.scanline
         else
             (if (max_scanline >= spg_status.scanline) max_scanline - spg_status.scanline else 0) + target_scanline;
+        if (spg_control.interlace) line_diff = @max(line_diff / 2, 1);
         const hcount: u64 = spg_load.hcount;
         const sh4_cycles = self.pixels_to_sh4_cycles((hcount + 1) * line_diff);
-        self._dc.schedule_event(.VBlankIn, sh4_cycles);
+        self._dc.schedule_event(event, sh4_cycles);
+    }
+    pub fn schedule_vblank_in(self: *@This()) void {
+        self.schedule_event_at_scanline(.VBlankIn, self.read_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).vblank_in_interrupt_line_number);
     }
     pub fn schedule_vblank_out(self: *@This()) void {
-        const spg_load = self.read_register(SPG_LOAD, .SPG_LOAD);
-        const target_scanline = self.read_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).vblank_out_interrupt_line_number;
-        const spg_status = self.read_register(SPG_STATUS, .SPG_STATUS);
-        const max_scanline = spg_load.vcount + 1;
-        const line_diff: u64 = if (spg_status.scanline < target_scanline)
-            target_scanline - spg_status.scanline
-        else
-            (if (max_scanline >= spg_status.scanline) max_scanline - spg_status.scanline else 0) + target_scanline;
-        const hcount: u64 = spg_load.hcount;
-        const cycles = self.pixels_to_sh4_cycles((hcount + 1) * line_diff);
-        self._dc.schedule_event(.VBlankOut, cycles);
+        self.schedule_event_at_scanline(.VBlankOut, self.read_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).vblank_out_interrupt_line_number);
     }
 
     pub fn on_hblank_in(self: *@This()) void {
@@ -1686,9 +1680,20 @@ pub const Holly = struct {
                 const line_count = self._pixel / hcount;
                 self._pixel %= hcount;
 
+                const spg_control = self.read_register(SPG_CONTROL, .SPG_CONTROL);
                 const max_scanline = spg_load.vcount + 1;
-                spg_status.scanline +%= @intCast(line_count % max_scanline);
-                spg_status.scanline %= max_scanline;
+                var target_scanline: u64 = spg_status.scanline;
+                if (spg_control.interlace) {
+                    target_scanline += 2 * @as(u64, line_count);
+                    if (target_scanline >= max_scanline) {
+                        target_scanline += (target_scanline / max_scanline) % 2; // Next field
+                        target_scanline %= max_scanline;
+                    }
+                } else {
+                    target_scanline += line_count;
+                    target_scanline %= max_scanline;
+                }
+                spg_status.scanline = @intCast(target_scanline);
 
                 const spg_vblank = self.read_register(SPG_VBLANK, .SPG_VBLANK);
                 spg_status.vsync = spg_status.scanline >= spg_vblank.vbstart or spg_status.scanline < spg_vblank.vbend;

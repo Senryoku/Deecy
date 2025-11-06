@@ -66,8 +66,8 @@ const Callback = struct {
     }
 };
 
-const ScheduledEvent = struct {
-    const Event = union(enum) {
+pub const ScheduledEvent = struct {
+    pub const Event = union(enum) {
         None,
         EndGDDMA,
         EndSortDMA,
