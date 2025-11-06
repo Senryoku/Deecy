@@ -120,9 +120,9 @@ pub const HollyRegister = enum(u32) {
 pub const HollyRegisterStart: u32 = 0x005F8000;
 
 pub const SOFT_RESET = packed struct(u32) {
-    TASoftReset: u1 = 0,
-    PipelineSoftReset: u1 = 0,
-    SDRAMInterfaceSoftReset: u1 = 0,
+    TASoftReset: bool = false,
+    PipelineSoftReset: bool = false,
+    SDRAMInterfaceSoftReset: bool = false,
     _: u29 = 0,
 };
 
@@ -1463,7 +1463,7 @@ pub const Holly = struct {
     // ("double buffering" the object lists), so we have to keep track of that.
     // Most games will only need a single list per frame, but when using List Continuation for
     // multipass rendering, we'll allocate more as needed.
-    _ta_lists: [16]std.ArrayList(TALists) = undefined,
+    _ta_lists: [16]std.ArrayList(TALists) = @splat(.empty),
 
     _pixel: u64 = 0,
     _tmp_subcycles: u64 = 0,
@@ -1476,10 +1476,8 @@ pub const Holly = struct {
             ._allocator = allocator,
             ._dc = dc,
         };
-        for (&r._ta_lists) |*ta_list| {
-            ta_list.* = .empty;
+        for (&r._ta_lists) |*ta_list|
             try ta_list.append(allocator, .init());
-        }
         return r;
     }
 
@@ -1707,19 +1705,15 @@ pub const Holly = struct {
             .ID, .REVISION => return, // Read-only
             .SOFTRESET => {
                 const sr: SOFT_RESET = @bitCast(v);
-                if (sr.TASoftReset == 1) {
+                if (sr.TASoftReset) {
                     self._ta_command_buffer_index = 0;
                     self._ta_list_type = null;
                     self._ta_current_polygon = null;
                     self._ta_current_volume = null;
                     self._ta_user_tile_clip = null;
                 }
-                if (sr.PipelineSoftReset == 1) {
-                    holly_log.debug(termcolor.yellow("  TODO: Pipeine Soft Reset"), .{});
-                }
-                if (sr.SDRAMInterfaceSoftReset == 1) {
-                    holly_log.debug(termcolor.yellow("  TODO: SDRAM Interface Soft Reset"), .{});
-                }
+                if (sr.PipelineSoftReset) holly_log.debug(termcolor.yellow("TODO: Pipeline Soft Reset"), .{});
+                if (sr.SDRAMInterfaceSoftReset) holly_log.debug(termcolor.yellow("TODO: SDRAM Interface Soft Reset"), .{});
                 return;
             },
             .STARTRENDER => {
