@@ -17,7 +17,7 @@ pub const SectorHeader = extern struct {
     mode: u8,
 };
 
-const GDI_SECTOR_OFFSET = 150; // FIXME: Still unsure about this.
+const GDI_SECTOR_OFFSET = 150;
 
 tracks: std.ArrayList(Track),
 
