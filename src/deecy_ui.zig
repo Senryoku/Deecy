@@ -237,7 +237,7 @@ fn get_game_image(self: *@This(), path: []const u8, cache: ?*GameInfoCache) void
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var disc = Disc.init(path, allocator) catch |err| {
+    var disc = Disc.init(allocator, path) catch |err| {
         ui_log.err("Failed to load disc '{s}': {t}", .{ path, err });
         if (cache) |c| c.add(path, .{ .width = 0, .height = 0 }, null) catch {};
         return;

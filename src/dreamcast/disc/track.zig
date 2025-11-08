@@ -1,7 +1,6 @@
 const std = @import("std");
-const termcolor = @import("termcolor");
-
 const log = std.log.scoped(.track);
+const termcolor = @import("termcolor");
 
 pub const TrackType = enum(u8) { Audio = 0, Data = 4 };
 

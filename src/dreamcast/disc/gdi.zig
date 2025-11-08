@@ -1,80 +1,63 @@
 const std = @import("std");
-const builtin = @import("builtin");
-const termcolor = @import("termcolor");
+const log = std.log.scoped(.gdi);
 
-const gdi_log = std.log.scoped(.gdi);
-
-const windows = @import("../host/windows.zig");
 const MemoryMappedFile = @import("../host/memory_mapped_file.zig");
 
 const CD = @import("iso9660.zig");
 const Track = @import("track.zig");
 const Session = @import("session.zig");
 
-pub const SectorHeader = extern struct {
-    sync_filed: [12]u8,
-    address: [3]u8,
-    mode: u8,
-};
+const GDISectorOffset = 150;
 
-const GDI_SECTOR_OFFSET = 150;
+tracks: std.ArrayList(Track) = .empty,
 
-tracks: std.ArrayList(Track),
+_files: std.ArrayList(MemoryMappedFile) = .empty,
 
-_files: std.ArrayList(MemoryMappedFile),
+pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
+    var self: @This() = .{};
 
-pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
-    var self: @This() = .{
-        .tracks = .empty,
-        ._files = .empty,
-    };
-
-    const file = std.fs.cwd().openFile(filepath, .{}) catch {
-        std.debug.print("File not found: {s}\n", .{filepath});
-        return error.GDIFileNotFound;
+    const file = std.fs.cwd().openFile(filepath, .{}) catch |err| {
+        log.err("Error opening '{s}': {t}", .{ filepath, err });
+        return err;
     };
     defer file.close();
     const folder = std.fs.path.dirname(filepath) orelse ".";
-    const data = try file.readToEndAlloc(allocator, 1024 * 1024 * 1024);
+    const data = try file.readToEndAlloc(allocator, 1024 * 1024);
     defer allocator.free(data);
     const end_line = if (std.mem.containsAtLeast(u8, data, 1, "\r\n")) "\r\n" else "\n";
     var lines = std.mem.splitSequence(u8, data, end_line);
 
-    const first_line = lines.next().?;
-    const track_count = try std.fmt.parseUnsigned(u32, first_line, 10);
+    const track_count = try std.fmt.parseUnsigned(u32, lines.first(), 10);
     try self.tracks.resize(allocator, track_count);
 
     for (0..track_count) |i| {
         var vals = std.mem.splitSequence(u8, lines.next().?, " ");
 
         const num = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
-        var offset = (try std.fmt.parseUnsigned(u32, vals.next().?, 10));
+        if (num > track_count) return error.InvalidTrackNumber;
+        var offset = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
         const track_type_int = try std.fmt.parseUnsigned(u8, vals.next().?, 10);
-        if (track_type_int != 0 and track_type_int != 4)
-            return error.UnsupportedTrackType;
-        const track_type: Track.TrackType = @enumFromInt(track_type_int);
+        if (track_type_int != 0 and track_type_int != 4) return error.UnsupportedTrackType;
         const format = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
         const filename = vals.next().?;
         const pregap = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
+        if (pregap != 0) return error.UnsupportedNonZeroPregap; // FIXME: Not handled.
 
-        if (i >= 2)
-            offset += GDI_SECTOR_OFFSET;
-
-        std.debug.assert(pregap == 0); // FIXME: Not handled.
+        if (i >= 2) offset += GDISectorOffset;
 
         const track_file_path = try std.fs.path.join(allocator, &[_][]const u8{ folder, filename });
         defer allocator.free(track_file_path);
-        var track_file = try MemoryMappedFile.init(track_file_path, allocator);
+        var track_file = try MemoryMappedFile.init(allocator, track_file_path);
         try self._files.append(allocator, track_file);
 
-        self.tracks.items[num - 1] = (.{
+        self.tracks.items[num - 1] = .{
             .num = num,
             .fad = offset,
-            .track_type = track_type,
+            .track_type = @enumFromInt(track_type_int),
             .format = format,
             .pregap = pregap,
             .data = try track_file.create_full_view(),
-        });
+        };
     }
 
     return self;
@@ -134,7 +117,7 @@ pub fn get_session(self: *const @This(), session_number: u32) Session {
 
 pub fn get_area_boundaries(self: *const @This(), area: Session.Area) [2]u32 {
     return switch (area) {
-        .SingleDensity => [2]u32{ 0, 1 },
-        .DoubleDensity => [2]u32{ 2, @intCast(self.tracks.items.len - 1) },
+        .SingleDensity => .{ 0, 1 },
+        .DoubleDensity => .{ 2, @intCast(self.tracks.items.len - 1) },
     };
 }

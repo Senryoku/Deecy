@@ -1,22 +1,20 @@
 const std = @import("std");
+const log = std.log.scoped(.memory_mapped_file);
 const builtin = @import("builtin");
 
 const windows = @import("windows.zig");
-
-const log = std.log.scoped(.memory_mapped_file);
 
 const View = if (builtin.os.tag == .windows) std.os.windows.HANDLE else []align(std.heap.page_size_min) const u8;
 
 file: if (builtin.os.tag == .windows) std.os.windows.HANDLE else std.fs.File,
 mapping_handle: if (builtin.os.tag == .windows) std.os.windows.HANDLE else void,
-views: std.ArrayList(View),
+views: std.ArrayList(View) = .empty,
 _allocator: std.mem.Allocator,
 
-pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
+pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
     var self: @This() = .{
         .file = undefined,
         .mapping_handle = undefined,
-        .views = try .initCapacity(allocator, 1),
         ._allocator = allocator,
     };
     if (builtin.os.tag != .windows) {

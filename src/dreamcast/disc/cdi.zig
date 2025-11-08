@@ -1,10 +1,9 @@
 const std = @import("std");
+const log = std.log.scoped(.cdi);
 
 const MemoryMappedFile = @import("../host/memory_mapped_file.zig");
 const Track = @import("track.zig");
 const Session = @import("session.zig");
-
-const log = std.log.scoped(.cdi);
 
 const Version = enum(u32) {
     V2 = 0x80000004,
@@ -17,9 +16,9 @@ tracks: std.ArrayList(Track) = .empty,
 sessions: std.ArrayList(Session) = .empty,
 _file: MemoryMappedFile,
 
-pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
+pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
     var self: @This() = .{
-        ._file = try .init(filepath, allocator),
+        ._file = try .init(allocator, filepath),
     };
     errdefer self.deinit(allocator);
 

@@ -23,13 +23,13 @@ pub const Disc = union(enum) {
     CDI: CDI,
     CHD: CHD,
 
-    pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !Disc {
+    pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !Disc {
         if (std.mem.endsWith(u8, filepath, ".gdi")) {
-            return Disc{ .GDI = try .init(filepath, allocator) };
+            return Disc{ .GDI = try .init(allocator, filepath) };
         } else if (std.mem.endsWith(u8, filepath, ".cdi")) {
-            return Disc{ .CDI = try .init(filepath, allocator) };
+            return Disc{ .CDI = try .init(allocator, filepath) };
         } else if (std.mem.endsWith(u8, filepath, ".chd")) {
-            return Disc{ .CHD = try .init(filepath, allocator) };
+            return Disc{ .CHD = try .init(allocator, filepath) };
         } else return error.UnknownDiscFormat;
     }
 

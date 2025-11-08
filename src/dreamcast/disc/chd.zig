@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = std.log.scoped(.chd);
 const termcolor = @import("termcolor");
 
 const BitReader = @import("bit_reader.zig");
@@ -7,8 +8,6 @@ const host_memory = @import("../host/host_memory.zig");
 const MemoryMappedFile = @import("../host/memory_mapped_file.zig");
 const Track = @import("track.zig");
 const Session = @import("session.zig");
-
-const log = std.log.scoped(.chd);
 
 tracks: std.ArrayList(Track) = .empty,
 sessions: std.ArrayList(Session) = .empty,
@@ -105,9 +104,9 @@ const MetadataEntry = struct {
     flags: u8,
 };
 
-pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
+pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
     var self: @This() = .{
-        ._file = try MemoryMappedFile.init(filepath, allocator),
+        ._file = try .init(allocator, filepath),
         ._allocator = allocator,
     };
     errdefer self.deinit(allocator);
@@ -239,9 +238,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     return self;
 }
 
-pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-    _ = allocator;
-
+pub fn deinit(self: *@This(), _: std.mem.Allocator) void {
     self._allocator.free(self.map);
 
     self.sessions.deinit(self._allocator);

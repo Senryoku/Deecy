@@ -859,11 +859,11 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
             var tmp_dir = try std.fs.cwd().makeOpenPath(tmp_gdi_path, .{});
             defer tmp_dir.close();
             try std.zip.extract(tmp_dir, stream, .{});
-            self.dc.gdrom.disc = try .init(tmp_gdi_path, self._allocator);
+            self.dc.gdrom.disc = try .init(self._allocator, tmp_gdi_path);
         }
         return error.Unimplemented;
     } else {
-        self.dc.gdrom.disc = try .init(path, self._allocator);
+        self.dc.gdrom.disc = try .init(self._allocator, path);
     }
 }
 
