@@ -638,7 +638,8 @@ pub const Emitter = struct {
                     if (!jump.invalid()) {
                         switch (jump.size) {
                             .r8 => {
-                                std.debug.assert(self.block_size - jump.source < 128);
+                                if (self.block_size - jump.source >= 128)
+                                    return error.InvalidShortForwardJump;
                                 const rel: u8 = @intCast(self.block_size - jump.source);
                                 self.block_buffer[jump.address_to_patch] = rel;
                             },
@@ -655,9 +656,7 @@ pub const Emitter = struct {
             switch (instr) {
                 .Nop => {},
                 .Break => {
-                    if (builtin.mode != .Debug) {
-                        x86_64_emitter_log.warn("[x86_64 Emitter] Warning: Emitting a break instruction outside of Debug Build.", .{});
-                    }
+                    if (builtin.mode != .Debug) x86_64_emitter_log.warn("Emitting a break instruction outside of Debug Build.", .{});
                     try self.emit_byte(0xCC);
                 },
                 .FunctionCall => |function| try self.native_call(function),
@@ -681,7 +680,7 @@ pub const Emitter = struct {
                 .Xor => |a| try self.xor_(a.dst, a.src),
                 .Cmp => |a| try self.cmp(a.lhs, a.rhs),
                 .SetByteCondition => |a| try self.set_byte_condition(a.condition, a.dst),
-                .Jmp => |j| try self.jmp(j.condition, @intCast(idx), j.dst),
+                .Jmp => |j| try self.jmp(instructions[idx + 1 ..], j.condition, @intCast(idx), j.dst),
                 .BlockEpilogue => try self.emit_block_epilogue(),
                 .BitTest => |b| try self.bit_test(b.reg, b.offset),
                 .Test => |t| try self.test_(t.lhs, t.rhs),
@@ -1697,7 +1696,7 @@ pub const Emitter = struct {
         try self.emit(i8, rel);
     }
 
-    pub fn jmp(self: *@This(), condition: Condition, current_idx: u32, dst: anytype) !void {
+    pub fn jmp(self: *@This(), next_intructions: []const Instruction, condition: Condition, current_idx: u32, dst: anytype) !void {
         switch (dst) {
             .rel => |rel| {
                 // TODO: Support more destination than just immediate relative.
@@ -1713,7 +1712,13 @@ pub const Emitter = struct {
 
                 // Try to emit a rel8 jump. Our instruction can map to multiple x86 instructions of up to 15 bytes each, so I'm being really conservative here.
                 // The important thing is to include forward jumps due to skipped fallback memory access with FastMem, which are extremely common and should be 3 "instructions" at most.
-                if (rel > 0 and rel <= 4) {
+                if (rel > 0 and rel <= 4) cancel: {
+                    // SaveFPRegisters and RestoreFPRegisters pseudo instructions can very large. Don't attempt to emit a rel8 jump if we find one.
+                    // (This is a common pattern with FastMem on Linux since there's no saved FP registers there.)
+                    for (next_intructions[0..@min(@as(u64, @intCast(rel)), next_intructions.len)]) |instr| {
+                        if ((instr == .SaveFPRegisters and instr.SaveFPRegisters.count >= 8) or (instr == .RestoreFPRegisters and instr.RestoreFPRegisters.count >= 8))
+                            break :cancel;
+                    }
                     const address_to_patch = self.block_size + 1;
                     try self.emit_jmp_rel8(condition, 0);
                     const jumps = try self.forward_jumps_to_patch.getOrPut(target_idx);
