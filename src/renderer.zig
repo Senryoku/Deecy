@@ -2285,7 +2285,7 @@ pub const Renderer = struct {
                                     .y = v.y,
                                     .z = v.z,
                                     .base_color = v.base_color.with_alpha(use_alpha),
-                                    .offset_color = if (use_offset) v.offset_color.with_alpha(true) else .{},
+                                    .offset_color = if (use_offset) v.offset_color.with_alpha(true) else .zero,
                                     .u = v.u,
                                     .v = v.v,
                                 });
@@ -2298,7 +2298,7 @@ pub const Renderer = struct {
                                     .y = v.y,
                                     .z = v.z,
                                     .base_color = v.base_color.with_alpha(use_alpha),
-                                    .offset_color = if (use_offset) v.offset_color.with_alpha(true) else .{},
+                                    .offset_color = if (use_offset) v.offset_color.with_alpha(true) else .zero,
                                     .u = v.uv.u_as_f32(),
                                     .v = v.uv.v_as_f32(),
                                 });
@@ -2311,7 +2311,7 @@ pub const Renderer = struct {
                                     .y = v.y,
                                     .z = v.z,
                                     .base_color = v.base_color.to_packed(use_alpha),
-                                    .offset_color = if (use_offset) v.offset_color.to_packed(true) else .{},
+                                    .offset_color = if (use_offset) v.offset_color.to_packed(true) else .zero,
                                     .u = v.u,
                                     .v = v.v,
                                 });
@@ -2324,7 +2324,7 @@ pub const Renderer = struct {
                                     .y = v.y,
                                     .z = v.z,
                                     .base_color = v.base_color.to_packed(use_alpha),
-                                    .offset_color = if (use_offset) v.offset_color.to_packed(true) else .{},
+                                    .offset_color = if (use_offset) v.offset_color.to_packed(true) else .zero,
                                     .u = v.uv.u_as_f32(),
                                     .v = v.uv.v_as_f32(),
                                 });
@@ -2339,7 +2339,7 @@ pub const Renderer = struct {
                                     .y = v.y,
                                     .z = v.z,
                                     .base_color = global_parameters.face_base_color.apply_intensity(v.base_intensity, use_alpha),
-                                    .offset_color = if (use_offset) global_parameters.face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
+                                    .offset_color = if (use_offset) global_parameters.face_offset_color.apply_intensity(v.offset_intensity, true) else .zero,
                                     .u = v.u,
                                     .v = v.v,
                                 });
@@ -2354,7 +2354,7 @@ pub const Renderer = struct {
                                     .y = v.y,
                                     .z = v.z,
                                     .base_color = global_parameters.face_base_color.apply_intensity(v.base_intensity, use_alpha),
-                                    .offset_color = if (use_offset) global_parameters.face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
+                                    .offset_color = if (use_offset) global_parameters.face_offset_color.apply_intensity(v.offset_intensity, true) else .zero,
                                     .u = v.uv.u_as_f32(),
                                     .v = v.uv.v_as_f32(),
                                 });
@@ -2398,11 +2398,11 @@ pub const Renderer = struct {
                                     .y = v.y,
                                     .z = v.z,
                                     .base_color = v.base_color_0.with_alpha(use_alpha),
-                                    .offset_color = if (use_offset) v.offset_color_0.with_alpha(true) else .{},
+                                    .offset_color = if (use_offset) v.offset_color_0.with_alpha(true) else .zero,
                                     .u = v.u0,
                                     .v = v.v0,
                                     .area1_base_color = v.base_color_1.with_alpha(use_alpha),
-                                    .area1_offset_color = if (use_offset) v.offset_color_1.with_alpha(true) else .{},
+                                    .area1_offset_color = if (use_offset) v.offset_color_1.with_alpha(true) else .zero,
                                     .area1_u = v.u1,
                                     .area1_v = v.v1,
                                 });
@@ -2419,11 +2419,11 @@ pub const Renderer = struct {
                                     .y = v.y,
                                     .z = v.z,
                                     .base_color = v.base_color_0.with_alpha(use_alpha),
-                                    .offset_color = if (use_offset) v.offset_color_0.with_alpha(true) else .{},
+                                    .offset_color = if (use_offset) v.offset_color_0.with_alpha(true) else .zero,
                                     .u = v.uv_0.u_as_f32(),
                                     .v = v.uv_0.v_as_f32(),
                                     .area1_base_color = v.base_color_1.with_alpha(use_alpha),
-                                    .area1_offset_color = if (use_offset) v.offset_color_1.with_alpha(true) else .{},
+                                    .area1_offset_color = if (use_offset) v.offset_color_1.with_alpha(true) else .zero,
                                     .area1_u = v.uv_1.u_as_f32(),
                                     .area1_v = v.uv_1.v_as_f32(),
                                 });

@@ -114,7 +114,7 @@ pub const PackedColor = packed struct(u32) {
     a: u8 = 0,
 
     pub const zero = @This(){ .a = 0, .r = 0, .g = 0, .b = 0 };
-    pub const one = @This(){ .a = 1, .r = 1, .g = 1, .b = 1 };
+    pub const one = @This(){ .a = 255, .r = 255, .g = 255, .b = 255 };
 
     pub fn with_alpha(self: @This(), use_alpha: bool) @This() {
         return .{ .r = self.r, .g = self.g, .b = self.b, .a = if (use_alpha) self.a else 255 };
