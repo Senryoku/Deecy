@@ -831,10 +831,10 @@ pub const SH4JIT = struct {
         }
 
         // We still rely on the interpreter implementation of the branch instructions which expects the PC to be updated automatically.
-        // cpu.pc += 2;
         if (!branch) {
             try b.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
         } else if (ctx.outdated_pc) {
+            // cpu.pc += 2;
             try b.add(sh4_mem("pc"), .{ .imm32 = 2 });
         }
 
@@ -863,6 +863,7 @@ pub const SH4JIT = struct {
             try b.cmp(sh4_mem("_pending_cycles"), .{ .imm8 = MaxCyclesPerExecution });
             var skip = try b.jmp(.AboveEqual);
 
+            var skip_key_compute: ?JIT.PatchableJump = null;
             if (ctx.mmu_enabled) {
                 // NOTE: In some cases we could easily convince ourselves that the PC cannot possibly cross a page boundary here.
                 //       This could be used to completely skip MMU translation and further optimize this.
@@ -879,6 +880,10 @@ pub const SH4JIT = struct {
                 try call(b, &ctx, &runtime_instruction_mmu_translation);
                 if (Key.reg != ReturnRegister)
                     try b.mov(Key, .{ .reg = ReturnRegister });
+                // This function returns the updated block key directly.
+                // FPSCR might change in case of exception, and it is easier to access from zig than from assembly (not to mention code size).
+                // It also keeps the happy path as simple as possible. We can now jump directly after the key computation.
+                skip_key_compute = try b.jmp(.Always);
                 same_page.patch();
             } else {
                 try b.mov(Key, sh4_mem("pc"));
@@ -899,6 +904,9 @@ pub const SH4JIT = struct {
 
             if (const_key != 0)
                 try b.append(.{ .Or = .{ .dst = Key, .src = .{ .imm32 = const_key } } });
+
+            if (skip_key_compute) |j| j.patch();
+
             // Retrieve offset
             if (@sizeOf(BasicBlock) != 4)
                 @compileError("TODO: Implement with instrumentation enabled (or disable the optimisation)");
@@ -1378,13 +1386,12 @@ pub noinline fn _out_of_line_write64(_: *sh4.SH4, virtual_addr: u32, value: u64)
     return @call(.always_inline, sh4.SH4.write_physical, .{ get_cpu(), u64, virtual_addr, value });
 }
 
+/// Perform MMU instruction address translation, handling exceptions and returns the next block key.
 fn runtime_instruction_mmu_translation() callconv(.c) u32 {
     const cpu = get_cpu();
     std.debug.assert(cpu._mmu_state == .Full);
-    return cpu.translate_instruction_address(cpu.pc) catch |err| pc: {
-        cpu.handle_instruction_exception(cpu.pc, err);
-        break :pc cpu.pc & 0x1FFF_FFFF;
-    };
+    const physical_pc = cpu.get_physical_pc();
+    return BlockCache.compute_key(physical_pc, cpu.fpscr.sz, cpu.fpscr.pr); // Make sure we use updated FPSCR.
 }
 
 const MMUCacheType = struct {
@@ -1494,7 +1501,7 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
     if (register_to_save) |r| {
         try block.push(.{ .reg64 = r });
     } else {
-        try block.push(.{ .reg64 = ArgRegisters[0] }); // Stack alignemnt
+        try block.push(.{ .reg64 = ArgRegisters[0] }); // Stack alignment
     }
 
     if (addr != ArgRegisters[1])
