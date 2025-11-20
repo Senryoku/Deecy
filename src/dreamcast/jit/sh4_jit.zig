@@ -1463,20 +1463,19 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
         std.debug.assert(addr != ArgRegisters[3]);
         std.debug.assert(register_to_save != ArgRegisters[2]);
         std.debug.assert(register_to_save != ArgRegisters[3]);
-        // Compute possible physical address from cached PPN
-        const CandidatePhysicalAddress = ArgRegisters[3];
         try block.mov(.{ .reg64 = ArgRegisters[2] }, .{ .imm64 = @intFromPtr(&MMUCache) });
-        try block.mov(.{ .reg = CandidatePhysicalAddress }, .{ .mem = .{ .base = ArgRegisters[2], .displacement = @offsetOf(MMUCacheType, "ppn"), .size = 32 } });
-        try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = addr });
-        try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[0] }, .src = .{ .imm32 = 0x3FF } } });
-        try block.append(.{ .Or = .{ .dst = .{ .reg = CandidatePhysicalAddress }, .src = .{ .reg = ArgRegisters[0] } } });
-        // Compute VPN
-        try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = addr });
-        try block.shr(.{ .reg = ArgRegisters[0] }, 10);
-        // Load Cached VPN
-        try block.mov(.{ .reg = ArgRegisters[2] }, .{ .mem = .{ .base = ArgRegisters[2], .displacement = @offsetOf(MMUCacheType, "vpn"), .size = 32 } });
-        try block.cmp(.{ .reg = ArgRegisters[0] }, .{ .reg = ArgRegisters[2] });
-        try block.cmov(.Equal, .{ .reg = addr }, .{ .reg = CandidatePhysicalAddress });
+        // Compute possible physical address from cached PPN
+        const CandidatePhysicalAddress = JIT.Operand{ .reg = ArgRegisters[3] };
+        try block.mov(CandidatePhysicalAddress, .{ .reg = addr });
+        try block.append(.{ .And = .{ .dst = CandidatePhysicalAddress, .src = .{ .imm32 = 0x3FF } } });
+        try block.append(.{ .Or = .{ .dst = CandidatePhysicalAddress, .src = .{ .mem = .{ .base = ArgRegisters[2], .displacement = @offsetOf(MMUCacheType, "ppn"), .size = 32 } } } });
+        // Compute current VPN
+        const CurrentVPN = JIT.Operand{ .reg = ArgRegisters[0] };
+        try block.mov(CurrentVPN, .{ .reg = addr });
+        try block.shr(CurrentVPN, 10);
+        // Compare with cached VPN
+        try block.cmp(CurrentVPN, .{ .mem = .{ .base = ArgRegisters[2], .displacement = @offsetOf(MMUCacheType, "vpn"), .size = 32 } });
+        try block.cmov(.Equal, .{ .reg = addr }, CandidatePhysicalAddress);
         vpn_match = try block.jmp(.Equal);
 
         try ctx.gpr_cache.commit_all_speculatively(block);
