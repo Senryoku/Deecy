@@ -1,0 +1,65 @@
+name: Bug report
+description: "Report a bug to contribute to Deecy's improvement!"
+labels:
+  - bug
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the issue, how to reproduce it step by step, and the expected correct behavior.
+        Including Deecy's console output will often help, especially in case of crashes (run in a terminal to be able to copy it after it exits).
+        When reporting an issue with a specific game, consider including the following:
+         - **Game name** 
+           Be as specific with the version as possible. For example: "Soul Calibur (US), T1401N V1.000, GDI format".
+         - **Saved State**
+           Taken right before/while the issue is occuring with F1-F4. 
+           Saved state files can be found in Deecy's directory: `./userdata/GAMENAME[GAMEID]/save_n.sav`
+         - **VMU** if necessary
+           Game specific VMU files can be found in Deecy's directory: `./userdata/GAMENAME[GAMEID]/vmu_0.bin`
+         - **Screenshot**
+           Demonstrating the wrong behavior, and ideally another illustrating the expected output.
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Description"
+      description: "What is wrong, how to reproduce the behavior, what were you expecting instead."
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. Scroll to '...'
+        4. Planet blows up. I expected the game to continue.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      description: Select the operating system you used when the bug occurred.
+      options:
+        - Windows
+        - Linux
+        - Both (only choose this if you actually tested both!)
+    validations:
+      required: true
+
+  - type: input
+    id: deecy_version
+    attributes:
+      label: Deecy Version
+      description: "Tag (e.g. 0.5.3), or commit hash"
+      placeholder: "e.g. 0.5.3"
+    validations:
+      required: true
+
+  - type: input
+    id: additional_info
+    attributes:
+      label: "Additional context (optional)"
+      description: "Any other relevant info (GPU, driver versions, emulator settings...)."
+      placeholder: "e.g. NVIDIA GTX 1060, driver 471.41"
+    validations:
+      required: false
