@@ -49,7 +49,7 @@ Keyboard bindings can be customized in the settings. Defaults for controller 1:
 | Option | Action | Argument | Notes |
 | ------ | ------ | -------- | ----- |
 | -g     | Load and Execute a disc file (.gdi/.cdi/.chd) | Path to a disc file |
-| --vmu  | Replace default vmu file | Path to an vmu file | Use with -g |
+| --vmu  | Replace default vmu file | Path to an vmu file | Disables per-game VMUs |
 | --no-realtime | Starts with unlimited emulation speed |
 | --load-state | Loads a save state on startup | Path to a Deecy save state | Use with -g |
 | --stop | Prevent automatic start of emulation | | Use with -g or -b |

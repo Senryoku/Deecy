@@ -130,12 +130,6 @@ pub fn main() !void {
 
     var disc_path: ?[]const u8 = null;
 
-    var default_vmu = true;
-    var vmu_path: std.ArrayList(u8) = .empty;
-    defer vmu_path.deinit(allocator);
-    try vmu_path.appendSlice(allocator, DreamcastModule.HostPaths.get_userdata_path());
-    try vmu_path.appendSlice(allocator, "/vmu_default.bin");
-
     var skip_bios = false;
     var start_immediately = false;
     var force_stop = false;
@@ -167,9 +161,8 @@ pub fn main() !void {
                     std.log.err(termcolor.red("Expected path to VMU after --vmu."), .{});
                     return error.InvalidArguments;
                 };
-                vmu_path.clearRetainingCapacity();
-                try vmu_path.appendSlice(allocator, path);
-                default_vmu = false;
+                try d.load_vmu(0, path);
+                d.config.per_game_vmu = false;
             } else if (std.mem.eql(u8, arg, "-d")) {
                 dc.cpu.debug_trace = true;
             } else if (std.mem.eql(u8, arg, "--skip-bios")) {
@@ -206,8 +199,6 @@ pub fn main() !void {
             }
         }
     }
-
-    dc.maple.ports[0].subperipherals[0] = .{ .VMU = try .init(allocator, vmu_path.items) };
 
     if (binary_path) |path| {
         try dc.set_region(.USA);
