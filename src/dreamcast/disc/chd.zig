@@ -316,7 +316,7 @@ fn decode_map_v5(self: *@This()) !void {
 
     self.map = try self._allocator.alloc(MapEntry, hunk_count);
 
-    var reader = std.Io.Reader.fixed(self._file_view);
+    var reader = std.Io.Reader.fixed(self._file_view); // NOTE: Using a fixed reader here is important. We might need to rewind after decoding the map and I assume the reader buffer is stable for that.
     std.debug.assert(try reader.discardShort(self.map_offset) == self.map_offset);
 
     const map_bytes = try reader.takeInt(u32, .big);
@@ -433,10 +433,21 @@ fn decode_map_v5(self: *@This()) !void {
     }
 
     if (decoder.unused_bits != 0) {
-        // FIXME: This might be a bit annoying, but I don't think it's possible as long as MaxBits == 8
-        if (decoder.unused_bits + bit_reader.count > 8) return error.CHDMapDecodingError;
-        bit_reader.bits |= decoder.bits;
-        bit_reader.count += decoder.unused_bits;
+        const unused_bits = decoder.unused_bits + bit_reader.count;
+        if (unused_bits > 8) {
+            // The "double buffering" for the map decoder led us to hold more that 8 bits,
+            // we have to rewind the reader and reset the bit reader.
+            const unused_bytes = std.mem.alignForward(u64, unused_bits, 8) / 8;
+            const consumed_bits = 8 - (unused_bits % 8);
+            // NOTE: This is only valid because we use a fixed reader.
+            reader.seek -= unused_bytes;
+            bit_reader = .init(&reader);
+            _ = try bit_reader.readBitsNoEof(u8, consumed_bits);
+        } else {
+            // Here we can stuff the unused bits back into the bit reader byte buffer.
+            bit_reader.bits |= decoder.bits;
+            bit_reader.count += decoder.unused_bits;
+        }
     }
 
     // For CRC computation only
