@@ -643,6 +643,9 @@ pub fn draw(self: *@This()) !void {
             zgui.endMenu();
         }
         if (zgui.beginMenu("Settings", true)) {
+            if (zgui.menuItem("Display Framerate", .{ .selected = d.config.display_framerate })) {
+                d.config.display_framerate = !d.config.display_framerate;
+            }
             if (zgui.menuItem("Display VMUs", .{ .selected = d.config.display_vmus })) {
                 d.config.display_vmus = !d.config.display_vmus;
             }

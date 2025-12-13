@@ -188,6 +188,7 @@ const ControllerSettings = struct {
 
 const ConfigurationJSON = struct {
     per_game_vmu: ?bool = true,
+    display_framerate: ?bool = true,
     display_vmus: ?bool = true,
     game_directory: ?[]const u8 = null,
     display_debug_ui: ?bool = false,
@@ -208,6 +209,7 @@ const ConfigurationJSON = struct {
 
 const Configuration = struct {
     per_game_vmu: bool = true,
+    display_framerate: bool = true,
     display_vmus: bool = true,
     game_directory: ?[]const u8 = null,
     display_debug_ui: bool = false,
@@ -316,6 +318,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
             var conf: Configuration = .{};
             conf.display_debug_ui = json.value.display_debug_ui orelse false;
             conf.per_game_vmu = json.value.per_game_vmu orelse true;
+            conf.display_framerate = json.value.display_framerate orelse true;
             conf.display_vmus = json.value.display_vmus orelse true;
             if (json.value.game_directory) |game_directory|
                 conf.game_directory = try allocator.dupe(u8, game_directory);
@@ -1037,12 +1040,14 @@ pub fn draw_ui(self: *@This()) !void {
         if (self.config.display_debug_ui)
             try self.debug_ui.draw(self);
     } else {
-        zgui.setNextWindowPos(.{ .x = 0, .y = 0 });
-        if (zgui.begin("##FPSCounter", .{ .flags = .{ .no_resize = true, .no_move = true, .no_background = true, .no_title_bar = true, .no_mouse_inputs = true, .no_nav_inputs = true, .no_nav_focus = true } })) {
-            const avg: f32 = @as(f32, @floatFromInt(self.last_n_frametimes.sum())) / @as(f32, @floatFromInt(self.last_n_frametimes.count));
-            zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
+        if (self.config.display_framerate) {
+            zgui.setNextWindowPos(.{ .x = 0, .y = 0 });
+            if (zgui.begin("##FPSCounter", .{ .flags = .{ .no_resize = true, .no_move = true, .no_background = true, .no_title_bar = true, .no_mouse_inputs = true, .no_nav_inputs = true, .no_nav_focus = true } })) {
+                const avg: f32 = @as(f32, @floatFromInt(self.last_n_frametimes.sum())) / @as(f32, @floatFromInt(self.last_n_frametimes.count));
+                zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
+            }
+            zgui.end();
         }
-        zgui.end();
     }
 
     self.ui.notifications.draw();
