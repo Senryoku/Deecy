@@ -186,27 +186,6 @@ const ControllerSettings = struct {
     subcapabilities: DreamcastModule.Maple.InputCapabilities = DreamcastModule.Maple.DualStickControllerCapabilities,
 };
 
-const ConfigurationJSON = struct {
-    per_game_vmu: ?bool = true,
-    display_framerate: ?bool = true,
-    display_vmus: ?bool = true,
-    game_directory: ?[]const u8 = null,
-    display_debug_ui: ?bool = false,
-
-    window_size: ?struct { width: u32 = 2 * @ceil((16.0 / 9.0 * @as(f32, @floatFromInt(Renderer.NativeResolution.height)))), height: u32 = 2 * Renderer.NativeResolution.height } = .{},
-    present_mode: ?zgpu.wgpu.PresentMode = .fifo,
-    fullscreen: ?bool = false,
-
-    internal_resolution_factor: ?u32 = 1,
-    display_mode: ?Renderer.DisplayMode = .Center,
-
-    keyboard_bindings: ?[4]KeyboardBindings = .{ .Default, .{}, .{}, .{} },
-    controllers: ?[4]ControllerSettings = null,
-
-    audio_volume: ?f32 = 0.3,
-    dsp_emulation: ?DreamcastModule.AICAModule.DSPEmulation = .JIT,
-};
-
 const Configuration = struct {
     per_game_vmu: bool = true,
     display_framerate: bool = true,
@@ -232,6 +211,8 @@ const Configuration = struct {
             allocator.free(game_directory);
     }
 };
+
+const ConfigurationJSON = @import("helpers").Partial(Configuration);
 
 pub const ConfigFile = "/config.json";
 
