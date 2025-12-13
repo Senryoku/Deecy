@@ -96,28 +96,9 @@ fn glfw_key_callback(
                             deecy_log.err(termcolor.red("Failed to load state #{d}: {t}"), .{ idx, err });
                         };
                     },
-                    .F12 => {
-                        const screen = app.renderer.capture(app._allocator) catch |err| {
-                            deecy_log.err(termcolor.red("Failed to capture screen: {t}"), .{err});
-                            return;
-                        };
-                        defer screen.deinit(app._allocator);
-                        const filename = "screenshot.bmp";
-
-                        var file = std.fs.cwd().createFile(filename, .{}) catch |err| {
-                            deecy_log.err(termcolor.red("Failed to create screenshot file '{s}': {t}"), .{ filename, err });
-                            return;
-                        };
-                        defer file.close();
-
-                        var buffer: [1024]u8 = undefined;
-                        var file_writer = file.writer(&buffer);
-                        screen.write_bmp(&file_writer.interface) catch |err| {
-                            deecy_log.err(termcolor.red("Failed to write screenshot file: {t}"), .{err});
-                            return;
-                        };
-                        deecy_log.info(termcolor.green("Screenshot saved as '{s}'"), .{filename});
-                        app.ui.notifications.push("Screenshot Saved", .{}, "Screenshot saved as '{s}.", .{filename});
+                    .F12 => app.save_screenshot() catch |err| {
+                        deecy_log.err(termcolor.red("Failed to save screenshot: {t}"), .{err});
+                        return;
                     },
                     else => {},
                 }
@@ -147,11 +128,12 @@ fn glfw_drop_callback(
 const assets_dir = "assets/";
 const DefaultFont = @embedFile(assets_dir ++ "fonts/Hack-Regular.ttf");
 
-// Replaces invalid characters with underscores
+/// Replaces invalid characters with underscores
 fn safe_path(path: []u8) void {
     for (path) |*c| {
-        if (!((c.* >= 'a' and c.* <= 'z') or (c.* >= 'A' and c.* <= 'Z') or (c.* >= '0' and c.* <= '9') or c.* == '.' or c.* == '/' or c.* == '[' or c.* == ']')) {
-            c.* = '_';
+        switch (c.*) {
+            '0'...'9', 'A'...'Z', 'a'...'z', '.', '[', ']', '{', '}', '-', '/' => {},
+            else => c.* = '_',
         }
     }
 }
@@ -852,11 +834,11 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
     }
 }
 
-pub fn get_product_name(self: *@This()) ?[]const u8 {
+pub fn get_product_name(self: *const @This()) ?[]const u8 {
     return if (self.dc.gdrom.disc) |*disc| disc.get_product_name() else null;
 }
 
-pub fn get_product_id(self: *@This()) ?[]const u8 {
+pub fn get_product_id(self: *const @This()) ?[]const u8 {
     return if (self.dc.gdrom.disc) |*disc| disc.get_product_id() else null;
 }
 
@@ -1113,6 +1095,40 @@ fn run_for(self: *@This(), sh4_cycles: u64) void {
             }
         }
     }
+}
+
+fn save_screenshot(self: *const @This()) !void {
+    const screen = try self.renderer.capture(self._allocator);
+    defer screen.deinit(self._allocator);
+
+    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(std.time.timestamp()) };
+    const day_seconds = epoch_seconds.getDaySeconds();
+    const year_day = epoch_seconds.getEpochDay().calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const filepath = try std.fmt.allocPrint(self._allocator, "screenshots/{s}_{d:0>4}-{d:0>2}-{d:0>2}_{d:0>2}-{d:0>2}-{d:0>2}.bmp", .{
+        self.get_product_name() orelse "Unknown",
+        year_day.year,
+        month_day.month.numeric(),
+        month_day.day_index + 1,
+        day_seconds.getHoursIntoDay(),
+        day_seconds.getMinutesIntoHour(),
+        day_seconds.getSecondsIntoMinute(),
+    });
+    defer self._allocator.free(filepath);
+    safe_path(filepath);
+
+    // Make sure the directory exists.
+    if (std.fs.path.dirname(filepath)) |dir|
+        try std.fs.cwd().makePath(dir);
+    var file = try std.fs.cwd().createFile(filepath, .{});
+    defer file.close();
+
+    var buffer: [1024]u8 = undefined;
+    var file_writer = file.writer(&buffer);
+    try screen.write_bmp(&file_writer.interface);
+
+    deecy_log.info(termcolor.green("Screenshot saved as '{s}'"), .{filepath});
+    self.ui.notifications.push("Screenshot Saved", .{}, "Screenshot saved as '{s}.", .{filepath});
 }
 
 fn audio_callback(
