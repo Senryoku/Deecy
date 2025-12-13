@@ -2789,7 +2789,7 @@ pub const Renderer = struct {
         };
     }
 
-    // Convert framebuffer from internal resolution to window resolution
+    /// Convert framebuffer from internal resolution to window resolution
     pub fn blit_framebuffer(self: *const @This()) void {
         const gctx = self._gctx;
 
@@ -3682,7 +3682,7 @@ pub const Renderer = struct {
         self._gctx.releaseResource(self.blend_bind_group_render_to_texture);
     }
 
-    // Creates all resources that depends on the render size
+    /// Creates all resources that depends on the render size
     pub fn on_inner_resolution_change(self: *@This()) void {
         self.deinit_screen_textures();
 
@@ -3736,6 +3736,80 @@ pub const Renderer = struct {
         self.create_blend_bind_groups();
 
         self.update_blit_to_screen_vertex_buffer();
+    }
+
+    /// Returns the rendered frame as RGBA pixels.
+    /// Locks self._gctx_queue_mutex.
+    /// Caller owns the returned memory and should call `deinit` on the returned Image.
+    pub fn capture(self: *const @This(), allocator: std.mem.Allocator) !@import("image.zig") {
+        self._gctx_queue_mutex.lock();
+        defer self._gctx_queue_mutex.unlock();
+
+        const static = struct {
+            var mapping_available: bool = false;
+            fn signal_mapped(status: zgpu.wgpu.BufferMapAsyncStatus, _: ?*anyopaque) callconv(.c) void {
+                switch (status) {
+                    .success => {},
+                    else => log.err(termcolor.red("Failed to map buffer: {t}"), .{status}),
+                }
+                mapping_available = true;
+            }
+            fn wait(gctx: *zgpu.GraphicsContext) void {
+                while (!mapping_available)
+                    gctx.device.tick();
+                mapping_available = false;
+            }
+        };
+
+        // Allocates a temporary buffer to copy the framebuffer to.
+        const tmp_buffer_handle = self._gctx.createBuffer(.{
+            .usage = .{ .copy_dst = true, .map_read = true },
+            .size = 4 * self.resolution.width * self.resolution.height,
+        });
+        defer self._gctx.releaseResource(tmp_buffer_handle);
+        const tmp_buffer = self._gctx.lookupResource(tmp_buffer_handle).?;
+
+        const commands = commands: {
+            const encoder = self._gctx.device.createCommandEncoder(null);
+            defer encoder.release();
+            encoder.copyTextureToBuffer(
+                .{
+                    .texture = self.resized_framebuffer.lookup(self._gctx).texture,
+                    .mip_level = 0,
+                    .origin = .{},
+                    .aspect = .all,
+                },
+                .{
+                    .layout = .{
+                        .offset = 0,
+                        .bytes_per_row = 4 * self.resolution.width,
+                        .rows_per_image = self.resolution.height,
+                    },
+                    .buffer = tmp_buffer,
+                },
+                .{
+                    .width = self.resolution.width,
+                    .height = self.resolution.height,
+                    .depth_or_array_layers = 1,
+                },
+            );
+            break :commands encoder.finish(null);
+        };
+        defer commands.release();
+        self._gctx.submit(&.{commands});
+
+        tmp_buffer.mapAsync(.{ .read = true }, 0, 4 * self.resolution.width * self.resolution.height, &static.signal_mapped, null);
+        defer tmp_buffer.unmap();
+        static.wait(self._gctx);
+
+        const mapped_pixels = tmp_buffer.getConstMappedRange(u8, 0, 4 * self.resolution.width * self.resolution.height);
+        if (mapped_pixels) |pixels| {
+            return .{
+                .width = self.resolution.width,
+                .height = self.resolution.height,
+                .bgra = try allocator.dupe(u8, pixels),
+            };
+        } else return error.MapFailed;
     }
 
     pub fn update_blit_to_screen_vertex_buffer(self: *const @This()) void {

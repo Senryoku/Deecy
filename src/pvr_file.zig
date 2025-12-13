@@ -1,4 +1,5 @@
 const std = @import("std");
+const Image = @import("image.zig");
 const Colors = @import("dreamcast").HollyModule.Colors;
 const Renderer = @import("renderer.zig");
 
@@ -76,39 +77,21 @@ pub const PVRTHeader = extern struct {
     height: u16 align(1),
 };
 
-pub const DecodedPVRImage = struct {
-    width: u32,
-    height: u32,
-    bgra: []u8,
-
-    pub fn init(allocator: std.mem.Allocator, width: u32, height: u32) !DecodedPVRImage {
-        return .{
-            .width = width,
-            .height = height,
-            .bgra = try allocator.alloc(u8, 4 * width * height),
-        };
-    }
-
-    pub fn deinit(self: @This(), allocator: std.mem.Allocator) void {
-        allocator.free(self.bgra);
-    }
-};
-
 // Caller owns the allocated memory.
-pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !DecodedPVRImage {
+pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !Image {
     if (buffer.len < 8) return error.BufferTooSmall;
 
     if (std.mem.eql(u8, buffer[0..4], "GBIX")) {
-        const header: *const GlobalIndexHeader = @alignCast(@ptrCast(buffer));
+        const header: *const GlobalIndexHeader = @ptrCast(@alignCast(buffer));
         if (8 + header.length >= buffer.len) return error.InvalidGlobalIndexHeader;
         return decode(allocator, buffer[8 + header.length ..]);
     } else if (std.mem.eql(u8, buffer[0..4], "PVRT")) {
         if (buffer.len < @sizeOf(PVRTHeader)) return error.InvalidPVRT;
-        const header: *const PVRTHeader = @alignCast(@ptrCast(buffer));
+        const header: *const PVRTHeader = @ptrCast(@alignCast(buffer));
 
         if (header.width > 1024 or header.height > 1024) return error.InvalidImageSize;
 
-        const image = try DecodedPVRImage.init(allocator, header.width, header.height);
+        const image = try Image.init(allocator, header.width, header.height);
         errdefer image.deinit(allocator);
 
         var texels_offset: u32 = @sizeOf(PVRTHeader);
@@ -126,9 +109,9 @@ pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !DecodedPVRImage
         }
 
         if (header.image_data_type.vq_compressed()) {
-            Renderer.decode_vq(@alignCast(@ptrCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), buffer[code_book_offset..], buffer[8 * 256 + texels_offset ..], image.width, image.height, header.image_data_type.twiddled());
+            Renderer.decode_vq(@ptrCast(@alignCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), buffer[code_book_offset..], buffer[8 * 256 + texels_offset ..], image.width, image.height, header.image_data_type.twiddled());
         } else {
-            Renderer.decode_tex(@alignCast(@ptrCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), buffer[texels_offset..], image.width, image.height, header.image_data_type.twiddled());
+            Renderer.decode_tex(@ptrCast(@alignCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), buffer[texels_offset..], image.width, image.height, header.image_data_type.twiddled());
         }
 
         return image;

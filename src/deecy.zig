@@ -96,11 +96,56 @@ fn glfw_key_callback(
                             deecy_log.err(termcolor.red("Failed to load state #{d}: {t}"), .{ idx, err });
                         };
                     },
+                    .F12 => {
+                        const screen = app.renderer.capture(app._allocator) catch |err| {
+                            deecy_log.err(termcolor.red("Failed to capture screen: {t}"), .{err});
+                            return;
+                        };
+                        defer screen.deinit(app._allocator);
+                        const filename = "screenshot.bmp";
+                        write_bmp(filename, screen.bgra, screen.width, screen.height) catch |err| {
+                            deecy_log.err(termcolor.red("Failed to write screenshot file: {t}"), .{err});
+                            return;
+                        };
+                        deecy_log.info(termcolor.green("Screenshot saved as '{s}'"), .{filename});
+                        app.ui.notifications.push("Screenshot Saved", .{}, "Screenshot saved as '{s}.", .{filename});
+                    },
                     else => {},
                 }
             }
         }
     }
+}
+
+fn write_bmp(filename: []const u8, bgra: []const u8, width: u32, height: u32) !void {
+    var file = try std.fs.cwd().createFile(filename, .{});
+    defer file.close();
+
+    var buffer: [1024]u8 = undefined;
+    var file_writer = file.writer(&buffer);
+    const writer = &file_writer.interface;
+
+    try writer.writeAll("BM");
+    try writer.writeInt(u32, 54 + 4 * width * height, .little); // File size
+    try writer.writeInt(u16, 0, .little);
+    try writer.writeInt(u16, 0, .little);
+    try writer.writeInt(u32, 54, .little); // Pixel data offset
+
+    try writer.writeInt(u32, 40, .little); // Header Size
+    try writer.writeInt(u32, width, .little);
+    try writer.writeInt(i32, -@as(i32, @intCast(height)), .little); // Height, negative for top to bottom
+    try writer.writeInt(u16, 1, .little); // Planes
+    try writer.writeInt(u16, 32, .little); // Bits per pixels
+    try writer.writeInt(u32, 0, .little); // Compression: BI_RGB
+    try writer.writeInt(u32, 0, .little); // Pixel data size, can be 0 for BI_RGB
+    try writer.writeInt(u32, 2835, .little); // Horizontal resolution of the image. (pixel per metre, signed integer)
+    try writer.writeInt(u32, 2835, .little); // Vertical resolution of the image. (pixel per metre, signed integer)
+    try writer.writeInt(u32, 0, .little); // Number of colors in the color palette
+    try writer.writeInt(u32, 0, .little); // Number of important colors
+
+    try writer.writeAll(bgra);
+
+    try writer.flush();
 }
 
 fn glfw_drop_callback(
