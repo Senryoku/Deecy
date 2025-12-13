@@ -18,6 +18,7 @@ const icons = [_]zglfw.Image{
 };
 
 const termcolor = @import("termcolor");
+const helpers = @import("helpers");
 
 const DreamcastModule = @import("dreamcast");
 const Dreamcast = DreamcastModule.Dreamcast;
@@ -212,8 +213,6 @@ const Configuration = struct {
     }
 };
 
-const ConfigurationJSON = @import("helpers").Partial(Configuration);
-
 pub const ConfigFile = "/config.json";
 
 pub const MaxSaveStates = 4;
@@ -293,32 +292,12 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
             defer file.close();
             const conf_str = try file.readToEndAlloc(allocator, 1024 * 1024);
             defer allocator.free(conf_str);
-            const json = try std.json.parseFromSlice(ConfigurationJSON, allocator, conf_str, .{});
+            const json = try std.json.parseFromSlice(helpers.Partial(Configuration), allocator, conf_str, .{});
             defer json.deinit();
 
-            var conf: Configuration = .{};
-            conf.display_debug_ui = json.value.display_debug_ui orelse false;
-            conf.per_game_vmu = json.value.per_game_vmu orelse true;
-            conf.display_framerate = json.value.display_framerate orelse true;
-            conf.display_vmus = json.value.display_vmus orelse true;
-            if (json.value.game_directory) |game_directory|
+            var conf: Configuration = helpers.toComplete(Configuration, json.value);
+            if (conf.game_directory) |game_directory|
                 conf.game_directory = try allocator.dupe(u8, game_directory);
-            if (json.value.window_size) |window_size| {
-                conf.window_size.width = window_size.width;
-                conf.window_size.height = window_size.height;
-            }
-            conf.present_mode = json.value.present_mode orelse .fifo;
-            conf.fullscreen = json.value.fullscreen orelse false;
-
-            conf.internal_resolution_factor = json.value.internal_resolution_factor orelse 2;
-            conf.display_mode = json.value.display_mode orelse .Center;
-
-            conf.keyboard_bindings = json.value.keyboard_bindings orelse .{ .Default, .{}, .{}, .{} };
-            conf.controllers = json.value.controllers orelse .{ .{ .enabled = true }, .{ .enabled = true }, .{ .enabled = false }, .{ .enabled = false } };
-
-            conf.audio_volume = json.value.audio_volume orelse 0.3;
-            conf.dsp_emulation = json.value.dsp_emulation orelse .JIT;
-
             break :config conf;
         } else |_| {
             break :config Configuration{};

@@ -46,3 +46,12 @@ pub fn Partial(comptime T: type) type {
         else => @compileError("Partial type must be a struct"),
     }
 }
+
+/// Converts a Partial(T) to a T, using T fields default values.
+pub fn toComplete(comptime T: type, partial: Partial(T)) T {
+    var result: T = undefined;
+    inline for (comptime std.meta.fields(T)) |field| {
+        @field(result, field.name) = @field(partial, field.name) orelse @as(*const field.type, @ptrCast(@alignCast(field.default_value_ptr))).*;
+    }
+    return result;
+}
