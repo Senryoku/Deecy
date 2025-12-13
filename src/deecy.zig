@@ -213,7 +213,7 @@ const Configuration = struct {
     }
 };
 
-pub const ConfigFile = "/config.json";
+pub const ConfigFile = "/config.zon";
 
 pub const MaxSaveStates = 4;
 
@@ -284,23 +284,22 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     };
 
     // Load user config
-    // TODO: Replace by ZON when available.
-    const config = config: {
+    const config: Configuration = config: {
         const config_path = try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_userdata_path(), ConfigFile });
         defer allocator.free(config_path);
         if (std.fs.cwd().openFile(config_path, .{})) |file| {
             defer file.close();
-            const conf_str = try file.readToEndAlloc(allocator, 1024 * 1024);
+            const conf_str = try file.readToEndAllocOptions(allocator, 1024 * 1024, null, .@"8", 0);
             defer allocator.free(conf_str);
-            const json = try std.json.parseFromSlice(helpers.Partial(Configuration), allocator, conf_str, .{});
-            defer json.deinit();
-
-            var conf: Configuration = helpers.toComplete(Configuration, json.value);
-            if (conf.game_directory) |game_directory|
-                conf.game_directory = try allocator.dupe(u8, game_directory);
-            break :config conf;
+            @setEvalBranchQuota(2000);
+            var diagnostics: std.zon.parse.Diagnostics = .{};
+            const zon = std.zon.parse.fromSlice(helpers.Partial(Configuration), allocator, conf_str, &diagnostics, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
+                deecy_log.err("Failed to parse config file: {t}.\n{f}", .{ err, diagnostics });
+                break :config .{};
+            };
+            break :config helpers.toComplete(Configuration, zon);
         } else |_| {
-            break :config Configuration{};
+            break :config .{};
         }
     };
 
@@ -1236,7 +1235,7 @@ fn save_config(self: *@This()) !void {
     const buffer = try self._allocator.alloc(u8, 8192);
     defer self._allocator.free(buffer);
     var writer = config_file.writer(buffer);
-    try std.json.fmt(self.config, .{}).format(&writer.interface);
+    try std.zon.stringify.serialize(self.config, .{}, &writer.interface);
     try writer.end();
 }
 
