@@ -1347,10 +1347,10 @@ pub const SH4 = struct {
                         },
                         else => {
                             if (!(virtual_addr & 0xFF000000 == 0xFF000000 or virtual_addr & 0xFF000000 == 0x1F000000) or !(virtual_addr & 0b0000_0000_0000_0111_1111_1111_1000_0000 == 0)) {
-                                sh4_log.warn(termcolor.yellow(" [{X:0>8}] Invalid Read({}) to P4 register @{X:0>8}"), .{ self.pc, T, virtual_addr });
+                                sh4_log.warn(termcolor.yellow("[{X:0>8}] Invalid Read({}) to P4 register @{X:0>8}"), .{ self.pc, T, virtual_addr });
                                 return 0;
                             }
-                            sh4_log.debug("  Read({}) to P4 register @{X:0>8} {s} = 0x{X}", .{ T, virtual_addr, P4.getP4RegisterName(virtual_addr), @constCast(self).p4_register_addr(T, virtual_addr).* });
+                            sh4_log.debug("Read({}) to P4 register @{X:0>8} {s} = 0x{X}", .{ T, virtual_addr, P4.getP4RegisterName(virtual_addr), @constCast(self).p4_register_addr(T, virtual_addr).* });
                             return @constCast(self).p4_register_addr(T, virtual_addr).*;
                         },
                     }
@@ -1660,7 +1660,11 @@ pub const SH4 = struct {
                             return;
                         },
                         else => {
-                            sh4_log.debug("  Write({}) to P4 register @{X:0>8} {s} = 0x{X}", .{ T, virtual_addr, P4.getP4RegisterName(virtual_addr), value });
+                            if (!(virtual_addr & 0xFF000000 == 0xFF000000 or virtual_addr & 0xFF000000 == 0x1F000000) or !(virtual_addr & 0b0000_0000_0000_0111_1111_1111_1000_0000 == 0)) {
+                                sh4_log.warn(termcolor.yellow("[{X:0>8}] Invalid Write({}) to P4 register @{X:0>8} = {X:0>8}"), .{ self.pc, T, virtual_addr, value });
+                                return;
+                            }
+                            sh4_log.debug("Write({}) to P4 register @{X:0>8} {s} = 0x{X}", .{ T, virtual_addr, P4.getP4RegisterName(virtual_addr), value });
                         },
                     }
 
