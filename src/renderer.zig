@@ -653,16 +653,6 @@ const TextureAndView = struct {
     }
 };
 
-// FIXME: Temp PoC, do better.
-var fb_mapping_available: bool = false;
-fn signal_fb_mapped(status: zgpu.wgpu.BufferMapAsyncStatus, _: ?*anyopaque) callconv(.c) void {
-    switch (status) {
-        .success => {},
-        else => log.err(termcolor.red("Failed to map buffer: {t}"), .{status}),
-    }
-    fb_mapping_available = true;
-}
-
 pub const Renderer = struct {
     // Max texture count for each size (8x8 to 1024x1024). Not sure what are good values.
     // FIXME: Not sure what are good values.
@@ -3518,13 +3508,24 @@ pub const Renderer = struct {
 
         // Read the result and copy it to guest VRAM
         if ((self.ExperimentalFramebufferEmulation or render_to_texture) and self.ExperimentalRenderToVRAM) {
+            const static = struct {
+                var fb_mapping_available: bool = false;
+                fn signal_fb_mapped(status: zgpu.wgpu.BufferMapAsyncStatus, _: ?*anyopaque) callconv(.c) void {
+                    switch (status) {
+                        .success => {},
+                        else => log.err(termcolor.red("Failed to map buffer: {t}"), .{status}),
+                    }
+                    fb_mapping_available = true;
+                }
+            };
+
             const copy_buffer = gctx.lookupResource(self.framebuffer_copy_buffer).?;
-            copy_buffer.mapAsync(.{ .read = true }, 0, 4 * NativeResolution.width * NativeResolution.height, &signal_fb_mapped, null);
+            copy_buffer.mapAsync(.{ .read = true }, 0, 4 * NativeResolution.width * NativeResolution.height, &static.signal_fb_mapped, null);
             // Wait for mapping to be available. There's no synchronous way to do that AFAIK.
             // It needs to be unmapped before the next frame.
-            while (!fb_mapping_available)
+            while (!static.fb_mapping_available)
                 gctx.device.tick();
-            fb_mapping_available = false;
+            static.fb_mapping_available = false;
 
             defer copy_buffer.unmap();
             const mapped_pixels = copy_buffer.getConstMappedRange(u8, 0, 4 * NativeResolution.width * NativeResolution.height);
