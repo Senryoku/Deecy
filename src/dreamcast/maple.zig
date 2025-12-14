@@ -576,6 +576,13 @@ const Peripheral = union(enum) {
     Controller: Controller,
     VMU: VMU,
 
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        switch (self.*) {
+            .VMU => |*v| v.deinit(allocator),
+            inline else => {},
+        }
+    }
+
     pub fn tag(self: @This()) std.meta.Tag(@This()) {
         return std.meta.activeTag(self);
     }
@@ -620,6 +627,17 @@ const Peripheral = union(enum) {
 const MaplePort = struct {
     main: ?Peripheral = null,
     subperipherals: [5]?Peripheral = @splat(null),
+
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        if (self.main) |*p|
+            p.deinit(allocator);
+        for (&self.subperipherals) |*sub| {
+            if (sub.*) |*p|
+                p.deinit(allocator);
+        }
+
+        self.* = .{};
+    }
 
     /// Returns the number of 32bytes words transferred to the host.
     pub fn handle_command(self: *@This(), dc: *Dreamcast, data: [*]u32) u32 {
@@ -798,14 +816,8 @@ pub const MapleHost = struct {
         for (&self.ports) |*port| {
             // Can't have a VMU as the main peripheral.
             for (&port.subperipherals) |*maybe_peripheral| {
-                if (maybe_peripheral.*) |*peripheral| {
-                    switch (peripheral.*) {
-                        .VMU => |*vmu| {
-                            vmu.deinit(self._allocator);
-                        },
-                        else => {},
-                    }
-                }
+                if (maybe_peripheral.*) |*peripheral|
+                    peripheral.deinit(self._allocator);
             }
         }
     }

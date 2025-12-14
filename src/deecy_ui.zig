@@ -18,6 +18,8 @@ const PVRFile = @import("pvr_file.zig");
 
 const Notifications = @import("./ui/notifications.zig");
 
+const Self = @This();
+
 const GameFile = struct {
     path: [:0]const u8,
     name: [:0]const u8,
@@ -59,12 +61,14 @@ fn wait_for_key(d: *Deecy) zglfw.Key {
 
 last_error: []const u8 = "",
 
-vmu_displays: [4][2]?struct {
-    texture: zgpu.TextureHandle,
-    view: zgpu.TextureViewHandle,
-    dirty: bool = false,
+vmu_displays: [4]struct {
+    texture: zgpu.TextureHandle = .nil,
+    view: zgpu.TextureViewHandle = .nil,
+    valid: bool = false, // Is in use?
+    display: bool = true, // Should be displayed?
+    dirty: bool = false, // GPU texture is outdated?
     data: [48 * 32 / 8]u8 = @splat(255),
-} = .{ .{ null, null }, .{ null, null }, .{ null, null }, .{ null, null } },
+} = @splat(.{}),
 
 binary_loaded: bool = false, // Indicates if we're running a raw binary loaded directly in RAM (not from a disc) (FIXME: Used to avoid drawing the game library when pausing without a disc. Clunky.)
 disc_files: std.ArrayList(GameFile) = .empty,
@@ -82,7 +86,8 @@ pub fn create(allocator: std.mem.Allocator, d: *Deecy) !*@This() {
         .deecy = d,
         .allocator = allocator,
     };
-    r.create_vmu_texture(0, 0);
+    for (0..4) |p|
+        r.create_vmu_texture(@intCast(p));
     return r;
 }
 
@@ -90,23 +95,15 @@ pub fn destroy(self: *@This()) void {
     for (self.disc_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
     self.disc_files.deinit(self.allocator);
 
-    for (&self.vmu_displays) |*vmu_texture| {
-        if (vmu_texture[0]) |texture| {
-            self.deecy.gctx.releaseResource(texture.texture);
-            self.deecy.gctx.releaseResource(texture.view);
-            vmu_texture[0] = null;
-        }
-        if (vmu_texture[1]) |texture| {
-            self.deecy.gctx.releaseResource(texture.texture);
-            self.deecy.gctx.releaseResource(texture.view);
-            vmu_texture[1] = null;
-        }
+    for (self.vmu_displays) |texture| {
+        self.deecy.gctx.releaseResource(texture.texture);
+        self.deecy.gctx.releaseResource(texture.view);
     }
 
     self.allocator.destroy(self);
 }
 
-fn create_vmu_texture(self: *@This(), controller: u8, index: u8) void {
+fn create_vmu_texture(self: *@This(), controller: u8) void {
     const tex = self.deecy.gctx.createTexture(.{
         .usage = .{ .texture_binding = true, .copy_dst = true },
         .size = .{
@@ -118,27 +115,31 @@ fn create_vmu_texture(self: *@This(), controller: u8, index: u8) void {
         .mip_level_count = 1,
     });
     const view = self.deecy.gctx.createTextureView(tex, .{});
-    self.vmu_displays[controller][index] = .{ .texture = tex, .view = view };
-    self.upload_vmu_texture(controller, index);
+    self.vmu_displays[controller] = .{ .texture = tex, .view = view };
+    self.upload_vmu_texture(controller);
 }
 
-pub fn update_vmu_screen(self: *@This(), data: [*]const u8, controller: u8, index: u8) void {
-    if (self.vmu_displays[controller][index] == null) return;
-    @memcpy(&self.vmu_displays[controller][index].?.data, data[0 .. 48 * 32 / 8]);
-    self.vmu_displays[controller][index].?.dirty = true;
+pub fn update_vmu_screen(self: *@This(), data: [*]const u8, controller: u8) void {
+    @memcpy(&self.vmu_displays[controller].data, data[0 .. 48 * 32 / 8]);
+    self.vmu_displays[controller].dirty = true;
 }
 
-pub fn update_vmu_screen_0_0(self: *@This(), data: [*]const u8) void {
-    self.update_vmu_screen(data, 0, 0);
+pub fn vmu_screen_callback(comptime port_idx: u8) type {
+    std.debug.assert(port_idx < 4);
+    return struct {
+        pub fn callback(self: *Self, data: [*]const u8) void {
+            self.update_vmu_screen(data, port_idx);
+        }
+    };
 }
 
-pub fn upload_vmu_texture(self: *@This(), controller: u8, index: u8) void {
+pub fn upload_vmu_texture(self: *@This(), controller: u8) void {
     const colors = [2][3]u8{ // bgr
         .{ 152, 135, 92 }, // "white"
         .{ 104, 43, 40 }, // "black"
     };
 
-    var tex = &self.vmu_displays[controller][index].?;
+    const tex = &self.vmu_displays[controller];
     var pixels: [4 * 48 * 32]u8 = undefined;
     for (0..32) |r| {
         const row = tex.data[6 * (31 - r) .. 6 * ((31 - r) + 1)];
@@ -168,21 +169,24 @@ pub fn upload_vmu_texture(self: *@This(), controller: u8, index: u8) void {
 pub fn draw_vmus(self: *@This(), editable: bool) void {
     if ((editable and self.deecy.config.display_debug_ui) or (!editable and !self.deecy.config.display_vmus)) return;
 
-    zgui.setNextWindowSize(.{ .w = 4 * 48, .h = 2 * 4 * 32, .cond = .first_use_ever });
+    zgui.setNextWindowSize(.{ .w = 4 * 48, .h = 2 * (4 * 32 + 8), .cond = .first_use_ever });
     zgui.setNextWindowPos(.{ .x = 32, .y = 32, .cond = .first_use_ever });
 
     zgui.pushStyleVar2f(.{ .idx = .window_padding, .v = .{ 0.0, 0.0 } });
 
     if (zgui.begin("VMUs", .{ .flags = .{ .no_resize = !editable, .no_move = !editable, .no_title_bar = !editable, .no_mouse_inputs = !editable, .no_nav_inputs = !editable, .no_nav_focus = !editable, .no_background = !editable, .no_docking = true } })) {
+        if (!editable) zgui.dummy(.{ .w = 0, .h = 18.0 });
         const win_width = zgui.getWindowSize()[0];
-        for (0..self.vmu_displays.len) |controller| {
-            for (0..2) |index| {
-                if (self.vmu_displays[controller][index] != null) {
-                    const tex = &self.vmu_displays[controller][index].?;
+        inline for (&self.vmu_displays, 0..) |*tex, idx| {
+            if (tex.valid) {
+                if (tex.display) {
                     if (tex.dirty)
-                        self.upload_vmu_texture(@intCast(controller), @intCast(index));
+                        self.upload_vmu_texture(@intCast(idx));
                     zgui.image(self.deecy.gctx.lookupResource(tex.view).?, .{ .w = win_width, .h = win_width * 32.0 / 48.0 });
                 }
+                if (editable) {
+                    _ = zgui.checkbox("Display #" ++ std.fmt.comptimePrint("{d}", .{idx}), .{ .v = &tex.display });
+                } else zgui.dummy(.{ .w = 0, .h = 24.0 });
             }
         }
     }
@@ -707,6 +711,11 @@ pub fn draw(self: *@This()) !void {
             }
 
             if (zgui.beginTabItem("Controls", .{})) {
+                var per_game_vmu = d.config.per_game_vmu;
+                if (zgui.checkbox("Per-Game VMU", .{ .v = &per_game_vmu })) {
+                    try d.set_per_game_vmu(per_game_vmu);
+                }
+
                 var available_controllers: std.ArrayList(struct { id: ?zglfw.Joystick, name: [:0]const u8 }) = .empty;
                 defer available_controllers.deinit(self.allocator);
 
@@ -725,16 +734,12 @@ pub fn draw(self: *@This()) !void {
                     zgui.pushIntId(i);
                     defer zgui.popId();
 
-                    if (i != 0) zgui.separator();
+                    zgui.separator();
 
                     const number = std.fmt.comptimePrint("{d}", .{i + 1});
                     var connected: bool = d.dc.maple.ports[i].main != null;
                     if (zgui.checkbox("Controller #" ++ number, .{ .v = &connected })) {
-                        if (d.dc.maple.ports[i].main != null) {
-                            d.dc.maple.ports[i].main = null;
-                        } else {
-                            d.dc.maple.ports[i].main = .{ .Controller = .{ .subcapabilities = .{ d.config.controllers[i].subcapabilities.as_u32(), 0, 0 } } };
-                        }
+                        try d.enable_controller(i, connected);
                     }
                     const name = if (d.controllers[i]) |j|
                         (if (j.id.isPresent())
@@ -833,6 +838,21 @@ pub fn draw(self: *@This()) !void {
                         }
                     }
                     if (d.dc.maple.ports[i].main) |_| {
+                        if (i > 0) {
+                            if (d.dc.maple.ports[i].subperipherals[0] != null and d.dc.maple.ports[i].subperipherals[0].? == .VMU) {
+                                if (zgui.button("Remove VMU", .{})) {
+                                    d.dc.maple.ports[i].subperipherals[0].?.deinit(d._allocator);
+                                    d.dc.maple.ports[i].subperipherals[0] = null;
+                                    self.vmu_displays[i].valid = false;
+                                    d.config.controllers[i].subperipherals[0] = .None;
+                                }
+                            } else {
+                                if (zgui.button("Add VMU", .{})) {
+                                    try d.load_default_vmu(i);
+                                    d.config.controllers[i].subperipherals[0] = .VMU;
+                                }
+                            }
+                        }
                         for (d.dc.maple.ports[i].subperipherals) |sub| {
                             if (sub) |*s| {
                                 switch (s.*) {

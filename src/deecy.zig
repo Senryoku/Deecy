@@ -190,6 +190,7 @@ pub const KeyboardBindings = struct {
 const ControllerSettings = struct {
     enabled: bool,
     subcapabilities: DreamcastModule.Maple.InputCapabilities = DreamcastModule.Maple.DualStickControllerCapabilities,
+    subperipherals: [5]enum { None, VMU } = .{ .VMU, .None, .None, .None, .None },
 };
 
 const Configuration = struct {
@@ -430,9 +431,6 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
             }
             return err;
         };
-        for (self.config.controllers, 0..) |c, idx| {
-            if (c.enabled) self.dc.maple.ports[idx].main = .{ .Controller = .{ .subcapabilities = .{ @bitCast(c.subcapabilities), 0, 0 } } };
-        }
     }
 
     self.renderer = try .create(self._allocator, self.gctx, &self.gctx_queue_mutex, config.internal_resolution_factor, config.display_mode);
@@ -443,6 +441,11 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
 
     self.ui = try .create(self._allocator, self);
     self.debug_ui = try .init(self);
+
+    for (self.config.controllers, 0..) |c, idx| {
+        if (c.enabled)
+            try self.enable_controller(@intCast(idx), true);
+    }
 
     try self.check_save_state_slots();
 
@@ -630,6 +633,51 @@ fn ui_deinit(_: *@This()) void {
     zgui.plot.deinit();
     zgui.backend.deinit();
     zgui.deinit();
+}
+
+pub fn set_per_game_vmu(self: *@This(), value: bool) !void {
+    if (self.config.per_game_vmu != value) {
+        self.config.per_game_vmu = value;
+        if (!self.config.per_game_vmu) {
+            try self.load_default_vmu(0);
+        } else {
+            try self.load_per_game_vmu();
+        }
+    }
+}
+
+pub fn load_default_vmu(self: *@This(), idx: u8) !void {
+    const vmu_filename = try std.fmt.allocPrint(self._allocator, "vmu_{d}.bin", .{idx});
+    defer self._allocator.free(vmu_filename);
+    const vmu_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), vmu_filename });
+    defer self._allocator.free(vmu_path);
+    self.load_vmu(@intCast(idx), vmu_path) catch |err| {
+        deecy_log.err("Failed to load default VMU for controller #{d}: {t}", .{ idx, err });
+    };
+}
+
+pub fn load_per_game_vmu(self: *@This()) !void {
+    if (try self.userdata_game_directory()) |game_dir| {
+        defer self._allocator.free(game_dir);
+        const vmu_path = try std.fs.path.join(self._allocator, &[_][]const u8{ game_dir, "vmu_0.bin" });
+        defer self._allocator.free(vmu_path);
+        try self.load_vmu(0, vmu_path);
+    } else {
+        try self.load_default_vmu(0);
+    }
+}
+
+pub fn enable_controller(self: *@This(), idx: u8, value: bool) !void {
+    const config = &self.config.controllers[idx];
+    if (value) {
+        self.dc.maple.ports[idx].main = .{ .Controller = .{ .subcapabilities = .{ @bitCast(config.subcapabilities), 0, 0 } } };
+        // NOTE: Only the first subperipheral is actually supported for now.
+        if (config.subperipherals[0] == .VMU)
+            try self.load_default_vmu(idx);
+    } else {
+        self.dc.maple.ports[idx].deinit(self._allocator);
+    }
+    config.enabled = value;
 }
 
 pub fn reset(self: *@This()) !void {
@@ -842,11 +890,24 @@ pub fn get_product_id(self: *const @This()) ?[]const u8 {
     return if (self.dc.gdrom.disc) |*disc| disc.get_product_id() else null;
 }
 
+pub fn load_vmu(self: *@This(), controller_idx: u8, vmu_path: []const u8) !void {
+    std.debug.assert(controller_idx < 4);
+    if (self.dc.maple.ports[controller_idx].subperipherals[0]) |*peripheral|
+        peripheral.deinit(self._allocator);
+
+    self.dc.maple.ports[controller_idx].subperipherals[0] = .{ .VMU = try .init(self._allocator, vmu_path) };
+    self.dc.maple.ports[controller_idx].subperipherals[0].?.VMU.on_screen_update = .{ .function = @ptrCast(&switch (controller_idx) {
+        inline 0, 1, 2, 3 => |pidx| UI.vmu_screen_callback(pidx).callback,
+        else => unreachable,
+    }), .userdata = self.ui };
+    self.ui.vmu_displays[controller_idx].valid = true;
+}
+
 /// Game specific sub directory name (for VMUs, save states...)
 /// Caller owns the returned string.
-fn userdata_game_directory(self: *@This()) ![]const u8 {
-    const product_id = self.get_product_id() orelse "default";
-    const product_name = self.get_product_name() orelse "default";
+fn userdata_game_directory(self: *@This()) !?[]const u8 {
+    const product_id = self.get_product_id() orelse return null;
+    const product_name = self.get_product_name() orelse "INVALID";
     const folder_name = try std.fmt.allocPrint(self._allocator, "{s}[{s}]", .{ product_name, product_id });
     safe_path(folder_name);
     defer self._allocator.free(folder_name);
@@ -855,21 +916,7 @@ fn userdata_game_directory(self: *@This()) ![]const u8 {
 }
 
 pub fn on_game_load(self: *@This()) !void {
-    if (self.config.per_game_vmu) {
-        const game_dir = try self.userdata_game_directory();
-        defer self._allocator.free(game_dir);
-        const vmu_path = try std.fs.path.join(self._allocator, &[_][]const u8{ game_dir, "vmu_0.bin" });
-        defer self._allocator.free(vmu_path);
-
-        if (self.dc.maple.ports[0].subperipherals[0]) |*peripheral| {
-            switch (peripheral.*) {
-                .VMU => |*vmu| vmu.deinit(self._allocator),
-                else => {},
-            }
-        }
-        self.dc.maple.ports[0].subperipherals[0] = .{ .VMU = try .init(self._allocator, vmu_path) };
-        self.dc.maple.ports[0].subperipherals[0].?.VMU.on_screen_update = .{ .function = @ptrCast(&UI.update_vmu_screen_0_0), .userdata = self.ui };
-    }
+    if (self.config.per_game_vmu) try self.load_per_game_vmu();
     try self.check_save_state_slots();
 
     var title = try std.ArrayList(u8).initCapacity(self._allocator, 64);
@@ -890,7 +937,7 @@ pub fn on_game_load(self: *@This()) !void {
 
 // Caller owns the returned ArrayList
 fn save_state_path(self: *@This(), index: usize) !std.ArrayList(u8) {
-    const game_dir = try self.userdata_game_directory();
+    const game_dir = try self.userdata_game_directory() orelse try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), "NoDisc" });
     defer self._allocator.free(game_dir);
     var save_slot_path: std.ArrayList(u8) = .empty;
     try save_slot_path.writer(self._allocator).print("{s}/save_{d}.sav", .{ game_dir, index });
