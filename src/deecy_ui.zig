@@ -64,8 +64,9 @@ last_error: []const u8 = "",
 vmu_displays: [4]struct {
     texture: zgpu.TextureHandle = .nil,
     view: zgpu.TextureViewHandle = .nil,
-    valid: bool = false, // Should be displayed?
-    dirty: bool = false,
+    valid: bool = false, // Is in use?
+    display: bool = true, // Should be displayed?
+    dirty: bool = false, // GPU texture is outdated?
     data: [48 * 32 / 8]u8 = @splat(255),
 } = @splat(.{}),
 
@@ -168,18 +169,24 @@ pub fn upload_vmu_texture(self: *@This(), controller: u8) void {
 pub fn draw_vmus(self: *@This(), editable: bool) void {
     if ((editable and self.deecy.config.display_debug_ui) or (!editable and !self.deecy.config.display_vmus)) return;
 
-    zgui.setNextWindowSize(.{ .w = 4 * 48, .h = 2 * 4 * 32, .cond = .first_use_ever });
+    zgui.setNextWindowSize(.{ .w = 4 * 48, .h = 2 * (4 * 32 + 8), .cond = .first_use_ever });
     zgui.setNextWindowPos(.{ .x = 32, .y = 32, .cond = .first_use_ever });
 
     zgui.pushStyleVar2f(.{ .idx = .window_padding, .v = .{ 0.0, 0.0 } });
 
     if (zgui.begin("VMUs", .{ .flags = .{ .no_resize = !editable, .no_move = !editable, .no_title_bar = !editable, .no_mouse_inputs = !editable, .no_nav_inputs = !editable, .no_nav_focus = !editable, .no_background = !editable, .no_docking = true } })) {
+        if (!editable) zgui.dummy(.{ .w = 0, .h = 18.0 });
         const win_width = zgui.getWindowSize()[0];
-        for (self.vmu_displays, 0..) |tex, idx| {
+        inline for (&self.vmu_displays, 0..) |*tex, idx| {
             if (tex.valid) {
-                if (tex.dirty)
-                    self.upload_vmu_texture(@intCast(idx));
-                zgui.image(self.deecy.gctx.lookupResource(tex.view).?, .{ .w = win_width, .h = win_width * 32.0 / 48.0 });
+                if (tex.display) {
+                    if (tex.dirty)
+                        self.upload_vmu_texture(@intCast(idx));
+                    zgui.image(self.deecy.gctx.lookupResource(tex.view).?, .{ .w = win_width, .h = win_width * 32.0 / 48.0 });
+                }
+                if (editable) {
+                    _ = zgui.checkbox("Display #" ++ std.fmt.comptimePrint("{d}", .{idx}), .{ .v = &tex.display });
+                } else zgui.dummy(.{ .w = 0, .h = 24.0 });
             }
         }
     }
