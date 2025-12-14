@@ -688,6 +688,7 @@ pub const Renderer = struct {
     /// When rendering to a texture or framebuffer, copy the result to guest VRAM. Necessary for some effects in Grandia II or Tony Hawk 2 for example.
     ExperimentalRenderToVRAM: bool = true,
     ExperimentalClampSpritesUVs: bool = true,
+    ExperimentalRenderOnEmulationThread: bool = false,
 
     render_start: bool = false,
     on_render_start_param_base: u32 = 0,
@@ -1620,11 +1621,11 @@ pub const Renderer = struct {
             self.write_back_parameters = dc.gpu.get_write_back_parameters();
 
             // Let the main thread process the list asynchronously if possible.
-            self.render_start = !render_to_texture;
+            self.render_start = !self.ExperimentalRenderOnEmulationThread and !render_to_texture;
         }
 
         // Process and render immediately when rendering to a texture. Decouples it from the host refresh rate, and some games require the result to be visible in guest VRAM ASAP.
-        if (render_to_texture) {
+        if (self.ExperimentalRenderOnEmulationThread or render_to_texture) {
             // All resources (including zgpu uniforms!) are shared with standard rendering, so we have to synchronize with the main thread.
             self._gctx_queue_mutex.lock();
             defer self._gctx_queue_mutex.unlock();
