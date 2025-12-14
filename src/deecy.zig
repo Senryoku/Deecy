@@ -377,7 +377,10 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
             }, .{
                 .present_mode = config.present_mode,
                 .required_features = &[_]zgpu.wgpu.FeatureName{ .bgra8_unorm_storage, .depth32_float_stencil8 },
-                .required_limits = &.{ .limits = .{ .max_texture_array_layers = 512 } },
+                // Increasing max_texture_array_layers is required: The renderer uses a single texture array for each size.
+                // 2048 is a big jump from the WebGPU default of 256, but it seems to be widely supported, especially on desktop.
+                // (support for Vulkan: https://vulkan.gpuinfo.org/displaydevicelimit.php?name=maxImageArrayLayers)
+                .required_limits = &.{ .limits = .{ .max_texture_array_layers = 2048 } },
             });
         }
 

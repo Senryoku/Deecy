@@ -31,7 +31,7 @@ show_disabled_channels: bool = false,
 
 vram_texture: zgpu.TextureHandle = undefined,
 vram_texture_view: zgpu.TextureViewHandle = undefined,
-renderer_texture_views: [8][512]zgpu.TextureViewHandle = undefined,
+renderer_texture_views: [8][]zgpu.TextureViewHandle = undefined,
 
 // Strip Debug Display
 selected_strip_focus: bool = false, // Element has been clicked and remain in focus
@@ -149,7 +149,8 @@ pub fn init(d: *Deecy) !@This() {
     self.pixels = try self._allocator.alloc(u8, (vram_width * vram_height) * 4);
 
     for (0..self.renderer_texture_views.len) |i| {
-        for (0..RendererModule.Renderer.MaxTextures[i]) |j| {
+        self.renderer_texture_views[i] = try self._allocator.alloc(zgpu.TextureViewHandle, RendererModule.Renderer.MaxTextures[i]);
+        for (0..self.renderer_texture_views[i].len) |j| {
             self.renderer_texture_views[i][j] = d.gctx.createTextureView(d.renderer.texture_arrays[i].texture, .{
                 .dimension = .tvdim_2d,
                 .base_array_layer = @intCast(j),
@@ -192,6 +193,9 @@ pub fn deinit(self: *@This()) void {
 
     self._gctx.releaseResource(self.vram_texture_view);
     self._gctx.releaseResource(self.vram_texture);
+
+    for (self.renderer_texture_views) |views|
+        self._allocator.free(views);
 
     self._allocator.free(self.pixels);
 }

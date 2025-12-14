@@ -664,7 +664,11 @@ fn signal_fb_mapped(status: zgpu.wgpu.BufferMapAsyncStatus, _: ?*anyopaque) call
 }
 
 pub const Renderer = struct {
-    pub const MaxTextures: [8]u16 = .{ 512, 512, 512, 512, 256, 128, 32, 8 }; // Max texture count for each size. FIXME: Not sure what are good values.
+    // Max texture count for each size (8x8 to 1024x1024). Not sure what are good values.
+    // FIXME: Not sure what are good values.
+    //        As a good stress test, Fatal Fury: Mark of the Wolves can use more than 1024 16x16 textures in a single frame right in the character select screen with the current system.
+    //        In matches, I've also seen it exceed 2048 8x8 textures (!) and the current limit of 8 1024x1024 textures by using a lot of 16x1024. This might be the limit of the current solution.
+    pub const MaxTextures: [8]u16 = .{ 2048, 2048, 512, 512, 256, 128, 32, 8 };
 
     pub const DisplayMode = enum { Center, Fit, Stretch };
 
@@ -702,8 +706,7 @@ pub const Renderer = struct {
     ta_lists_to_render: std.ArrayList(HollyModule.TALists),
     _ta_lists_mutex: std.Thread.Mutex = .{},
 
-    // That's too much for the higher texture sizes, but that probably doesn't matter.
-    texture_metadata: [8][512]TextureMetadata = @splat(@splat(.{})),
+    texture_metadata: [8][]TextureMetadata = @splat(&.{}),
 
     framebuffer_resize_bind_group: zgpu.BindGroupHandle,
 
@@ -1441,6 +1444,11 @@ pub const Renderer = struct {
         _ = renderer.get_or_put_pipeline(.{ .translucent = false, .src_blend_factor = .one, .dst_blend_factor = .zero, .depth_compare = .greater_equal, .depth_write_enabled = true, .culling_mode = .Small }, .Async);
         _ = renderer.get_or_put_pipeline(.{ .translucent = false, .src_blend_factor = .src_alpha, .dst_blend_factor = .one_minus_src_alpha, .depth_compare = .greater_equal, .depth_write_enabled = true, .culling_mode = .Small }, .Async); // Punchthrough
 
+        for (0..renderer.texture_metadata.len) |i| {
+            renderer.texture_metadata[i] = try allocator.alloc(TextureMetadata, MaxTextures[i]);
+            for (renderer.texture_metadata[i]) |*tm| tm.* = .{};
+        }
+
         renderer.on_inner_resolution_change();
 
         return renderer;
@@ -1539,13 +1547,16 @@ pub const Renderer = struct {
         self._gctx.releaseResource(self.blit_vertex_buffer);
         // self._gctx.releaseResource(self.blit_pipeline);
 
+        for (self.texture_metadata) |arr| self._allocator.free(arr);
+
         self._allocator.destroy(self);
     }
 
     pub fn reset(self: *@This()) void {
         self.render_start = false;
-        self.texture_metadata = @splat(@splat(.{}));
-
+        for (self.texture_metadata) |arr| {
+            for (arr) |*tex| tex.* = .{};
+        }
         for (self.ta_lists_to_render.items) |*list| list.clearRetainingCapacity();
         for (self.ta_lists.items) |*list| list.clearRetainingCapacity();
         for (self.render_passes.items) |*pass| pass.clearRetainingCapacity(self._allocator);
@@ -1640,7 +1651,7 @@ pub const Renderer = struct {
     /// For external use only (e.g. Debug UI)
     pub fn get_texture_view(self: *const @This(), control_word: HollyModule.TextureControlWord, tsp_instruction: HollyModule.TSPInstructionWord) ?struct { size_index: u3, index: u32 } {
         const size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
-        for (self.texture_metadata[size_index][0..MaxTextures[size_index]], 0..) |*entry, idx| {
+        for (self.texture_metadata[size_index], 0..) |*entry, idx| {
             if (entry.status != .Invalid and entry.status != .Outdated and entry.match(control_word)) {
                 return .{ .size_index = size_index, .index = @intCast(idx) };
             }
@@ -1649,7 +1660,7 @@ pub const Renderer = struct {
     }
 
     fn get_texture_index(self: *@This(), gpu: *const HollyModule.Holly, size_index: u3, control_word: HollyModule.TextureControlWord) ?TextureIndex {
-        for (self.texture_metadata[size_index][0..MaxTextures[size_index]], 0..) |*entry, idx| {
+        for (self.texture_metadata[size_index], 0..) |*entry, idx| {
             if (entry.status != .Invalid and entry.match(control_word)) {
                 if (entry.usage == 0) {
                     // Texture appears to have changed in memory. Mark as outdated.
@@ -1670,7 +1681,7 @@ pub const Renderer = struct {
     /// Search for the least recently used texture, preferring an outdated one.
     fn get_lru_texture_index(self: *@This(), size_index: u3) TextureIndex {
         var texture_index: TextureIndex = InvalidTextureIndex;
-        for (self.texture_metadata[size_index][0..MaxTextures[size_index]], 0..) |*entry, idx| {
+        for (self.texture_metadata[size_index], 0..) |*entry, idx| {
             if (texture_index == InvalidTextureIndex) {
                 if (entry.status == .Outdated or entry.status == .Unused) texture_index = @intCast(idx);
             } else {
@@ -1745,7 +1756,7 @@ pub const Renderer = struct {
 
         // Search for an available texture index.
         var texture_index: TextureIndex = InvalidTextureIndex;
-        for (0..MaxTextures[size_index]) |i| {
+        for (0..self.texture_metadata[size_index].len) |i| {
             // Prefer slots that have never been used to keep textures in the cache for as long as possible.
             if (self.texture_metadata[size_index][i].status == .Invalid) {
                 texture_index = @as(TextureIndex, @intCast(i));
@@ -1835,26 +1846,24 @@ pub const Renderer = struct {
     }
 
     fn reset_texture_usage(self: *@This()) void {
-        for (0..MaxTextures.len) |j| {
-            for (0..MaxTextures[j]) |i| {
-                self.texture_metadata[j][i].usage = 0;
-            }
+        for (self.texture_metadata) |arr| {
+            for (arr) |*tm| tm.usage = 0;
         }
     }
 
     fn check_texture_usage(self: *@This()) void {
-        for (0..MaxTextures.len) |j| {
-            for (0..MaxTextures[j]) |i| {
-                if (self.texture_metadata[j][i].status != .Invalid) {
-                    if (self.texture_metadata[j][i].status == .Outdated) {
-                        self.texture_metadata[j][i].age += 1;
+        for (self.texture_metadata) |arr| {
+            for (arr) |*tm| {
+                if (tm.status != .Invalid) {
+                    if (tm.status == .Outdated) {
+                        tm.age += 1;
                     } else {
-                        if (self.texture_metadata[j][i].usage == 0) {
-                            self.texture_metadata[j][i].status = .Unused;
-                            self.texture_metadata[j][i].age += 1;
+                        if (tm.usage == 0) {
+                            tm.status = .Unused;
+                            tm.age += 1;
                         } else {
-                            self.texture_metadata[j][i].status = .Used;
-                            self.texture_metadata[j][i].age = 0;
+                            tm.status = .Used;
+                            tm.age = 0;
                         }
                     }
                 }
@@ -3389,7 +3398,7 @@ pub const Renderer = struct {
                     const pixel_size: u32 = 2;
 
                     var texture_index: TextureIndex = InvalidTextureIndex;
-                    for (0..MaxTextures[size_index]) |i| {
+                    for (0..self.texture_metadata[size_index].len) |i| {
                         // Prefer slots that have never been used to keep textures in the cache for as long as possible.
                         if (self.texture_metadata[size_index][i].status == .Invalid) {
                             if (texture_index == InvalidTextureIndex)
