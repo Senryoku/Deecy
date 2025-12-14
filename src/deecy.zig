@@ -958,7 +958,20 @@ pub fn toggle_fullscreen(self: *@This()) void {
         self.window.setMonitor(null, self.previous_window_position.x, self.previous_window_position.y, self.previous_window_position.w, self.previous_window_position.h, 0);
     } else {
         self.previous_window_position = .{ .x = self.window.getPos()[0], .y = self.window.getPos()[1], .w = self.window.getSize()[0], .h = self.window.getSize()[1] };
-        const monitor = zglfw.Monitor.getPrimary().?;
+        // Search the monitor with largest overlap with our current window.
+        const monitors = zglfw.Monitor.getAll();
+        var monitor = zglfw.Monitor.getPrimary() orelse monitors[0];
+        var current_overlap: i32 = 0;
+        for (monitors) |candidate| {
+            const mode = candidate.getVideoMode() catch continue;
+            const monitor_pos = candidate.getPos();
+            const overlap: i32 = (@min(self.previous_window_position.x + self.previous_window_position.w, monitor_pos[0] + mode.width) - @max(self.previous_window_position.x, monitor_pos[0])) *
+                (@min(self.previous_window_position.y + self.previous_window_position.h, monitor_pos[1] + mode.height) - @max(self.previous_window_position.y, monitor_pos[1]));
+            if (overlap > current_overlap) {
+                current_overlap = overlap;
+                monitor = candidate;
+            }
+        }
         const mode = monitor.getVideoMode() catch |err| {
             deecy_log.err(termcolor.red("Failed to get video mode: {}"), .{err});
             return;
