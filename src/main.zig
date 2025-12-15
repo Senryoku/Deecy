@@ -251,6 +251,7 @@ pub fn main() !void {
             dc.cpu.pc = entry_point;
         }
         start_immediately = true;
+        d.display_ui = false;
         d.ui.binary_loaded = true;
     } else if (disc_path) |path| {
         std.log.info("Loading Disc: {s}...", .{path});
@@ -294,6 +295,7 @@ pub fn main() !void {
         }
 
         start_immediately = true;
+        d.display_ui = false;
     } else {
         if (skip_bios) {
             try dc.set_region(.USA);
