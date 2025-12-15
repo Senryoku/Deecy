@@ -236,29 +236,6 @@ config: Configuration = .{},
 toggle_fullscreen_request: bool = false,
 previous_window_position: struct { x: i32 = 0, y: i32 = 0, w: i32 = 0, h: i32 = 0 } = .{},
 
-last_frame_timestamp: i64,
-last_n_frametimes: struct {
-    count: usize = 0,
-    position: usize = 0,
-    times: [60]i64 = @splat(0),
-
-    pub fn push(self: *@This(), time: i64) void {
-        self.times[self.position] = time;
-        self.position = (self.position + 1) % self.times.len;
-        if (self.count < self.times.len)
-            self.count += 1;
-    }
-
-    pub fn sum(self: *const @This()) i64 {
-        const first = if (self.position > self.count) self.position - self.count else self.position + self.times.len - self.count;
-        var s: i64 = 0;
-        for (0..self.count) |i| {
-            s += self.times[(first + i) % self.times.len];
-        }
-        return s;
-    }
-} = .{},
-
 running: bool = false,
 _cycles_to_run: i64 = 0,
 _stop_request: bool = false,
@@ -315,7 +292,6 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     self.* = .{
         .window = undefined,
         .config = config,
-        .last_frame_timestamp = std.time.microTimestamp(),
         .breakpoints = .empty,
         ._allocator = allocator,
     };
@@ -694,8 +670,6 @@ pub fn reset(self: *@This()) !void {
     self.ui.binary_loaded = false;
     self.renderer.reset();
     self._cycles_to_run = 0;
-    self.last_frame_timestamp = std.time.microTimestamp();
-    self.last_n_frametimes = .{};
     try self.check_save_state_slots();
 }
 
@@ -1075,7 +1049,7 @@ pub fn draw_ui(self: *@This()) !void {
         if (self.config.display_framerate) {
             zgui.setNextWindowPos(.{ .x = 0, .y = 0 });
             if (zgui.begin("##FPSCounter", .{ .flags = .{ .no_resize = true, .no_move = true, .no_background = true, .no_title_bar = true, .no_mouse_inputs = true, .no_nav_inputs = true, .no_nav_focus = true } })) {
-                const avg: f32 = @as(f32, @floatFromInt(self.last_n_frametimes.sum())) / @as(f32, @floatFromInt(self.last_n_frametimes.count));
+                const avg: f32 = @as(f32, @floatFromInt(self.renderer.last_n_frametimes.sum())) / @as(f32, @floatFromInt(self.renderer.last_n_frametimes.count));
                 zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
             }
             zgui.end();
