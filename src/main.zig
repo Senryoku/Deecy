@@ -308,7 +308,6 @@ pub fn main() !void {
         d.wait_async_jobs();
         d.start();
     }
-
     while (!d.window.shouldClose()) {
         zglfw.pollEvents();
         d.update();

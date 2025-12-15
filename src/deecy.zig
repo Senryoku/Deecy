@@ -1053,11 +1053,16 @@ pub fn on_resize(self: *@This()) void {
 }
 
 pub fn draw_ui(self: *@This()) !void {
-    zgui.backend.newFrame(
-        self.gctx.swapchain_descriptor.width,
-        self.gctx.swapchain_descriptor.height,
-    );
-
+    {
+        // FIXME: Not sure if this is needed, but omitting it can cause a crash on the first frame when submitting the UI commands.
+        //        Either newFrame creates some GPU resources on startup, or this just hides another issue by pure luck.
+        self.gctx_queue_mutex.lock();
+        defer self.gctx_queue_mutex.unlock();
+        zgui.backend.newFrame(
+            self.gctx.swapchain_descriptor.width,
+            self.gctx.swapchain_descriptor.height,
+        );
+    }
     _ = zgui.DockSpaceOverViewport(0, zgui.getMainViewport(), .{ .passthru_central_node = true });
 
     self.ui.draw_vmus(self.display_ui);
