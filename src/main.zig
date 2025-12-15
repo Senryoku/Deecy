@@ -323,6 +323,8 @@ pub fn main() !void {
             }
         }
 
+        try d.draw_ui();
+
         d.gctx_queue_mutex.lock();
         defer d.gctx_queue_mutex.unlock();
 
@@ -360,7 +362,7 @@ pub fn main() !void {
             d.renderer.draw(); //  Blit to screen
         }
 
-        try d.draw_ui();
+        d.submit_ui();
 
         if (d.gctx.present() == .swap_chain_resized) {
             d.on_resize();

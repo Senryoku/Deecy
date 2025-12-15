@@ -1238,6 +1238,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 current_addr += bytes_per_pixels;
             }
 
+            d.gctx_queue_mutex.lock();
+            defer d.gctx_queue_mutex.unlock();
             d.gctx.queue.writeTexture(
                 .{ .texture = d.gctx.lookupResource(self.vram_texture).? },
                 .{

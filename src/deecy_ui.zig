@@ -133,6 +133,7 @@ pub fn vmu_screen_callback(comptime port_idx: u8) type {
     };
 }
 
+/// Locks gctx_queue_mutex
 pub fn upload_vmu_texture(self: *@This(), controller: u8) void {
     const colors = [2][3]u8{ // bgr
         .{ 152, 135, 92 }, // "white"
@@ -156,6 +157,8 @@ pub fn upload_vmu_texture(self: *@This(), controller: u8) void {
             }
         }
     }
+    self.deecy.gctx_queue_mutex.lock();
+    defer self.deecy.gctx_queue_mutex.unlock();
     self.deecy.gctx.queue.writeTexture(
         .{ .texture = self.deecy.gctx.lookupResource(tex.texture).? },
         .{ .bytes_per_row = 4 * 48, .rows_per_image = 32 },
@@ -433,14 +436,9 @@ pub fn refresh_games(self: *@This()) !void {
             ui_log.err(termcolor.red("Failed to load game info cache: {t}"), .{err});
 
         {
-            self.deecy.gctx_queue_mutex.lock();
-            defer self.deecy.gctx_queue_mutex.unlock();
-            self.disc_files_mutex.lock();
-            defer self.disc_files_mutex.unlock();
-            for (self.disc_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
-            self.disc_files.clearRetainingCapacity();
-        }
-        {
+            var tmp_disc_files: std.ArrayList(GameFile) = .empty;
+            errdefer tmp_disc_files.deinit(self.allocator);
+
             var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| {
                 ui_log.err(termcolor.red("Failed to open game directory: {t}"), .{err});
                 return;
@@ -452,26 +450,27 @@ pub fn refresh_games(self: *@This()) !void {
             while (try walker.next()) |entry| {
                 if (entry.kind == .file and (std.mem.endsWith(u8, entry.path, ".gdi") or std.mem.endsWith(u8, entry.path, ".cdi") or std.mem.endsWith(u8, entry.path, ".chd"))) {
                     const path = try std.fs.path.joinZ(self.allocator, &[_][]const u8{ dir_path, entry.path });
-
+                    errdefer self.allocator.free(path);
                     const name = try self.allocator.dupeZ(u8, entry.basename);
                     errdefer self.allocator.free(name);
-                    {
-                        self.disc_files_mutex.lock();
-                        defer self.disc_files_mutex.unlock();
-                        try self.disc_files.append(self.allocator, .{
-                            .name = name,
-                            .path = path,
-                            .texture = null,
-                            .view = null,
-                        });
-                    }
+                    try tmp_disc_files.append(self.allocator, .{
+                        .name = name,
+                        .path = path,
+                        .texture = null,
+                        .view = null,
+                    });
                 }
             }
-        }
-        {
+
+            std.mem.sort(GameFile, tmp_disc_files.items, {}, GameFile.sort);
+
+            self.deecy.gctx_queue_mutex.lock();
+            defer self.deecy.gctx_queue_mutex.unlock();
             self.disc_files_mutex.lock();
             defer self.disc_files_mutex.unlock();
-            std.mem.sort(GameFile, self.disc_files.items, {}, GameFile.sort);
+            for (self.disc_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
+            self.disc_files.deinit(self.allocator);
+            self.disc_files = tmp_disc_files;
         }
 
         var pool: std.Thread.Pool = undefined;

@@ -1078,11 +1078,9 @@ pub fn draw_ui(self: *@This()) !void {
     }
 
     self.ui.notifications.draw();
-
-    self.submit_ui();
 }
 
-fn submit_ui(self: *@This()) void {
+pub fn submit_ui(self: *@This()) void {
     const swapchain_texv = self.gctx.swapchain.getCurrentTextureView();
     defer swapchain_texv.release();
 
