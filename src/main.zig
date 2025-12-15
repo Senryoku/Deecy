@@ -173,6 +173,10 @@ pub fn main() !void {
                 force_render = true;
             } else if (std.mem.eql(u8, arg, "--no-realtime")) {
                 d.realtime = false;
+            } else if (std.mem.eql(u8, arg, "--fullscreen")) {
+                if (!d.config.fullscreen) {
+                    d.toggle_fullscreen();
+                }
             } else if (std.mem.eql(u8, arg, "--load-state")) {
                 const num_str = args.next() orelse {
                     std.log.err(termcolor.red("Expected state number after --load-state."), .{});
