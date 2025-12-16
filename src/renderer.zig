@@ -653,6 +653,8 @@ const TextureAndView = struct {
     }
 };
 
+pub const Filter = enum { Nearest, Linear };
+
 pub const Renderer = struct {
     // Max texture count for each size (8x8 to 1024x1024). Not sure what are good values.
     // FIXME: Not sure what are good values.
@@ -664,6 +666,12 @@ pub const Renderer = struct {
 
     pub const Resolution = struct { width: u32, height: u32 };
     pub const NativeResolution: Resolution = .{ .width = 640, .height = 480 };
+
+    pub const Configuration = struct {
+        internal_resolution_factor: u32 = 2,
+        display_mode: Renderer.DisplayMode = .Center,
+        scaling_filter: Filter = .Linear,
+    };
 
     const MaxFragmentsPerPixel = 24;
     const OITLinkedListNodeSize = 5 * 4;
@@ -698,7 +706,7 @@ pub const Renderer = struct {
 
     texture_metadata: [8][]TextureMetadata = @splat(&.{}),
 
-    framebuffer_resize_bind_group: zgpu.BindGroupHandle,
+    framebuffer_resize_bind_group: zgpu.BindGroupHandle = .nil,
 
     blit_pipeline: zgpu.RenderPipelineHandle = .{},
     blit_bind_group: zgpu.BindGroupHandle = .nil,
@@ -753,7 +761,6 @@ pub const Renderer = struct {
     texture_arrays: [8]TextureAndView,
     palette_buffer: zgpu.BufferHandle,
 
-    display_mode: DisplayMode,
     resolution: Resolution,
 
     /// Intermediate texture to upload framebuffer from VRAM at native resolution
@@ -802,7 +809,7 @@ pub const Renderer = struct {
     _gctx_queue_mutex: *std.Thread.Mutex,
     _allocator: std.mem.Allocator,
 
-    pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, gctx_queue_mutex: *std.Thread.Mutex, internal_resolution_factor: u32, display_mode: DisplayMode) !*Renderer {
+    pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, gctx_queue_mutex: *std.Thread.Mutex, config: Configuration) !*Renderer {
         const start = std.time.milliTimestamp();
         defer log.info("Renderer initialized in {d}ms", .{std.time.milliTimestamp() - start});
 
@@ -923,11 +930,6 @@ pub const Renderer = struct {
                 }
             }
         }
-
-        const framebuffer_resize_bind_group = gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .texture_view_handle = framebuffer_texture_view },
-            .{ .binding = 1, .sampler_handle = samplers[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)] },
-        });
 
         var texture_arrays: [8]TextureAndView = undefined;
         for (0..8) |i| {
@@ -1207,14 +1209,11 @@ pub const Renderer = struct {
 
         var renderer = try allocator.create(Renderer);
         renderer.* = .{
-            .resolution = .{ .width = internal_resolution_factor * NativeResolution.width, .height = internal_resolution_factor * NativeResolution.height },
-            .display_mode = display_mode,
+            .resolution = .{ .width = config.internal_resolution_factor * NativeResolution.width, .height = config.internal_resolution_factor * NativeResolution.height },
 
             .blit_vertex_buffer = blit_vertex_buffer,
             .blit_index_buffer = blit_index_buffer,
             .blit_to_window_vertex_buffer = blit_to_window_vertex_buffer,
-
-            .framebuffer_resize_bind_group = framebuffer_resize_bind_group,
 
             .framebuffer = .{ .texture = framebuffer_texture, .view = framebuffer_texture_view },
             .render_to_texture_target = .{ .texture = render_to_texture_target, .view = gctx.createTextureView(render_to_texture_target, .{}) },
@@ -1439,7 +1438,7 @@ pub const Renderer = struct {
             for (renderer.texture_metadata[i]) |*tm| tm.* = .{};
         }
 
-        renderer.on_inner_resolution_change();
+        renderer.on_inner_resolution_change(config.display_mode, config.scaling_filter);
 
         return renderer;
     }
@@ -3693,7 +3692,7 @@ pub const Renderer = struct {
     }
 
     /// Creates all resources that depends on the render size
-    pub fn on_inner_resolution_change(self: *@This()) void {
+    pub fn on_inner_resolution_change(self: *@This(), display_mode: DisplayMode, scaling_filter: Filter) void {
         self.deinit_screen_textures();
 
         // This is currently the largest buffer whose size is dependent on the resolution. Make sure we can allocate it.
@@ -3718,17 +3717,7 @@ pub const Renderer = struct {
         // Intermediate buffer used when rendering to a texture. We don't want to override resized_framebuffer since it is used for blitting.
         self.resized_render_to_texture_target = create_resized_framebuffer_texture(self._gctx, self.resolution, true, false);
 
-        const blit_bind_group_layout = self._gctx.createBindGroupLayout(&BlitBindGroupLayout);
-        defer self._gctx.releaseResource(blit_bind_group_layout);
-
-        self.blit_bind_group = self._gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .texture_view_handle = self.resized_framebuffer.view },
-            .{ .binding = 1, .sampler_handle = self.samplers[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)] },
-        });
-        self.blit_bind_group_render_to_texture = self._gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .texture_view_handle = self.resized_render_to_texture_target.view },
-            .{ .binding = 1, .sampler_handle = self.samplers[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)] },
-        });
+        self.create_blit_bind_groups(scaling_filter);
 
         const mv_apply_bind_group_layout = self._gctx.createBindGroupLayout(&.{
             zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
@@ -3745,7 +3734,7 @@ pub const Renderer = struct {
         self.create_translucent_modvol_merge_bind_group();
         self.create_blend_bind_groups();
 
-        self.update_blit_to_screen_vertex_buffer();
+        self.update_blit_to_screen_vertex_buffer(display_mode);
     }
 
     /// Returns the rendered frame as RGBA pixels.
@@ -3822,17 +3811,18 @@ pub const Renderer = struct {
         } else return error.MapFailed;
     }
 
-    pub fn update_blit_to_screen_vertex_buffer(self: *const @This()) void {
+    pub fn update_blit_to_screen_vertex_buffer(self: *const @This(), display_mode: DisplayMode) void {
         const iw: f32 = @floatFromInt(self.resolution.width);
         const ih: f32 = @floatFromInt(self.resolution.height);
         const tw: f32 = @floatFromInt(self._gctx.swapchain_descriptor.width);
         const th: f32 = @floatFromInt(self._gctx.swapchain_descriptor.height);
         const ias = iw / ih;
         const tas = tw / th;
-        var displayMode = self.display_mode;
-        if (displayMode == .Center and (tw < iw or th < ih))
-            displayMode = .Fit;
-        const blit_vertex_data = switch (displayMode) {
+        const actual_dm = if (display_mode == .Center and (tw < iw or th < ih))
+            .Fit
+        else
+            display_mode;
+        const blit_vertex_data = switch (actual_dm) {
             .Center => [_]f32{
                 // x    y     u    v
                 -@min(1.0, iw / tw), @min(1.0, ih / th),  0.0, 0.0,
@@ -3966,6 +3956,38 @@ pub const Renderer = struct {
                 init_buffer.unmap();
             }
         }
+    }
+
+    pub fn set_scaling_filter(self: *@This(), scaling_filter: Filter) void {
+        self.create_blit_bind_groups(scaling_filter);
+    }
+
+    fn create_blit_bind_groups(self: *@This(), scaling_filter: Filter) void {
+        if (self.framebuffer_resize_bind_group.id != 0) self._gctx.releaseResource(self.framebuffer_resize_bind_group);
+        if (self.blit_bind_group.id != 0) self._gctx.releaseResource(self.blit_bind_group);
+        if (self.blit_bind_group_render_to_texture.id != 0) self._gctx.releaseResource(self.blit_bind_group_render_to_texture);
+
+        const blit_bind_group_layout = self._gctx.createBindGroupLayout(&BlitBindGroupLayout);
+        defer self._gctx.releaseResource(blit_bind_group_layout);
+
+        const sampler = switch (scaling_filter) {
+            .Nearest => self.samplers[sampler_index(.nearest, .nearest, .nearest, .clamp_to_edge, .clamp_to_edge)],
+            .Linear => self.samplers[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)],
+        };
+
+        self.framebuffer_resize_bind_group = self._gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
+            .{ .binding = 0, .texture_view_handle = self.framebuffer.view },
+            .{ .binding = 1, .sampler_handle = sampler },
+        });
+
+        self.blit_bind_group = self._gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
+            .{ .binding = 0, .texture_view_handle = self.resized_framebuffer.view },
+            .{ .binding = 1, .sampler_handle = sampler },
+        });
+        self.blit_bind_group_render_to_texture = self._gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
+            .{ .binding = 0, .texture_view_handle = self.resized_render_to_texture_target.view },
+            .{ .binding = 1, .sampler_handle = sampler },
+        });
     }
 
     fn create_translucent_bind_group(self: *@This()) void {

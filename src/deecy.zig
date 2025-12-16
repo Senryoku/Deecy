@@ -204,8 +204,7 @@ const Configuration = struct {
     present_mode: zgpu.wgpu.PresentMode = .fifo,
     fullscreen: bool = false,
 
-    internal_resolution_factor: u32 = 2,
-    display_mode: Renderer.DisplayMode = .Center,
+    renderer: Renderer.Configuration = .{},
 
     keyboard_bindings: [4]KeyboardBindings = .{ .Default, .{}, .{}, .{} },
     controllers: [4]ControllerSettings = .{ .{ .enabled = true }, .{ .enabled = true }, .{ .enabled = false }, .{ .enabled = false } },
@@ -436,7 +435,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         };
     }
 
-    self.renderer = try .create(self._allocator, self.gctx, &self.gctx_queue_mutex, config.internal_resolution_factor, config.display_mode);
+    self.renderer = try .create(self._allocator, self.gctx, &self.gctx_queue_mutex, config.renderer);
     self.dc.on_render_start = .{
         .function = @ptrCast(&Renderer.on_render_start),
         .context = self.renderer,
@@ -1049,7 +1048,7 @@ pub fn on_resize(self: *@This()) void {
         self.config.window_size.width = ww;
         self.config.window_size.height = wh;
     }
-    self.renderer.update_blit_to_screen_vertex_buffer();
+    self.renderer.update_blit_to_screen_vertex_buffer(self.config.renderer.display_mode);
 }
 
 pub fn draw_ui(self: *@This()) !void {

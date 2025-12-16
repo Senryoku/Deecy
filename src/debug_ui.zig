@@ -1260,7 +1260,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         var oit_horizontal_slices: enum(u32) { @"1" = 1, @"2" = 2, @"3" = 3, @"4" = 4, @"5" = 5, @"6" = 6, @"7" = 7, @"8" = 8, @"9" = 9, @"10" = 10 } = @enumFromInt(d.renderer.oit_horizontal_slices);
         if (zgui.comboFromEnum("OIT Slices", &oit_horizontal_slices)) {
             d.renderer.oit_horizontal_slices = @intFromEnum(oit_horizontal_slices);
-            d.renderer.on_inner_resolution_change();
+            d.renderer.on_inner_resolution_change(d.config.renderer.display_mode, d.config.renderer.scaling_filter);
         }
         zgui.separator();
         zgui.text("Min Depth: {d: >4.2}", .{d.renderer.min_depth});
@@ -1407,8 +1407,8 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
     const window_size = [2]f32{ @floatFromInt(self._gctx.swapchain_descriptor.width), @floatFromInt(self._gctx.swapchain_descriptor.height) };
     const resolution = [2]f32{ @floatFromInt(d.renderer.resolution.width), @floatFromInt(d.renderer.resolution.height) };
 
-    const size = switch (d.renderer.display_mode) {
-        .Center, .Fit => if (d.renderer.display_mode == .Fit or resolution[0] > window_size[0] or resolution[1] > window_size[1])
+    const size = switch (d.config.renderer.display_mode) {
+        .Center, .Fit => if (d.config.renderer.display_mode == .Fit or resolution[0] > window_size[0] or resolution[1] > window_size[1])
             (if (window_size[0] / window_size[1] < aspect_ratio) [2]f32{
                 window_size[0],
                 window_size[0] / aspect_ratio,
@@ -1426,7 +1426,7 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
         scaler_ctl.get_x_scale_factor() * size[0] / native_resolution[0],
         scaler_ctl.get_y_scale_factor() * size[1] / native_resolution[1],
     };
-    const min = switch (d.renderer.display_mode) {
+    const min = switch (d.config.renderer.display_mode) {
         .Stretch => [2]f32{ 0, 0 },
         else => [2]f32{
             window_size[0] / 2.0 - size[0] / 2.0,
