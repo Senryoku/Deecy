@@ -25,6 +25,7 @@ const Dreamcast = DreamcastModule.Dreamcast;
 const AICA = DreamcastModule.AICAModule.AICA;
 const Disc = DreamcastModule.GDROM.Disc;
 pub const HostPaths = DreamcastModule.HostPaths;
+const PreciseSleep = @import("precise_sleep.zig");
 
 pub const Renderer = @import("./renderer.zig").Renderer;
 
@@ -1020,40 +1021,13 @@ pub fn dc_thread_loop(self: *@This()) void {
     }
 }
 
-pub extern "kernel32" fn timeBeginPeriod(
-    uPeriod: std.os.windows.UINT,
-) callconv(.winapi) std.os.windows.UINT; // MMRESULT
-pub extern "kernel32" fn timeEndPeriod(
-    uPeriod: std.os.windows.UINT,
-) callconv(.winapi) std.os.windows.UINT; // MMRESULT
-
 pub fn dc_thread_loop_realtime(self: *@This()) void {
-    // Request 1ms timer resolution on Windows.
-    if (builtin.os.tag == .windows) _ = timeBeginPeriod(1);
-    defer {
-        if (builtin.os.tag == .windows) _ = timeEndPeriod(1);
-    }
-
-    var ns_per_frame: i128 = 16_666_666;
-    var next_frame_start = std.time.nanoTimestamp() + ns_per_frame;
+    var precise_sleep: PreciseSleep = .init();
+    defer precise_sleep.deinit();
     while (self.running) {
         const spg_control = self.dc.gpu._get_register(DreamcastModule.HollyModule.SPG_CONTROL, .SPG_CONTROL).*;
-        ns_per_frame = if (spg_control.PAL == 1) 20_000_000 else 16_666_666;
-
         self.run_for(DreamcastModule.Dreamcast.SH4Clock / @as(u64, (if (spg_control.PAL == 1) 50 else 60)));
-
-        const now = std.time.nanoTimestamp();
-        if (now < next_frame_start) {
-            if (next_frame_start - now > 1_000_000) std.Thread.sleep(@intCast(next_frame_start - now - 1_000_000));
-            while (std.time.nanoTimestamp() < next_frame_start) {}
-
-            next_frame_start += ns_per_frame;
-        } else if (now - next_frame_start > ns_per_frame) {
-            // We are very late, run the next frame as fast as possible.
-            next_frame_start = now;
-        } else {
-            next_frame_start += ns_per_frame;
-        }
+        precise_sleep.wait_for_interval(if (spg_control.PAL == 1) 20_000_000 else 16_666_666);
     }
 }
 

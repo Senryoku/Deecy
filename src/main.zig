@@ -7,6 +7,7 @@ const termcolor = @import("termcolor");
 const DreamcastModule = @import("dreamcast");
 const Holly = DreamcastModule.HollyModule;
 const MapleModule = DreamcastModule.Maple;
+const PreciseSleep = @import("precise_sleep.zig");
 
 const zglfw = @import("zglfw");
 
@@ -328,7 +329,8 @@ pub fn main() !void {
         if (builtin.os.tag == .windows) _ = timeEndPeriod(1);
     }
 
-    var next_frame_start = std.time.nanoTimestamp();
+    var precise_sleep: PreciseSleep = .init();
+    defer precise_sleep.deinit();
     while (!d.window.shouldClose()) {
         zglfw.pollEvents();
         d.update();
@@ -385,7 +387,7 @@ pub fn main() !void {
         }
 
         if (d.config.frame_limiter != .Off) {
-            const ns_per_frame : u64 = switch (d.config.frame_limiter) {
+            const ns_per_frame: u64 = switch (d.config.frame_limiter) {
                 .Auto => if (d.dc.gpu._get_register(DreamcastModule.HollyModule.SPG_CONTROL, .SPG_CONTROL).PAL == 1) 20_000_000 else 16_666_666,
                 .@"120Hz" => 8_333_333,
                 .@"100Hz" => 10_000_000,
@@ -393,17 +395,7 @@ pub fn main() !void {
                 .@"50Hz" => 20_000_000,
                 .Off => unreachable,
             };
-            const now = std.time.nanoTimestamp();
-            if (now < next_frame_start) {
-                if (next_frame_start - now > 1_000_000) std.Thread.sleep(@intCast(next_frame_start - now - 1_000_000));
-                while (std.time.nanoTimestamp() < next_frame_start) {}
-                next_frame_start += ns_per_frame;
-            } else if (now - next_frame_start > ns_per_frame) {
-                // We are very late, run the next frame as fast as possible.
-                next_frame_start = now;
-            } else {
-                next_frame_start += ns_per_frame;
-            }
+            precise_sleep.wait_for_interval(ns_per_frame);
         }
     }
 }
