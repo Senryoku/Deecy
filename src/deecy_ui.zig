@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const termcolor = @import("termcolor");
 
 const zglfw = @import("zglfw");
@@ -522,7 +523,14 @@ pub fn draw(self: *@This()) !void {
             if (zgui.menuItem("Load Disc", .{})) {
                 const was_running = d.running;
                 if (was_running) d.pause();
+
+                // Workaround for fullscreen on Windows: The dialog appears behind the fullscreen window and can't be interacted with.
+                const exit_fullscreen = builtin.os.tag == .windows and self.deecy.config.fullscreen;
+                if (exit_fullscreen) self.deecy.toggle_fullscreen();
+                defer if (exit_fullscreen) self.deecy.toggle_fullscreen();
+
                 const open_path = try nfd.openFileDialog("gdi,cdi,chd", null);
+
                 if (open_path) |path| {
                     defer nfd.freePath(path);
                     d.load_and_start(path) catch |err| {
@@ -602,9 +610,16 @@ pub fn draw(self: *@This()) !void {
             }
             zgui.separator();
             if (zgui.menuItem("Swap Disc", .{})) {
+                // Workaround for fullscreen on Windows: The dialog appears behind the fullscreen window and can't be interacted with.
+                const exit_fullscreen = builtin.os.tag == .windows and self.deecy.config.fullscreen;
+                if (exit_fullscreen) self.deecy.toggle_fullscreen();
+                defer if (exit_fullscreen) self.deecy.toggle_fullscreen();
+
                 const open_path = try nfd.openFileDialog("gdi,cdi,chd", null);
+
                 const was_running = d.running;
                 if (was_running) d.pause();
+
                 if (open_path) |path| err_brk: {
                     defer nfd.freePath(path);
                     // TODO! Emulate opening the tray and inserting a new disc.
@@ -647,7 +662,7 @@ pub fn draw(self: *@This()) !void {
                 d.config.display_vmus = !d.config.display_vmus;
             }
             zgui.separator();
-            if (zgui.menuItem("Debug Menu", .{ .selected = d.config.display_debug_ui })) {
+            if (zgui.menuItem("Debug Menu", .{ .selected = d.config.display_debug_ui, .shortcut = "D" })) {
                 d.config.display_debug_ui = !d.config.display_debug_ui;
             }
             zgui.endMenu();
@@ -950,6 +965,11 @@ pub fn draw_game_library(self: *@This()) !void {
         }
         zgui.sameLine(.{});
         if (zgui.button("Change Directory", .{})) {
+            // Workaround for fullscreen on Windows: The dialog appears behind the fullscreen window and can't be interacted with.
+            const exit_fullscreen = builtin.os.tag == .windows and self.deecy.config.fullscreen;
+            if (exit_fullscreen) self.deecy.toggle_fullscreen();
+            defer if (exit_fullscreen) self.deecy.toggle_fullscreen();
+
             const open_path = try nfd.openFolderDialog(null);
             if (open_path) |path| {
                 defer nfd.freePath(path);
