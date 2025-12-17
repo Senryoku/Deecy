@@ -1083,6 +1083,8 @@ pub fn draw_ui(self: *@This()) !void {
                     if (v > max) max = v;
                 }
                 zgui.text("[{d: >3.1}-{d: >3.1}]  {d: >3.1}ms", .{ min, max, values[idx - 1] });
+                zgui.plot.pushStyleVar2f(.{ .idx = .plot_padding, .v = .{ 0, 0 } });
+                defer zgui.plot.popStyleVar(.{ .count = 1 });
                 if (zgui.plot.beginPlot("Frametimes", .{ .flags = .{
                     .no_title = true,
                     .no_legend = true,
@@ -1090,7 +1092,7 @@ pub fn draw_ui(self: *@This()) !void {
                     .no_box_select = true,
                     .no_mouse_text = true,
                     .no_frame = true,
-                }, .w = 160.0, .h = 90.0 })) {
+                }, .w = 160.0, .h = 120.0 })) {
                     zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = max_count });
                     zgui.plot.setupAxis(.x1, .{ .flags = .{
                         .no_label = true,
@@ -1105,6 +1107,7 @@ pub fn draw_ui(self: *@This()) !void {
                         .no_label = true,
                         .range_fit = true,
                         .no_grid_lines = true,
+                        .no_tick_labels = true,
                     } });
                     zgui.plot.setupFinish();
                     zgui.plot.plotLineValues("FrametimesPlot", f32, .{ .v = values[0..self.renderer.last_n_frametimes.count] });
