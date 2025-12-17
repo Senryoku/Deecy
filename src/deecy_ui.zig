@@ -718,6 +718,8 @@ pub fn draw(self: *@This()) !void {
                 _ = zgui.checkbox("Render to Guest VRAM", .{ .v = &d.renderer.ExperimentalRenderToVRAM });
                 _ = zgui.checkbox("Clamp Sprites UVs", .{ .v = &d.renderer.ExperimentalClampSpritesUVs });
                 _ = zgui.checkbox("Render on Emulation Thread", .{ .v = &d.renderer.ExperimentalRenderOnEmulationThread });
+                // _ = zgui.checkbox("Frame Limiter", .{ .v = &d.config.frame_limiter });
+                _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
                 zgui.endTabItem();
             }
 

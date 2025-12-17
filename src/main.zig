@@ -117,6 +117,13 @@ const AvailableHacks = [_]struct { name: []const u8, hacks: []const Hack }{
 
 var EnabledHacks: ?[]const Hack = null;
 
+pub extern "kernel32" fn timeBeginPeriod(
+    uPeriod: std.os.windows.UINT,
+) callconv(.winapi) std.os.windows.UINT; // MMRESULT
+pub extern "kernel32" fn timeEndPeriod(
+    uPeriod: std.os.windows.UINT,
+) callconv(.winapi) std.os.windows.UINT; // MMRESULT
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var allocator = gpa.allocator();
@@ -314,6 +321,14 @@ pub fn main() !void {
         d.wait_async_jobs();
         d.start();
     }
+
+    // Request 1ms timer resolution on Windows.
+    if (builtin.os.tag == .windows) _ = timeBeginPeriod(1);
+    defer {
+        if (builtin.os.tag == .windows) _ = timeEndPeriod(1);
+    }
+
+    var next_frame_start = std.time.nanoTimestamp();
     while (!d.window.shouldClose()) {
         zglfw.pollEvents();
         d.update();
@@ -367,6 +382,28 @@ pub fn main() !void {
 
         if (d.gctx.present() == .swap_chain_resized) {
             d.on_resize();
+        }
+
+        if (d.config.frame_limiter != .Off) {
+            const ns_per_frame : u64 = switch (d.config.frame_limiter) {
+                .Auto => if (d.dc.gpu._get_register(DreamcastModule.HollyModule.SPG_CONTROL, .SPG_CONTROL).PAL == 1) 20_000_000 else 16_666_666,
+                .@"120Hz" => 8_333_333,
+                .@"100Hz" => 10_000_000,
+                .@"60Hz" => 16_666_666,
+                .@"50Hz" => 20_000_000,
+                .Off => unreachable,
+            };
+            const now = std.time.nanoTimestamp();
+            if (now < next_frame_start) {
+                if (next_frame_start - now > 1_000_000) std.Thread.sleep(@intCast(next_frame_start - now - 1_000_000));
+                while (std.time.nanoTimestamp() < next_frame_start) {}
+                next_frame_start += ns_per_frame;
+            } else if (now - next_frame_start > ns_per_frame) {
+                // We are very late, run the next frame as fast as possible.
+                next_frame_start = now;
+            } else {
+                next_frame_start += ns_per_frame;
+            }
         }
     }
 }

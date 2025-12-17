@@ -203,6 +203,7 @@ const Configuration = struct {
     window_size: struct { width: u32 = 2 * @ceil((16.0 / 9.0 * @as(f32, @floatFromInt(Renderer.NativeResolution.height)))), height: u32 = 2 * Renderer.NativeResolution.height } = .{},
     present_mode: zgpu.wgpu.PresentMode = .fifo,
     fullscreen: bool = false,
+    frame_limiter: enum { Off, Auto, @"120Hz", @"100Hz", @"60Hz", @"50Hz" } = .Off,
 
     renderer: Renderer.Configuration = .{},
 
@@ -972,7 +973,7 @@ pub fn start(self: *@This()) void {
             };
         } else {
             if (self.dc.aica.available_samples() <= 2 * 32)
-                self.run_for(2 * (32 - self.dc.aica.available_samples()) * AICA.SH4CyclesPerSample); // Preemptively accumulate some samples
+                self.run_for((2 * 32 - self.dc.aica.available_samples()) * AICA.SH4CyclesPerSample); // Preemptively accumulate some samples
 
             self.running = true;
             self._dc_thread = std.Thread.spawn(.{}, dc_thread_loop_realtime, .{self}) catch |err| {
@@ -1033,14 +1034,17 @@ pub fn dc_thread_loop_realtime(self: *@This()) void {
         if (builtin.os.tag == .windows) _ = timeEndPeriod(1);
     }
 
-    const ns_per_frame = 16_666_666;
-
+    var ns_per_frame: i128 = 16_666_666;
     var next_frame_start = std.time.nanoTimestamp() + ns_per_frame;
     while (self.running) {
-        self.run_for(DreamcastModule.Dreamcast.SH4Clock / 60);
+        const spg_control = self.dc.gpu._get_register(DreamcastModule.HollyModule.SPG_CONTROL, .SPG_CONTROL).*;
+        ns_per_frame = if (spg_control.PAL == 1) 20_000_000 else 16_666_666;
+
+        self.run_for(DreamcastModule.Dreamcast.SH4Clock / @as(u64, (if (spg_control.PAL == 1) 50 else 60)));
+
         const now = std.time.nanoTimestamp();
         if (now < next_frame_start) {
-            if (next_frame_start - now > 2_000_000) std.Thread.sleep(@intCast(next_frame_start - now - 2_000_000));
+            if (next_frame_start - now > 1_000_000) std.Thread.sleep(@intCast(next_frame_start - now - 1_000_000));
             while (std.time.nanoTimestamp() < next_frame_start) {}
 
             next_frame_start += ns_per_frame;
