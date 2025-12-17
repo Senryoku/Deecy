@@ -43,8 +43,10 @@ pub fn generate_mipmaps(gctx: *zgpu.GraphicsContext, texture: zgpu.TextureHandle
 
     // Wait for async pipeline creation to finish
     var pipeline = gctx.lookupResource(pipeline_handle);
-    while (pipeline == null)
+    while (pipeline == null) {
+        gctx.device.tick();
         pipeline = gctx.lookupResource(pipeline_handle);
+    }
 
     const commands = commands: {
         const encoder = gctx.device.createCommandEncoder(null);
