@@ -70,7 +70,13 @@ fn glfw_key_callback(
                         if (app.running) {
                             app.pause();
                         } else {
-                            while (!app.renderer.render_start) app.run_for(128);
+                            for (app.dc.scheduled_events.items) |event| {
+                                if (event.event == .VBlankIn) {
+                                    const cycles = 1024 + (event.trigger_cycle -| app.dc._global_cycles);
+                                    app.run_for(cycles);
+                                    return;
+                                }
+                            }
                         }
                     },
                     .F1, .F2, .F3, .F4 => {
@@ -1201,7 +1207,7 @@ fn run_for(self: *@This(), sh4_cycles: u64) void {
     } else {
         const max_instructions: u8 = if (self.breakpoints.items.len == 0) 16 else 1;
 
-        while (self.running and self._cycles_to_run > 0) {
+        while (self._cycles_to_run > 0) {
             self._cycles_to_run -= self.dc.tick(max_instructions) catch |err| {
                 deecy_log.err("Error running interpreter: {}", .{err});
                 return;

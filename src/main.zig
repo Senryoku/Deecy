@@ -365,11 +365,11 @@ pub fn main() !void {
             d.dc.gpu.dirty_framebuffer = false;
         }
 
-        const render_start = d.renderer.render_start;
+        const render_start = d.renderer.render_request;
         if (render_start) {
             try d.renderer.update(&d.dc.gpu);
             try d.renderer.render(&d.dc.gpu, false);
-            d.renderer.render_start = false;
+            d.renderer.render_request = false;
         }
 
         // Debug aid (see force_render). NOTE: This will break if the game renders to textures.

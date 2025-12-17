@@ -698,7 +698,7 @@ pub const Renderer = struct {
     ExperimentalClampSpritesUVs: bool = true,
     ExperimentalRenderOnEmulationThread: bool = false,
 
-    render_start: bool = false,
+    render_request: bool = false,
     on_render_start_param_base: u32 = 0,
     render_passes: std.ArrayList(RenderPass),
     ta_lists: std.ArrayList(HollyModule.TALists),
@@ -1570,7 +1570,7 @@ pub const Renderer = struct {
     }
 
     pub fn reset(self: *@This()) void {
-        self.render_start = false;
+        self.render_request = false;
         self.last_frame_timestamp = std.time.microTimestamp();
         self.last_n_frametimes = .{};
         for (self.texture_metadata) |arr| {
@@ -1596,7 +1596,7 @@ pub const Renderer = struct {
             self._ta_lists_mutex.lock();
             defer self._ta_lists_mutex.unlock();
 
-            if (self.render_start and !render_to_texture)
+            if (self.render_request and !render_to_texture)
                 log.warn(termcolor.yellow("Woops! Skipped a frame."), .{});
 
             self.on_render_start_param_base = dc.gpu.read_register(u32, .PARAM_BASE);
@@ -1649,7 +1649,7 @@ pub const Renderer = struct {
             self.write_back_parameters = dc.gpu.get_write_back_parameters();
 
             // Let the main thread process the list asynchronously if possible.
-            self.render_start = !self.ExperimentalRenderOnEmulationThread and !render_to_texture;
+            self.render_request = !self.ExperimentalRenderOnEmulationThread and !render_to_texture;
         }
 
         // Process and render immediately when rendering to a texture. Decouples it from the host refresh rate, and some games require the result to be visible in guest VRAM ASAP.
