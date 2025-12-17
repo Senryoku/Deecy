@@ -487,6 +487,7 @@ fn audio_init(self: *@This()) !void {
     audio_device_config.data_callback = audio_callback;
     audio_device_config.user_data = self;
     audio_device_config.period_size_in_frames = 16;
+    audio_device_config.performance_profile = .low_latency;
     audio_device_config.playback.format = .signed32;
     audio_device_config.playback.channels = 2;
     self.audio_device = try zaudio.Device.create(null, audio_device_config);
@@ -1064,8 +1065,8 @@ pub fn draw_ui(self: *@This()) !void {
             const avg: f32 = @as(f32, @floatFromInt(self.renderer.last_n_frametimes.sum())) / @as(f32, @floatFromInt(self.renderer.last_n_frametimes.count));
             zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
             if (self.config.performance_overlay == .Detailed) {
-                const max = @TypeOf(self.renderer.last_n_frametimes).MaxCount;
-                var values: [max]f32 = undefined;
+                const max_count = @TypeOf(self.renderer.last_n_frametimes).MaxCount;
+                var values: [max_count]f32 = undefined;
                 var idx: u64 = 0;
                 for (self.renderer.last_n_frametimes.position..self.renderer.last_n_frametimes.count) |i| {
                     values[idx] = @as(f32, @floatFromInt(self.renderer.last_n_frametimes.times[i])) / 1000.0;
@@ -1075,7 +1076,13 @@ pub fn draw_ui(self: *@This()) !void {
                     values[idx] = @as(f32, @floatFromInt(self.renderer.last_n_frametimes.times[i])) / 1000.0;
                     idx += 1;
                 }
-                zgui.text("Last:      {d: >3.1}ms", .{values[idx - 1]});
+                var max: f32 = values[0];
+                var min: f32 = values[0];
+                for (values) |v| {
+                    if (v < min) min = v;
+                    if (v > max) max = v;
+                }
+                zgui.text("[{d: >3.1}-{d: >3.1}]  {d: >3.1}ms", .{ min, max, values[idx - 1] });
                 if (zgui.plot.beginPlot("Frametimes", .{ .flags = .{
                     .no_title = true,
                     .no_legend = true,
@@ -1084,7 +1091,7 @@ pub fn draw_ui(self: *@This()) !void {
                     .no_mouse_text = true,
                     .no_frame = true,
                 }, .w = 160.0, .h = 90.0 })) {
-                    zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = max });
+                    zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = max_count });
                     zgui.plot.setupAxis(.x1, .{ .flags = .{
                         .no_label = true,
                         .no_grid_lines = true,
@@ -1095,17 +1102,18 @@ pub fn draw_ui(self: *@This()) !void {
                     } });
                     zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 50 });
                     zgui.plot.setupAxis(.y1, .{ .flags = .{
+                        .no_label = true,
                         .range_fit = true,
                         .no_grid_lines = true,
                     } });
                     zgui.plot.setupFinish();
                     zgui.plot.plotLineValues("FrametimesPlot", f32, .{ .v = values[0..self.renderer.last_n_frametimes.count] });
                     zgui.plot.plotLine("30fps", f32, .{
-                        .xv = &[_]f32{ 0.0, @floatFromInt(max) },
+                        .xv = &[_]f32{ 0.0, @floatFromInt(max_count) },
                         .yv = &[_]f32{ 1000.0 / 30.0, 1000.0 / 30.0 },
                     });
                     zgui.plot.plotLine("60fps", f32, .{
-                        .xv = &[_]f32{ 0.0, @floatFromInt(max) },
+                        .xv = &[_]f32{ 0.0, @floatFromInt(max_count) },
                         .yv = &[_]f32{ 1000.0 / 60.0, 1000.0 / 60.0 },
                     });
                     zgui.plot.endPlot();
@@ -1241,8 +1249,11 @@ fn audio_callback(
 
     if (!self.running or self._stop_request) return;
 
-    const sh4_cycles = AICA.SH4CyclesPerSample * frame_count;
-    self.run_for(sh4_cycles);
+    const available_frames = aica.available_samples() / 2;
+    if (available_frames < frame_count) {
+        const sh4_cycles = AICA.SH4CyclesPerSample * (frame_count - available_frames);
+        self.run_for(sh4_cycles);
+    }
 
     var out: [*]i32 = @ptrCast(@alignCast(output));
 
@@ -1251,7 +1262,7 @@ fn audio_callback(
 
     // std.debug.print("audio_callback: frame_count={d}, available={d}\n", .{ frame_count, available });
 
-    for (0..@min(@as(usize, @intCast(available)), 2 * frame_count)) |i| {
+    for (0..@min(available, 2 * frame_count)) |i| {
         out[i] = 30000 *| aica.sample_buffer[aica.sample_read_offset];
         aica.sample_read_offset = (aica.sample_read_offset + 1) % aica.sample_buffer.len;
     }
