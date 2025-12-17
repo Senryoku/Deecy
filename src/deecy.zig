@@ -1264,13 +1264,15 @@ fn audio_callback(
     const self: *@This() = @ptrCast(@alignCast(device.getUserData()));
     const aica = &self.dc.aica;
 
-    // Good when frame rate very low (slower than realtime) because audio will be wrong anyway. Bad otherwise.
-    // if (!self.running or self._stop_request or aica.available_samples() < frame_count * 2) return;
+    if (!self.running or self._stop_request) return;
 
-    // Very bad for CPU usage, but not waiting causes audible crackles, even with a big sample head start.
     while (aica.available_samples() < frame_count * 2) {
         std.mem.doNotOptimizeAway(void);
         if (!self.running or self._stop_request) return;
+        // FIXME: Not elegant at all, but avoids hammering the audio thread for no reason, and I haven't heard any problems so far.
+        //        1_000_000ns (1ms) seems to be the lowest value that avoids simply spinning on Windows.
+        // FIXME: Untested on Linux.
+        std.Thread.sleep(1_000_000);
     }
 
     var out: [*]i32 = @ptrCast(@alignCast(output));
