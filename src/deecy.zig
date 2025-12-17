@@ -486,8 +486,7 @@ fn audio_init(self: *@This()) !void {
     audio_device_config.sample_rate = DreamcastModule.AICAModule.AICA.SampleRate;
     audio_device_config.data_callback = audio_callback;
     audio_device_config.user_data = self;
-    audio_device_config.period_size_in_frames = 16;
-    audio_device_config.performance_profile = .low_latency;
+    audio_device_config.period_size_in_frames = 32;
     audio_device_config.playback.format = .signed32;
     audio_device_config.playback.channels = 2;
     self.audio_device = try zaudio.Device.create(null, audio_device_config);
@@ -972,14 +971,19 @@ pub fn start(self: *@This()) void {
                 return;
             };
         } else {
-            if (self.dc.aica.available_samples() <= 32)
-                self.run_for(AICA.SH4CyclesPerSample * 16); // Preemptively accumulate some samples
+            if (self.dc.aica.available_samples() <= 2 * 32)
+                self.run_for(2 * (32 - self.dc.aica.available_samples()) * AICA.SH4CyclesPerSample); // Preemptively accumulate some samples
 
+            self.running = true;
+            self._dc_thread = std.Thread.spawn(.{}, dc_thread_loop_realtime, .{self}) catch |err| {
+                deecy_log.err(termcolor.red("Failed to spawn DC thread: {}"), .{err});
+                self.running = false;
+                return;
+            };
             self.audio_device.start() catch |err| {
                 deecy_log.err(termcolor.red("Failed to start audio device: {}"), .{err});
                 return;
             };
-            self.running = true;
         }
     }
 }
@@ -991,13 +995,12 @@ pub fn pause(self: *@This()) void {
             if (self._dc_thread) |dc_thread| dc_thread.join();
             self._dc_thread = null;
         } else {
-            self.audio_device.stop() catch |err| {
-                deecy_log.err(termcolor.red("Failed to stop audio device: {}"), .{err});
-                return;
-            };
             self.running = false;
-            self.dc.maple.flush_vmus();
+            self.audio_device.stop() catch |err| deecy_log.err(termcolor.red("Failed to stop audio device: {}"), .{err});
+            if (self._dc_thread) |dc_thread| dc_thread.join();
+            self._dc_thread = null;
         }
+        self.dc.maple.flush_vmus();
     }
 }
 
@@ -1013,6 +1016,40 @@ pub fn set_realtime(self: *@This(), realtime: bool) void {
 pub fn dc_thread_loop(self: *@This()) void {
     while (self.running) {
         self.run_for(128);
+    }
+}
+
+pub extern "kernel32" fn timeBeginPeriod(
+    uPeriod: std.os.windows.UINT,
+) callconv(.winapi) std.os.windows.UINT; // MMRESULT
+pub extern "kernel32" fn timeEndPeriod(
+    uPeriod: std.os.windows.UINT,
+) callconv(.winapi) std.os.windows.UINT; // MMRESULT
+
+pub fn dc_thread_loop_realtime(self: *@This()) void {
+    // Request 1ms timer resolution on Windows.
+    if (builtin.os.tag == .windows) _ = timeBeginPeriod(1);
+    defer {
+        if (builtin.os.tag == .windows) _ = timeEndPeriod(1);
+    }
+
+    const ns_per_frame = 16_666_666;
+
+    var next_frame_start = std.time.nanoTimestamp() + ns_per_frame;
+    while (self.running) {
+        self.run_for(DreamcastModule.Dreamcast.SH4Clock / 60);
+        const now = std.time.nanoTimestamp();
+        if (now < next_frame_start) {
+            if (next_frame_start - now > 2_000_000) std.Thread.sleep(@intCast(next_frame_start - now - 2_000_000));
+            while (std.time.nanoTimestamp() < next_frame_start) {}
+
+            next_frame_start += ns_per_frame;
+        } else if (now - next_frame_start > ns_per_frame) {
+            // We are very late, run the next frame as fast as possible.
+            next_frame_start = now;
+        } else {
+            next_frame_start += ns_per_frame;
+        }
     }
 }
 
@@ -1102,9 +1139,9 @@ pub fn draw_ui(self: *@This()) !void {
                     } });
                     zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 50 });
                     zgui.plot.setupAxis(.y1, .{ .flags = .{
-                        .no_label = true,
                         .range_fit = true,
                         .no_grid_lines = true,
+                        .no_tick_labels = true,
                     } });
                     zgui.plot.setupFinish();
                     zgui.plot.plotLineValues("FrametimesPlot", f32, .{ .v = values[0..self.renderer.last_n_frametimes.count] });
@@ -1196,7 +1233,7 @@ fn run_for(self: *@This(), sh4_cycles: u64) void {
                     if (addr & 0x1FFFFFFF == self.dc.cpu.pc & 0x1FFFFFFF) break index;
                 } else null;
                 if (breakpoint != null) {
-                    self._stop_request = true; // Can't stop the audio device from inside the audio callback.
+                    self._stop_request = true;
                     return;
                 }
             }
@@ -1247,22 +1284,17 @@ fn audio_callback(
     const self: *@This() = @ptrCast(@alignCast(device.getUserData()));
     const aica = &self.dc.aica;
 
-    if (!self.running or self._stop_request) return;
+    // Good when frame rate very low (slower than realtime) because audio will be wrong anyway. Bad otherwise.
+    // if (!self.running or self._stop_request or aica.available_samples() < frame_count * 2) return;
 
-    const available_frames = aica.available_samples() / 2;
-    if (available_frames < frame_count) {
-        const sh4_cycles = AICA.SH4CyclesPerSample * (frame_count - available_frames);
-        self.run_for(sh4_cycles);
+    // Very bad for CPU usage, but not waiting causes audible crackles, even with a big sample head start.
+    while (aica.available_samples() < frame_count * 2) {
+        std.mem.doNotOptimizeAway(void);
+        if (!self.running or self._stop_request) return;
     }
 
     var out: [*]i32 = @ptrCast(@alignCast(output));
-
-    const available = aica.available_samples();
-    if (available <= 0) return;
-
-    // std.debug.print("audio_callback: frame_count={d}, available={d}\n", .{ frame_count, available });
-
-    for (0..@min(available, 2 * frame_count)) |i| {
+    for (0..2 * frame_count) |i| {
         out[i] = 30000 *| aica.sample_buffer[aica.sample_read_offset];
         aica.sample_read_offset = (aica.sample_read_offset + 1) % aica.sample_buffer.len;
     }
