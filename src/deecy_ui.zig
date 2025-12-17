@@ -495,6 +495,24 @@ pub fn refresh_games(self: *@This()) !void {
     }
 }
 
+fn menu_from_enum(comptime name: [:0]const u8, value: anytype, options: struct { enabled: bool = true }) bool {
+    if (@typeInfo(@TypeOf(value)) != .pointer or @typeInfo(@TypeOf(value.*)) != .@"enum")
+        @compileError("menu_from_enum: value must be a pointer to an enum, got: " ++ @typeName(@TypeOf(value)));
+    const T = @TypeOf(value.*);
+    var changed = false;
+    if (zgui.beginMenu(name, options.enabled)) {
+        inline for (@typeInfo(T).@"enum".fields) |field| {
+            const v: T = @enumFromInt(field.value);
+            if (zgui.menuItem(field.name, .{ .selected = value.* == v })) {
+                value.* = v;
+                changed = true;
+            }
+        }
+        zgui.endMenu();
+    }
+    return changed;
+}
+
 pub fn draw(self: *@This()) !void {
     const d = self.deecy;
     var error_popup_to_open: [:0]const u8 = "";
@@ -545,33 +563,11 @@ pub fn draw(self: *@This()) !void {
                 self.deecy.set_realtime(realtime);
             zgui.separator();
 
-            if (zgui.beginMenu("Region", !d.running)) {
-                if (zgui.menuItem("USA", .{ .selected = d.dc.region == .USA })) {
-                    try d.dc.set_region(.USA);
-                }
-                if (zgui.menuItem("Europe", .{ .selected = d.dc.region == .Europe })) {
-                    try d.dc.set_region(.Europe);
-                }
-                if (zgui.menuItem("Japan", .{ .selected = d.dc.region == .Japan })) {
-                    try d.dc.set_region(.Japan);
-                }
-                zgui.endMenu();
-            }
+            if (menu_from_enum("Region", &d.dc.region, .{ .enabled = !d.running }))
+                try d.dc.set_region(d.dc.region);
             zgui.separator();
 
-            if (zgui.beginMenu("Cable", true)) {
-                zgui.textColored(.{ 1.0, 1.0, 1.0, 0.5 }, "  (WIP!)", .{});
-                if (zgui.menuItem("VGA", .{ .selected = d.dc.cable_type == .VGA })) {
-                    d.dc.cable_type = .VGA;
-                }
-                if (zgui.menuItem("RGB", .{ .selected = d.dc.cable_type == .RGB })) {
-                    d.dc.cable_type = .RGB;
-                }
-                if (zgui.menuItem("Composite", .{ .selected = d.dc.cable_type == .Composite })) {
-                    d.dc.cable_type = .Composite;
-                }
-                zgui.endMenu();
-            }
+            _ = menu_from_enum("Cable", &d.dc.cable_type, .{});
             zgui.separator();
 
             if (zgui.beginMenu("Save States", true)) {
@@ -646,15 +642,7 @@ pub fn draw(self: *@This()) !void {
             zgui.endMenu();
         }
         if (zgui.beginMenu("Settings", true)) {
-            if (zgui.beginMenu("Performance Overlay", true)) {
-                inline for (@typeInfo(@TypeOf(d.config.performance_overlay)).@"enum".fields) |field| {
-                    const value: @TypeOf(d.config.performance_overlay) = @enumFromInt(field.value);
-                    if (zgui.menuItem(field.name, .{ .selected = d.config.performance_overlay == value })) {
-                        d.config.performance_overlay = value;
-                    }
-                }
-                zgui.endMenu();
-            }
+            _ = menu_from_enum("Performance Overlay", &d.config.performance_overlay, .{});
             if (zgui.menuItem("Display VMUs", .{ .selected = d.config.display_vmus })) {
                 d.config.display_vmus = !d.config.display_vmus;
             }
