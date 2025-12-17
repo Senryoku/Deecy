@@ -314,7 +314,6 @@ pub fn main() !void {
         d.wait_async_jobs();
         d.start();
     }
-
     while (!d.window.shouldClose()) {
         zglfw.pollEvents();
         d.update();
@@ -329,6 +328,8 @@ pub fn main() !void {
             }
         }
 
+        try d.draw_ui();
+
         d.gctx_queue_mutex.lock();
         defer d.gctx_queue_mutex.unlock();
 
@@ -342,7 +343,7 @@ pub fn main() !void {
             //        Some games (like Speed Devils) renders only at 30FPS and each frame is presented twice,
             //        however we don't actually write back the framebuffer to VRAM, meaning we'd blit garbage to the screen.
             //        Plus, even if PVR writing to the framebuffer was perfectly emulated, it would still only be at native resolution.
-            if (std.time.microTimestamp() - d.last_frame_timestamp > 40_000)
+            if (std.time.microTimestamp() - d.renderer.last_frame_timestamp > 40_000)
                 d.renderer.blit_framebuffer();
             d.dc.gpu.dirty_framebuffer = false;
         }
@@ -352,10 +353,6 @@ pub fn main() !void {
             try d.renderer.update(&d.dc.gpu);
             try d.renderer.render(&d.dc.gpu, false);
             d.renderer.render_start = false;
-
-            const now = std.time.microTimestamp();
-            d.last_n_frametimes.push(now - d.last_frame_timestamp);
-            d.last_frame_timestamp = now;
         }
 
         // Debug aid (see force_render). NOTE: This will break if the game renders to textures.
@@ -366,7 +363,7 @@ pub fn main() !void {
             d.renderer.draw(); //  Blit to screen
         }
 
-        try d.draw_ui();
+        d.submit_ui();
 
         if (d.gctx.present() == .swap_chain_resized) {
             d.on_resize();

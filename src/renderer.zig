@@ -696,6 +696,7 @@ pub const Renderer = struct {
     /// When rendering to a texture or framebuffer, copy the result to guest VRAM. Necessary for some effects in Grandia II or Tony Hawk 2 for example.
     ExperimentalRenderToVRAM: bool = true,
     ExperimentalClampSpritesUVs: bool = true,
+    ExperimentalRenderOnEmulationThread: bool = false,
 
     render_start: bool = false,
     on_render_start_param_base: u32 = 0,
@@ -802,6 +803,31 @@ pub const Renderer = struct {
     vertices: std.ArrayList(Vertex),
     strips_metadata: std.ArrayList(StripMetadata),
     modifier_volume_vertices: std.ArrayList([4]f32),
+
+    last_frame_timestamp: i64,
+    last_n_frametimes: struct {
+        pub const MaxCount = 60;
+
+        count: usize = 0,
+        position: usize = 0,
+        times: [MaxCount]i64 = @splat(0),
+
+        pub fn push(self: *@This(), time: i64) void {
+            self.times[self.position] = time;
+            self.position = (self.position + 1) % self.times.len;
+            if (self.count < self.times.len)
+                self.count += 1;
+        }
+
+        pub fn sum(self: *const @This()) i64 {
+            const first = if (self.position > self.count) self.position - self.count else self.position + self.times.len - self.count;
+            var s: i64 = 0;
+            for (0..self.count) |i| {
+                s += self.times[(first + i) % self.times.len];
+            }
+            return s;
+        }
+    } = .{},
 
     _scratch_pad: []u8 align(4), // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
 
@@ -1249,6 +1275,8 @@ pub const Renderer = struct {
             .strips_metadata = try .initCapacity(allocator, 4096),
             .modifier_volume_vertices = try .initCapacity(allocator, 4096),
 
+            .last_frame_timestamp = std.time.microTimestamp(),
+
             .render_passes = .empty,
             .ta_lists = .empty,
             .ta_lists_to_render = .empty,
@@ -1543,6 +1571,8 @@ pub const Renderer = struct {
 
     pub fn reset(self: *@This()) void {
         self.render_start = false;
+        self.last_frame_timestamp = std.time.microTimestamp();
+        self.last_n_frametimes = .{};
         for (self.texture_metadata) |arr| {
             for (arr) |*tex| tex.* = .{};
         }
@@ -1619,11 +1649,11 @@ pub const Renderer = struct {
             self.write_back_parameters = dc.gpu.get_write_back_parameters();
 
             // Let the main thread process the list asynchronously if possible.
-            self.render_start = !render_to_texture;
+            self.render_start = !self.ExperimentalRenderOnEmulationThread and !render_to_texture;
         }
 
         // Process and render immediately when rendering to a texture. Decouples it from the host refresh rate, and some games require the result to be visible in guest VRAM ASAP.
-        if (render_to_texture) {
+        if (self.ExperimentalRenderOnEmulationThread or render_to_texture) {
             // All resources (including zgpu uniforms!) are shared with standard rendering, so we have to synchronize with the main thread.
             self._gctx_queue_mutex.lock();
             defer self._gctx_queue_mutex.unlock();
@@ -3531,6 +3561,12 @@ pub const Renderer = struct {
             if (mapped_pixels) |pixels| {
                 holly.write_framebuffer(self.write_back_parameters, pixels);
             } else log.err(termcolor.red("Failed to map framebuffer"), .{});
+        }
+
+        if (!render_to_texture) {
+            const now = std.time.microTimestamp();
+            self.last_n_frametimes.push(now - self.last_frame_timestamp);
+            self.last_frame_timestamp = now;
         }
     }
 

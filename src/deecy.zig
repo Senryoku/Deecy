@@ -235,31 +235,6 @@ config: Configuration = .{},
 toggle_fullscreen_request: bool = false,
 previous_window_position: struct { x: i32 = 0, y: i32 = 0, w: i32 = 0, h: i32 = 0 } = .{},
 
-last_frame_timestamp: i64,
-last_n_frametimes: struct {
-    pub const MaxCount = 60;
-
-    count: usize = 0,
-    position: usize = 0,
-    times: [MaxCount]i64 = @splat(0),
-
-    pub fn push(self: *@This(), time: i64) void {
-        self.times[self.position] = time;
-        self.position = (self.position + 1) % self.times.len;
-        if (self.count < self.times.len)
-            self.count += 1;
-    }
-
-    pub fn sum(self: *const @This()) i64 {
-        const first = if (self.position > self.count) self.position - self.count else self.position + self.times.len - self.count;
-        var s: i64 = 0;
-        for (0..self.count) |i| {
-            s += self.times[(first + i) % self.times.len];
-        }
-        return s;
-    }
-} = .{},
-
 running: bool = false,
 _cycles_to_run: i64 = 0,
 _stop_request: bool = false,
@@ -316,7 +291,6 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     self.* = .{
         .window = undefined,
         .config = config,
-        .last_frame_timestamp = std.time.microTimestamp(),
         .breakpoints = .empty,
         ._allocator = allocator,
     };
@@ -695,8 +669,6 @@ pub fn reset(self: *@This()) !void {
     self.ui.binary_loaded = false;
     self.renderer.reset();
     self._cycles_to_run = 0;
-    self.last_frame_timestamp = std.time.microTimestamp();
-    self.last_n_frametimes = .{};
     try self.check_save_state_slots();
 }
 
@@ -1054,11 +1026,16 @@ pub fn on_resize(self: *@This()) void {
 }
 
 pub fn draw_ui(self: *@This()) !void {
-    zgui.backend.newFrame(
-        self.gctx.swapchain_descriptor.width,
-        self.gctx.swapchain_descriptor.height,
-    );
-
+    {
+        // FIXME: Not sure if this is needed, but omitting it can cause a crash on the first frame when submitting the UI commands.
+        //        Either newFrame creates some GPU resources on startup, or this just hides another issue by pure luck.
+        self.gctx_queue_mutex.lock();
+        defer self.gctx_queue_mutex.unlock();
+        zgui.backend.newFrame(
+            self.gctx.swapchain_descriptor.width,
+            self.gctx.swapchain_descriptor.height,
+        );
+    }
     _ = zgui.DockSpaceOverViewport(0, zgui.getMainViewport(), .{ .passthru_central_node = true });
 
     self.ui.draw_vmus(self.display_ui);
@@ -1068,7 +1045,7 @@ pub fn draw_ui(self: *@This()) !void {
         if (self.config.display_debug_ui)
             try self.debug_ui.draw(self);
     }
-    if (self.config.performance_overlay != .Off and self.last_n_frametimes.count > 0) {
+    if (self.config.performance_overlay != .Off and self.renderer.last_n_frametimes.count > 0) {
         zgui.setNextWindowPos(.{ .x = 0, .y = if (self.display_ui) 22.0 else 0.0 });
         if (zgui.begin("##PerformanceOverlay", .{ .flags = .{
             .no_focus_on_appearing = true,
@@ -1084,18 +1061,18 @@ pub fn draw_ui(self: *@This()) !void {
             .always_auto_resize = true,
         } })) {
             // TODO: Display VSync per second?
-            const avg: f32 = @as(f32, @floatFromInt(self.last_n_frametimes.sum())) / @as(f32, @floatFromInt(self.last_n_frametimes.count));
+            const avg: f32 = @as(f32, @floatFromInt(self.renderer.last_n_frametimes.sum())) / @as(f32, @floatFromInt(self.renderer.last_n_frametimes.count));
             zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
             if (self.config.performance_overlay == .Detailed) {
-                const max = @TypeOf(self.last_n_frametimes).MaxCount;
+                const max = @TypeOf(self.renderer.last_n_frametimes).MaxCount;
                 var values: [max]f32 = undefined;
                 var idx: u64 = 0;
-                for (self.last_n_frametimes.position..self.last_n_frametimes.count) |i| {
-                    values[idx] = @as(f32, @floatFromInt(self.last_n_frametimes.times[i])) / 1000.0;
+                for (self.renderer.last_n_frametimes.position..self.renderer.last_n_frametimes.count) |i| {
+                    values[idx] = @as(f32, @floatFromInt(self.renderer.last_n_frametimes.times[i])) / 1000.0;
                     idx += 1;
                 }
-                for (0..self.last_n_frametimes.position) |i| {
-                    values[idx] = @as(f32, @floatFromInt(self.last_n_frametimes.times[i])) / 1000.0;
+                for (0..self.renderer.last_n_frametimes.position) |i| {
+                    values[idx] = @as(f32, @floatFromInt(self.renderer.last_n_frametimes.times[i])) / 1000.0;
                     idx += 1;
                 }
                 zgui.text("Last:      {d: >3.1}ms", .{values[idx - 1]});
@@ -1122,7 +1099,7 @@ pub fn draw_ui(self: *@This()) !void {
                         .no_grid_lines = true,
                     } });
                     zgui.plot.setupFinish();
-                    zgui.plot.plotLineValues("FrametimesPlot", f32, .{ .v = values[0..self.last_n_frametimes.count] });
+                    zgui.plot.plotLineValues("FrametimesPlot", f32, .{ .v = values[0..self.renderer.last_n_frametimes.count] });
                     zgui.plot.plotLine("30fps", f32, .{
                         .xv = &[_]f32{ 0.0, @floatFromInt(max) },
                         .yv = &[_]f32{ 1000.0 / 30.0, 1000.0 / 30.0 },
@@ -1139,11 +1116,9 @@ pub fn draw_ui(self: *@This()) !void {
     }
 
     self.ui.notifications.draw();
-
-    self.submit_ui();
 }
 
-fn submit_ui(self: *@This()) void {
+pub fn submit_ui(self: *@This()) void {
     const swapchain_texv = self.gctx.swapchain.getCurrentTextureView();
     defer swapchain_texv.release();
 
