@@ -195,7 +195,7 @@ const ControllerSettings = struct {
 
 const Configuration = struct {
     per_game_vmu: bool = true,
-    display_framerate: bool = true,
+    performance_overlay: enum { Off, Simple, Detailed } = .Simple,
     display_vmus: bool = true,
     game_directory: ?[]const u8 = null,
     display_debug_ui: bool = false,
@@ -237,9 +237,11 @@ previous_window_position: struct { x: i32 = 0, y: i32 = 0, w: i32 = 0, h: i32 = 
 
 last_frame_timestamp: i64,
 last_n_frametimes: struct {
+    pub const MaxCount = 60;
+
     count: usize = 0,
     position: usize = 0,
-    times: [60]i64 = @splat(0),
+    times: [MaxCount]i64 = @splat(0),
 
     pub fn push(self: *@This(), time: i64) void {
         self.times[self.position] = time;
@@ -1065,15 +1067,75 @@ pub fn draw_ui(self: *@This()) !void {
         try self.ui.draw();
         if (self.config.display_debug_ui)
             try self.debug_ui.draw(self);
-    } else {
-        if (self.config.display_framerate) {
-            zgui.setNextWindowPos(.{ .x = 0, .y = 0 });
-            if (zgui.begin("##FPSCounter", .{ .flags = .{ .no_resize = true, .no_move = true, .no_background = true, .no_title_bar = true, .no_mouse_inputs = true, .no_nav_inputs = true, .no_nav_focus = true } })) {
-                const avg: f32 = @as(f32, @floatFromInt(self.last_n_frametimes.sum())) / @as(f32, @floatFromInt(self.last_n_frametimes.count));
-                zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
+    }
+    if (self.config.performance_overlay != .Off and self.last_n_frametimes.count > 0) {
+        zgui.setNextWindowPos(.{ .x = 0, .y = if (self.display_ui) 22.0 else 0.0 });
+        if (zgui.begin("##PerformanceOverlay", .{ .flags = .{
+            .no_focus_on_appearing = true,
+            .no_bring_to_front_on_focus = true,
+            .no_resize = true,
+            .no_move = true,
+            .no_background = true,
+            .no_title_bar = true,
+            .no_mouse_inputs = true,
+            .no_nav_inputs = true,
+            .no_nav_focus = true,
+            .no_saved_settings = true,
+            .always_auto_resize = true,
+        } })) {
+            // TODO: Display VSync per second?
+            const avg: f32 = @as(f32, @floatFromInt(self.last_n_frametimes.sum())) / @as(f32, @floatFromInt(self.last_n_frametimes.count));
+            zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
+            if (self.config.performance_overlay == .Detailed) {
+                const max = @TypeOf(self.last_n_frametimes).MaxCount;
+                var values: [max]f32 = undefined;
+                var idx: u64 = 0;
+                for (self.last_n_frametimes.position..self.last_n_frametimes.count) |i| {
+                    values[idx] = @as(f32, @floatFromInt(self.last_n_frametimes.times[i])) / 1000.0;
+                    idx += 1;
+                }
+                for (0..self.last_n_frametimes.position) |i| {
+                    values[idx] = @as(f32, @floatFromInt(self.last_n_frametimes.times[i])) / 1000.0;
+                    idx += 1;
+                }
+                zgui.text("Last:      {d: >3.1}ms", .{values[idx - 1]});
+                if (zgui.plot.beginPlot("Frametimes", .{ .flags = .{
+                    .no_title = true,
+                    .no_legend = true,
+                    .no_menus = true,
+                    .no_box_select = true,
+                    .no_mouse_text = true,
+                    .no_frame = true,
+                }, .w = 160.0, .h = 90.0 })) {
+                    zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = max });
+                    zgui.plot.setupAxis(.x1, .{ .flags = .{
+                        .no_label = true,
+                        .no_grid_lines = true,
+                        .no_tick_marks = true,
+                        .no_tick_labels = true,
+                        .no_menus = true,
+                        .no_highlight = true,
+                    } });
+                    zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 50 });
+                    zgui.plot.setupAxis(.y1, .{ .flags = .{
+                        .range_fit = true,
+                        .no_grid_lines = true,
+                    } });
+                    zgui.plot.setupFinish();
+                    zgui.plot.plotLineValues("FrametimesPlot", f32, .{ .v = values[0..self.last_n_frametimes.count] });
+                    zgui.plot.plotLine("30fps", f32, .{
+                        .xv = &[_]f32{ 0.0, @floatFromInt(max) },
+                        .yv = &[_]f32{ 1000.0 / 30.0, 1000.0 / 30.0 },
+                    });
+                    zgui.plot.plotLine("60fps", f32, .{
+                        .xv = &[_]f32{ 0.0, @floatFromInt(max) },
+                        .yv = &[_]f32{ 1000.0 / 60.0, 1000.0 / 60.0 },
+                    });
+                    zgui.plot.endPlot();
+                }
             }
-            zgui.end();
         }
+        zgui.end();
     }
 
     self.ui.notifications.draw();

@@ -647,8 +647,14 @@ pub fn draw(self: *@This()) !void {
             zgui.endMenu();
         }
         if (zgui.beginMenu("Settings", true)) {
-            if (zgui.menuItem("Display Framerate", .{ .selected = d.config.display_framerate })) {
-                d.config.display_framerate = !d.config.display_framerate;
+            if (zgui.beginMenu("Performance Overlay", true)) {
+                inline for (@typeInfo(@TypeOf(d.config.performance_overlay)).@"enum".fields) |field| {
+                    const value: @TypeOf(d.config.performance_overlay) = @enumFromInt(field.value);
+                    if (zgui.menuItem(field.name, .{ .selected = d.config.performance_overlay == value })) {
+                        d.config.performance_overlay = value;
+                    }
+                }
+                zgui.endMenu();
             }
             if (zgui.menuItem("Display VMUs", .{ .selected = d.config.display_vmus })) {
                 d.config.display_vmus = !d.config.display_vmus;
