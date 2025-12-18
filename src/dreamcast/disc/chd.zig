@@ -629,6 +629,13 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
             //     return error.InvalidCRC;
             return bytes;
         },
+        .CD_Zstd => {
+            var reader = std.io.Reader.fixed(self._file_view[self.map[hunk].offset + header_bytes ..][0..compressed_length]);
+            var writer = std.io.Writer.fixed(dest[0 .. sectors_per_hunk * CDMaxSectorBytes]);
+            var decompress = std.compress.zstd.Decompress.init(&reader, &.{}, .{});
+            const bytes = try decompress.reader.streamRemaining(&writer);
+            return bytes;
+        },
         .CD_Flac => {
             const bytes = sectors_per_hunk * CDMaxSectorBytes;
             const num_samples = bytes / @sizeOf(i16);
