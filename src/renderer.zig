@@ -2189,16 +2189,27 @@ pub const Renderer = struct {
         //       currently handle, but always resulting in a 480 pixels high framebuffer.
         const ta_glob_tile_clip = gpu.read_register(HollyModule.TA_GLOB_TILE_CLIP, .TA_GLOB_TILE_CLIP);
         if (ta_glob_tile_clip.tile_x_num != 19 and ta_glob_tile_clip.tile_x_num != 39)
-            log.warn("Unusual TA_GLOB_TILE_CLIP: tile_x_num={d}, tile_y_num={d}.", .{ ta_glob_tile_clip.tile_x_num, ta_glob_tile_clip.tile_y_num });
+            if (Once(@src())) log.warn(termcolor.yellow("Unusual TA_GLOB_TILE_CLIP: tile_x_num={d}, tile_y_num={d}."), .{ ta_glob_tile_clip.tile_x_num, ta_glob_tile_clip.tile_y_num });
         self.guest_framebuffer_size = .{
             .width = 32 * @as(u32, ta_glob_tile_clip.tile_x_num + 1),
             .height = 32 * @as(u32, ta_glob_tile_clip.tile_y_num + 1),
         };
 
-        self.global_clip.x.min = self.write_back_parameters.x_clip.min;
-        self.global_clip.x.max = @as(u16, self.write_back_parameters.x_clip.max) + 1;
-        self.global_clip.y.min = self.write_back_parameters.y_clip.min;
-        self.global_clip.y.max = @as(u16, self.write_back_parameters.y_clip.max) + 1;
+        const vo_control = self.write_back_parameters.video_out_ctrl;
+        // I suspect I'll have to come back to this: Printing some information to help detect unusual configurations.
+        if (vo_control.pixel_double)
+            if (Once(@src())) log.warn(termcolor.yellow("VO_CONTROL.pixel_double is set: {any}"), .{vo_control});
+        if (self.write_back_parameters.scaler_ctl.get_x_scale_factor() != 1.0 or self.write_back_parameters.scaler_ctl.get_y_scale_factor() != 1.0)
+            if (Once(@src())) log.warn(termcolor.yellow("Unusual SCALER_CTL: {any}"), .{self.write_back_parameters.scaler_ctl});
+        const horizontal_scaling: u16 = if (vo_control.pixel_double) 2 else 1;
+        // FIXME: VO_CONTROL.pixel_double should only affect horizontal scaling, but games like "The King of Fighters 99 Evolution"
+        //        also need vertical scaling (rendering at 320x240 instead of 640x480). This is probably controlled by another register, but I'm not sure which one.
+        const vertical_scaling: u16 = if (vo_control.pixel_double) 2 else 1;
+
+        self.global_clip.x.min = horizontal_scaling * self.write_back_parameters.x_clip.min;
+        self.global_clip.x.max = horizontal_scaling * (@as(u16, self.write_back_parameters.x_clip.max) + 1);
+        self.global_clip.y.min = vertical_scaling * self.write_back_parameters.y_clip.min;
+        self.global_clip.y.max = vertical_scaling * (@as(u16, self.write_back_parameters.y_clip.max) + 1);
 
         try self.update_background(gpu);
         try self.update_palette(gpu);
