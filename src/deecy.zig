@@ -196,7 +196,7 @@ pub const KeyboardBindings = struct {
 
 const ControllerSettings = struct {
     enabled: bool,
-    subcapabilities: DreamcastModule.Maple.InputCapabilities = DreamcastModule.Maple.DualStickControllerCapabilities,
+    subcapabilities: DreamcastModule.Maple.InputCapabilities = DreamcastModule.Maple.StandardControllerCapabilities,
     subperipherals: [5]enum { None, VMU } = .{ .VMU, .None, .None, .None, .None },
 };
 
