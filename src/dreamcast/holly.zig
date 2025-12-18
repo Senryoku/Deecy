@@ -1692,8 +1692,11 @@ pub const Holly = struct {
                 if (spg_control.interlace) {
                     target_scanline += 2 * @as(u64, line_count);
                     if (target_scanline >= max_scanline) {
-                        target_scanline += (target_scanline / max_scanline) % 2; // Next field
+                        const field = target_scanline & 1;
+                        const full_scans = target_scanline / max_scanline;
                         target_scanline %= max_scanline;
+                        target_scanline &= ~@as(u64, 1);
+                        target_scanline |= (full_scans + field) % 2; // Next field
                     }
                 } else {
                     target_scanline += line_count;

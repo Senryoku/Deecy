@@ -1306,7 +1306,7 @@ pub const SH4 = struct {
                             // an input, the external pin value sampled on the external bus clock is read. When a bit is set as an
                             // output, the value written to the PDTRA register is read.
 
-                            var out: u16 = @as(u16, @intFromEnum(self._dc.?.cable_type)) << 8;
+                            var out: u16 = @intFromEnum(self._dc.?.cable_type) << 8;
 
                             const ctrl: u32 = self.read_p4_register(u32, .PCTRA) & 0xF;
                             const data: u16 = self.read_p4_register(u16, .PDTRA) & 0xF;
