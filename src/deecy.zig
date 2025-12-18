@@ -216,6 +216,21 @@ const Configuration = struct {
 
     keyboard_bindings: [4]KeyboardBindings = .{ .Default, .{}, .{}, .{} },
     controllers: [4]ControllerSettings = .{ .{ .enabled = true }, .{ .enabled = true }, .{ .enabled = false }, .{ .enabled = false } },
+    region: enum(u8) {
+        /// USA by default and auto detect when using a disc.
+        Auto = 255,
+        Japan = @intFromEnum(DreamcastModule.Region.Japan),
+        USA = @intFromEnum(DreamcastModule.Region.USA),
+        Europe = @intFromEnum(DreamcastModule.Region.Europe),
+        pub fn to_dreamcast(self: @This()) DreamcastModule.Region {
+            return switch (self) {
+                .Japan => .Japan,
+                .USA => .USA,
+                .Europe => .Europe,
+                .Auto => .USA,
+            };
+        }
+    } = .Auto,
 
     audio_volume: f32 = 0.3,
     dsp_emulation: DreamcastModule.AICAModule.DSPEmulation = .JIT,
@@ -434,6 +449,8 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     }
 
     try self.check_save_state_slots();
+
+    try self.dc.set_region(config.region.to_dreamcast());
 
     return self;
 }
@@ -815,12 +832,13 @@ pub fn poll_controllers(self: *@This()) void {
 pub fn load_and_start(self: *@This(), path: []const u8) !void {
     self.pause();
     try self.load_disc(path);
-    self.dc.set_region(self.dc.gdrom.disc.?.get_region()) catch |err| {
-        switch (err) {
-            error.FileNotFound => return error.MissingFlash,
-            else => return err,
-        }
-    };
+    if (self.config.region == .Auto)
+        self.dc.set_region(self.dc.gdrom.disc.?.get_region()) catch |err| {
+            switch (err) {
+                error.FileNotFound => return error.MissingFlash,
+                else => return err,
+            }
+        };
     try self.on_game_load();
     try self.dc.reset();
     self.start();
@@ -967,10 +985,6 @@ pub fn toggle_fullscreen(self: *@This()) void {
 
 pub fn start(self: *@This()) void {
     if (!self.running) {
-        if (self.dc.region == .Unknown) {
-            self.dc.set_region(.USA) catch |err| std.debug.panic("Failed to set default region: {}", .{err});
-        }
-
         if (!self.realtime) {
             self.running = true;
             self._dc_thread = std.Thread.spawn(.{}, dc_thread_loop, .{self}) catch |err| {

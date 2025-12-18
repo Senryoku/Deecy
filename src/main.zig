@@ -213,8 +213,6 @@ pub fn main() !void {
     }
 
     if (binary_path) |path| {
-        try dc.set_region(.USA);
-
         // FIXME: I'd rather be using LLE syscalls here,
         //        but at least the ROM font one requires some initialization
         //        and won't work if the boot ROM is skipped.
@@ -265,15 +263,8 @@ pub fn main() !void {
         std.log.info("Loading Disc: {s}...", .{path});
 
         try d.load_disc(path);
-
-        const region = dc.gdrom.disc.?.get_region();
-        std.log.info("  Detected region: {t}", .{region});
-        if (region != .Unknown) {
-            try dc.set_region(region);
-        } else {
-            try dc.set_region(.USA);
-        }
-
+        if (d.config.region == .Auto)
+            try d.dc.set_region(d.dc.gdrom.disc.?.get_region());
         try d.on_game_load();
 
         if (skip_bios) {
@@ -306,7 +297,6 @@ pub fn main() !void {
         d.display_ui = false;
     } else {
         if (skip_bios) {
-            try dc.set_region(.USA);
             // Boot to menu
             try dc.skip_bios(true);
             // Skip IP.bin (Maybe we should bundle one to load here).

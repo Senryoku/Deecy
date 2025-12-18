@@ -571,8 +571,9 @@ pub fn draw(self: *@This()) !void {
                 self.deecy.set_realtime(realtime);
             zgui.separator();
 
-            if (menu_from_enum("Region", &d.dc.region, .{ .enabled = !d.running }))
-                try d.dc.set_region(d.dc.region);
+            if (menu_from_enum("Region", &d.config.region, .{ .enabled = !d.running })) {
+                try d.dc.set_region(d.config.region.to_dreamcast());
+            }
             zgui.separator();
 
             _ = menu_from_enum("Cable", &d.dc.cable_type, .{});

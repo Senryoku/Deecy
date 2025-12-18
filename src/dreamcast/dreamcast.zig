@@ -144,7 +144,6 @@ pub const Dreamcast = struct {
     sh4_jit: SH4JIT = undefined,
 
     cable_type: CableType = .VGA, // Plugged in video cable reported to the CPU.
-    region: Region = .Unknown,
 
     boot: []align(64) u8 = undefined,
     flash: Flash,
@@ -296,18 +295,8 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_TFREM).* = 8;
     }
 
-    pub fn region_subdir(self: *@This()) []const u8 {
-        return switch (self.region) {
-            .Japan => "jp",
-            .USA => "us",
-            .Europe => "eu",
-            else => "us",
-        };
-    }
-
     pub fn set_region(self: *@This(), region: Region) !void {
-        self.region = region;
-        try self.load_flash();
+        try self.load_flash(region);
     }
 
     pub fn load_bios(self: *@This(), boot_path: []const u8) !void {
@@ -320,7 +309,7 @@ pub const Dreamcast = struct {
         std.debug.assert(bytes_read == 0x200000);
     }
 
-    pub fn load_flash(self: *@This()) !void {
+    pub fn load_flash(self: *@This(), region: Region) !void {
         // FIXME: User flash is sometimes corrupted. Always load default until I understand what's going on.
         const default_flash_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_data_path(), "dc_flash.bin" });
         defer self._allocator.free(default_flash_path);
@@ -347,8 +336,8 @@ pub const Dreamcast = struct {
         std.debug.assert(flash_bytes_read == 0x20000);
 
         // Adjust region.
-        self.flash.data[0x1A002] = @as(u8, '0') + @intFromEnum(self.region);
-        self.flash.data[0x1A0A2] = @as(u8, '0') + @intFromEnum(self.region);
+        self.flash.data[0x1A002] = @as(u8, '0') + @intFromEnum(region);
+        self.flash.data[0x1A0A2] = @as(u8, '0') + @intFromEnum(region);
 
         // Get current system config, update it with user preference and fix block crc.
         const system_bitmap = @as(*u512, @ptrCast(@alignCast(self.flash.data[0x1FFC0..0x20000].ptr)));
