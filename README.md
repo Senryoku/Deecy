@@ -56,6 +56,7 @@ Keyboard bindings can be customized in the settings. Defaults for controller 1:
 | --skip-bios | Skip default BIOS. | | Experimental |
 | -b     | Load and Execute a .bin file | Path to a .bin file | Will also skip the BIOS. Experimental |
 | -i     | Replace default IP.BIN file | Path to an IP.BIN file | Use with -b only |
+| --fullscreen | Starts in fullscreen | | |
 
 ## Compatibility
 
