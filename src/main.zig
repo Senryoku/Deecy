@@ -7,6 +7,7 @@ const termcolor = @import("termcolor");
 const DreamcastModule = @import("dreamcast");
 const Holly = DreamcastModule.HollyModule;
 const MapleModule = DreamcastModule.Maple;
+const PreciseSleep = @import("precise_sleep.zig");
 
 const zglfw = @import("zglfw");
 
@@ -116,6 +117,13 @@ const AvailableHacks = [_]struct { name: []const u8, hacks: []const Hack }{
 };
 
 var EnabledHacks: ?[]const Hack = null;
+
+pub extern "kernel32" fn timeBeginPeriod(
+    uPeriod: std.os.windows.UINT,
+) callconv(.winapi) std.os.windows.UINT; // MMRESULT
+pub extern "kernel32" fn timeEndPeriod(
+    uPeriod: std.os.windows.UINT,
+) callconv(.winapi) std.os.windows.UINT; // MMRESULT
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -314,6 +322,15 @@ pub fn main() !void {
         d.wait_async_jobs();
         d.start();
     }
+
+    // Request 1ms timer resolution on Windows.
+    if (builtin.os.tag == .windows) _ = timeBeginPeriod(1);
+    defer {
+        if (builtin.os.tag == .windows) _ = timeEndPeriod(1);
+    }
+
+    var precise_sleep: PreciseSleep = .init();
+    defer precise_sleep.deinit();
     while (!d.window.shouldClose()) {
         zglfw.pollEvents();
         d.update();
@@ -348,11 +365,11 @@ pub fn main() !void {
             d.dc.gpu.dirty_framebuffer = false;
         }
 
-        const render_start = d.renderer.render_start;
+        const render_start = d.renderer.render_request;
         if (render_start) {
             try d.renderer.update(&d.dc.gpu);
             try d.renderer.render(&d.dc.gpu, false);
-            d.renderer.render_start = false;
+            d.renderer.render_request = false;
         }
 
         // Debug aid (see force_render). NOTE: This will break if the game renders to textures.
@@ -367,6 +384,18 @@ pub fn main() !void {
 
         if (d.gctx.present() == .swap_chain_resized) {
             d.on_resize();
+        }
+
+        if (d.config.frame_limiter != .Off) {
+            const ns_per_frame: u64 = switch (d.config.frame_limiter) {
+                .Auto => if (d.dc.gpu._get_register(DreamcastModule.HollyModule.SPG_CONTROL, .SPG_CONTROL).PAL == 1) 20_000_000 else 16_666_666,
+                .@"120Hz" => 8_333_333,
+                .@"100Hz" => 10_000_000,
+                .@"60Hz" => 16_666_666,
+                .@"50Hz" => 20_000_000,
+                .Off => unreachable,
+            };
+            precise_sleep.wait_for_interval(ns_per_frame);
         }
     }
 }

@@ -25,6 +25,7 @@ const Dreamcast = DreamcastModule.Dreamcast;
 const AICA = DreamcastModule.AICAModule.AICA;
 const Disc = DreamcastModule.GDROM.Disc;
 pub const HostPaths = DreamcastModule.HostPaths;
+const PreciseSleep = @import("precise_sleep.zig");
 
 pub const Renderer = @import("./renderer.zig").Renderer;
 
@@ -69,7 +70,13 @@ fn glfw_key_callback(
                         if (app.running) {
                             app.pause();
                         } else {
-                            while (!app.renderer.render_start) app.run_for(128);
+                            for (app.dc.scheduled_events.items) |event| {
+                                if (event.event == .VBlankIn) {
+                                    const cycles = 1024 + (event.trigger_cycle -| app.dc._global_cycles);
+                                    app.run_for(cycles);
+                                    return;
+                                }
+                            }
                         }
                     },
                     .F1, .F2, .F3, .F4 => {
@@ -203,6 +210,7 @@ const Configuration = struct {
     window_size: struct { width: u32 = 2 * @ceil((16.0 / 9.0 * @as(f32, @floatFromInt(Renderer.NativeResolution.height)))), height: u32 = 2 * Renderer.NativeResolution.height } = .{},
     present_mode: zgpu.wgpu.PresentMode = .fifo,
     fullscreen: bool = false,
+    frame_limiter: enum { Off, Auto, @"120Hz", @"100Hz", @"60Hz", @"50Hz" } = .Off,
 
     renderer: Renderer.Configuration = .{},
 
@@ -486,8 +494,7 @@ fn audio_init(self: *@This()) !void {
     audio_device_config.sample_rate = DreamcastModule.AICAModule.AICA.SampleRate;
     audio_device_config.data_callback = audio_callback;
     audio_device_config.user_data = self;
-    audio_device_config.period_size_in_frames = 16;
-    audio_device_config.performance_profile = .low_latency;
+    audio_device_config.period_size_in_frames = 32;
     audio_device_config.playback.format = .signed32;
     audio_device_config.playback.channels = 2;
     self.audio_device = try zaudio.Device.create(null, audio_device_config);
@@ -972,14 +979,19 @@ pub fn start(self: *@This()) void {
                 return;
             };
         } else {
-            if (self.dc.aica.available_samples() <= 32)
-                self.run_for(AICA.SH4CyclesPerSample * 16); // Preemptively accumulate some samples
+            if (self.dc.aica.available_samples() <= 2 * 32)
+                self.run_for((2 * 32 - self.dc.aica.available_samples()) * AICA.SH4CyclesPerSample); // Preemptively accumulate some samples
 
+            self.running = true;
+            self._dc_thread = std.Thread.spawn(.{}, dc_thread_loop_realtime, .{self}) catch |err| {
+                deecy_log.err(termcolor.red("Failed to spawn DC thread: {}"), .{err});
+                self.running = false;
+                return;
+            };
             self.audio_device.start() catch |err| {
                 deecy_log.err(termcolor.red("Failed to start audio device: {}"), .{err});
                 return;
             };
-            self.running = true;
         }
     }
 }
@@ -991,13 +1003,12 @@ pub fn pause(self: *@This()) void {
             if (self._dc_thread) |dc_thread| dc_thread.join();
             self._dc_thread = null;
         } else {
-            self.audio_device.stop() catch |err| {
-                deecy_log.err(termcolor.red("Failed to stop audio device: {}"), .{err});
-                return;
-            };
             self.running = false;
-            self.dc.maple.flush_vmus();
+            self.audio_device.stop() catch |err| deecy_log.err(termcolor.red("Failed to stop audio device: {}"), .{err});
+            if (self._dc_thread) |dc_thread| dc_thread.join();
+            self._dc_thread = null;
         }
+        self.dc.maple.flush_vmus();
     }
 }
 
@@ -1013,6 +1024,16 @@ pub fn set_realtime(self: *@This(), realtime: bool) void {
 pub fn dc_thread_loop(self: *@This()) void {
     while (self.running) {
         self.run_for(128);
+    }
+}
+
+pub fn dc_thread_loop_realtime(self: *@This()) void {
+    var precise_sleep: PreciseSleep = .init();
+    defer precise_sleep.deinit();
+    while (self.running) {
+        const spg_control = self.dc.gpu._get_register(DreamcastModule.HollyModule.SPG_CONTROL, .SPG_CONTROL).*;
+        self.run_for(DreamcastModule.Dreamcast.SH4Clock / @as(u64, (if (spg_control.PAL == 1) 50 else 60)));
+        precise_sleep.wait_for_interval(if (spg_control.PAL == 1) 20_000_000 else 16_666_666);
     }
 }
 
@@ -1104,7 +1125,6 @@ pub fn draw_ui(self: *@This()) !void {
                     } });
                     zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 50 });
                     zgui.plot.setupAxis(.y1, .{ .flags = .{
-                        .no_label = true,
                         .range_fit = true,
                         .no_grid_lines = true,
                         .no_tick_labels = true,
@@ -1187,7 +1207,7 @@ fn run_for(self: *@This(), sh4_cycles: u64) void {
     } else {
         const max_instructions: u8 = if (self.breakpoints.items.len == 0) 16 else 1;
 
-        while (self.running and self._cycles_to_run > 0) {
+        while (self._cycles_to_run > 0) {
             self._cycles_to_run -= self.dc.tick(max_instructions) catch |err| {
                 deecy_log.err("Error running interpreter: {}", .{err});
                 return;
@@ -1199,7 +1219,7 @@ fn run_for(self: *@This(), sh4_cycles: u64) void {
                     if (addr & 0x1FFFFFFF == self.dc.cpu.pc & 0x1FFFFFFF) break index;
                 } else null;
                 if (breakpoint != null) {
-                    self._stop_request = true; // Can't stop the audio device from inside the audio callback.
+                    self._stop_request = true;
                     return;
                 }
             }
@@ -1252,20 +1272,17 @@ fn audio_callback(
 
     if (!self.running or self._stop_request) return;
 
-    const available_frames = aica.available_samples() / 2;
-    if (available_frames < frame_count) {
-        const sh4_cycles = AICA.SH4CyclesPerSample * (frame_count - available_frames);
-        self.run_for(sh4_cycles);
+    while (aica.available_samples() < frame_count * 2) {
+        std.mem.doNotOptimizeAway(void);
+        if (!self.running or self._stop_request) return;
+        // FIXME: Not elegant at all, but avoids hammering the audio thread for no reason, and I haven't heard any problems so far.
+        //        1_000_000ns (1ms) seems to be the lowest value that avoids simply spinning on Windows.
+        // FIXME: Untested on Linux.
+        std.Thread.sleep(1_000_000);
     }
 
     var out: [*]i32 = @ptrCast(@alignCast(output));
-
-    const available = aica.available_samples();
-    if (available <= 0) return;
-
-    // std.debug.print("audio_callback: frame_count={d}, available={d}\n", .{ frame_count, available });
-
-    for (0..@min(available, 2 * frame_count)) |i| {
+    for (0..2 * frame_count) |i| {
         out[i] = 30000 *| aica.sample_buffer[aica.sample_read_offset];
         aica.sample_read_offset = (aica.sample_read_offset + 1) % aica.sample_buffer.len;
     }

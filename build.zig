@@ -98,6 +98,8 @@ pub fn build(b: *std.Build) void {
         .windows => {
             // DwmSetWindowAttribute
             deecy_module.linkSystemLibrary("dwmapi", .{});
+            // Windows Multimedia API for timeBeginPeriod
+            deecy_module.linkSystemLibrary("winmm", .{});
         },
         else => {},
     }
