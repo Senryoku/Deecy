@@ -218,16 +218,31 @@ const Configuration = struct {
     controllers: [4]ControllerSettings = .{ .{ .enabled = true }, .{ .enabled = true }, .{ .enabled = false }, .{ .enabled = false } },
     region: enum(u8) {
         /// USA by default and auto detect when using a disc.
-        Auto = 255,
+        Auto = std.math.maxInt(u8),
         Japan = @intFromEnum(DreamcastModule.Region.Japan),
         USA = @intFromEnum(DreamcastModule.Region.USA),
         Europe = @intFromEnum(DreamcastModule.Region.Europe),
         pub fn to_dreamcast(self: @This()) DreamcastModule.Region {
             return switch (self) {
+                .Auto => .USA,
                 .Japan => .Japan,
                 .USA => .USA,
                 .Europe => .Europe,
-                .Auto => .USA,
+            };
+        }
+    } = .Auto,
+    video_cable: enum(u16) {
+        /// VGA by default but can be automatically overridden when using a non-compatible disc.
+        Auto = std.math.maxInt(u16),
+        VGA = @intFromEnum(DreamcastModule.CableType.VGA),
+        RGB = @intFromEnum(DreamcastModule.CableType.RGB),
+        Composite = @intFromEnum(DreamcastModule.CableType.Composite),
+        pub fn to_dreamcast(self: @This()) DreamcastModule.CableType {
+            return switch (self) {
+                .Auto => .VGA,
+                .VGA => .VGA,
+                .RGB => .RGB,
+                .Composite => .Composite,
             };
         }
     } = .Auto,
@@ -432,6 +447,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
             }
             return err;
         };
+        self.dc.cable_type = config.video_cable.to_dreamcast();
     }
 
     self.renderer = try .create(self._allocator, self.gctx, &self.gctx_queue_mutex, config.renderer);
@@ -832,13 +848,20 @@ pub fn poll_controllers(self: *@This()) void {
 pub fn load_and_start(self: *@This(), path: []const u8) !void {
     self.pause();
     try self.load_disc(path);
-    if (self.config.region == .Auto)
+    if (self.config.region == .Auto) {
         self.dc.set_region(self.dc.gdrom.disc.?.get_region()) catch |err| {
             switch (err) {
                 error.FileNotFound => return error.MissingFlash,
                 else => return err,
             }
         };
+    }
+    if (self.config.video_cable == .Auto) {
+        if (!self.dc.gdrom.disc.?.vga_supported()) {
+            self.dc.cable_type = .RGB;
+            deecy_log.info("Game claims to not support VGA, defaulting to RGB.", .{});
+        } else self.dc.cable_type = .VGA;
+    }
     try self.on_game_load();
     try self.dc.reset();
     self.start();

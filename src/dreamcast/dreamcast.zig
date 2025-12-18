@@ -50,7 +50,7 @@ const VideoMode = enum(u8) {
     Unknown = 4,
 };
 
-const CableType = enum(u16) {
+pub const CableType = enum(u16) {
     VGA = 0,
     RGB = 2,
     Composite = 3,

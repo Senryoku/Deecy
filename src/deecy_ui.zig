@@ -576,7 +576,9 @@ pub fn draw(self: *@This()) !void {
             }
             zgui.separator();
 
-            _ = menu_from_enum("Cable", &d.dc.cable_type, .{});
+            if (menu_from_enum("Cable", &d.config.video_cable, .{})) {
+                d.dc.cable_type = d.config.video_cable.to_dreamcast();
+            }
             zgui.separator();
 
             if (zgui.beginMenu("Save States", true)) {

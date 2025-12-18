@@ -171,6 +171,14 @@ pub const Disc = union(enum) {
         return null;
     }
 
+    pub fn vga_supported(self: *@This()) bool {
+        if (self.get_first_data_track()) |t| {
+            const sector = self.read_sector(t.fad) catch return false;
+            return sector[0x3D] == 0x31;
+        }
+        return false;
+    }
+
     pub fn get_area_boundaries(self: *const @This(), area: Session.Area) [2]u32 {
         switch (self.*) {
             inline else => |d| return d.get_area_boundaries(area),
