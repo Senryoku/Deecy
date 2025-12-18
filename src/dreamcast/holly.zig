@@ -1540,7 +1540,7 @@ pub const Holly = struct {
         self._get_register(u32, .TEXT_CONTROL).* = 0;
         self._get_register(u32, .VO_CONTROL).* = 0x000108;
         self._get_register(u32, .VO_STARTX).* = 0x09D;
-        self._get_register(u32, .VO_STARTY).* = 0x015;
+        self._get_register(u32, .VO_STARTY).* = 0x00150015;
         self._get_register(u32, .VO_BORDER_COL).* = 0;
         self._get_register(u32, .SCALER_CTL).* = 0x0400;
 

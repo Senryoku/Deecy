@@ -983,6 +983,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             display(dc.gpu.read_register(Holly.FB_R_SIZE, .FB_R_SIZE));
         if (zgui.collapsingHeader("VO_CONTROL", .{ .default_open = false }))
             display(dc.gpu.read_register(Holly.VO_CONTROL, .VO_CONTROL));
+        zgui.text("VO_STARTX:  0x{X:0>8}", .{dc.gpu.read_register(u32, .VO_STARTX)});
+        zgui.text("VO_STARTY:  0x{X:0>8}", .{dc.gpu.read_register(u32, .VO_STARTY)});
         if (zgui.collapsingHeader("FPU_PARAM_CFG", .{ .default_open = false }))
             display(dc.gpu.read_register(Holly.FPU_PARAM_CFG, .FPU_PARAM_CFG));
         if (zgui.collapsingHeader("SCALER_CTL", .{ .default_open = false }))
