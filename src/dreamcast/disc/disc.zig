@@ -9,6 +9,7 @@ pub const Track = @import("track.zig");
 pub const Session = @import("session.zig");
 
 const Region = @import("../dreamcast.zig").Region;
+const IPBIN = @import("ipbin.zig");
 
 pub const DiscFormat = enum(u4) {
     CDDA = 0,
@@ -138,45 +139,36 @@ pub const Disc = union(enum) {
         return error.MissingDataTrack;
     }
 
-    pub fn get_product_id(self: *@This()) ?[]const u8 {
+    pub fn get_ip_bin_header(self: *@This()) ?IPBIN {
         if (self.get_first_data_track()) |t| {
             const sector = self.read_sector(t.fad) catch return null;
-            return sector[0x40..0x50];
+            return .{ .data = sector[0..0x100] };
         }
         return null;
     }
 
+    pub fn get_product_id(self: *@This()) ?[]const u8 {
+        if (self.get_ip_bin_header()) |ip_bin|
+            return ip_bin.product_id();
+        return null;
+    }
+
     pub fn get_region(self: *@This()) Region {
-        if (self.get_first_data_track()) |t| {
-            const sector = self.read_sector(t.fad) catch return .Unknown;
-            if (sector[0x30] == 'J')
+        if (self.get_ip_bin_header()) |ip_bin| {
+            if (ip_bin.japan_region())
                 return .Japan;
-            if (sector[0x31] == 'U')
+            if (ip_bin.usa_region())
                 return .USA;
-            if (sector[0x32] == 'E')
+            if (ip_bin.europe_region())
                 return .Europe;
         }
         return .Unknown;
     }
 
     pub fn get_product_name(self: *@This()) ?[]const u8 {
-        if (self.get_first_data_track()) |t| {
-            const sector = self.read_sector(t.fad) catch return null;
-            const name = sector[0x80..0x90];
-            // Trim spaces
-            var end = name.len - 1;
-            while (end > 0 and name[end] == ' ') end -= 1;
-            return name[0 .. end + 1];
-        }
+        if (self.get_ip_bin_header()) |ip_bin|
+            return ip_bin.product_name();
         return null;
-    }
-
-    pub fn vga_supported(self: *@This()) bool {
-        if (self.get_first_data_track()) |t| {
-            const sector = self.read_sector(t.fad) catch return false;
-            return sector[0x3D] == 0x31;
-        }
-        return false;
     }
 
     pub fn get_area_boundaries(self: *const @This(), area: Session.Area) [2]u32 {

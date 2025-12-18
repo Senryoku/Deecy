@@ -857,10 +857,13 @@ pub fn load_and_start(self: *@This(), path: []const u8) !void {
         };
     }
     if (self.config.video_cable == .Auto) {
-        if (!self.dc.gdrom.disc.?.vga_supported()) {
-            self.dc.cable_type = .RGB;
-            deecy_log.info("Game claims to not support VGA, defaulting to RGB.", .{});
-        } else self.dc.cable_type = .VGA;
+        self.dc.cable_type = .VGA;
+        if (self.dc.gdrom.disc.?.get_ip_bin_header()) |ip_bin| {
+            if (!ip_bin.peripherals().vga) {
+                self.dc.cable_type = .RGB;
+                deecy_log.info("Game claims not to support VGA, defaulting to RGB.", .{});
+            }
+        }
     }
     try self.on_game_load();
     try self.dc.reset();
