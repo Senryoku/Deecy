@@ -1007,6 +1007,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             if (zgui.collapsingHeader("TA_YUV_TEX_CTRL", .{ .default_open = false }))
                 display(dc.gpu.read_register(Holly.TA_YUV_TEX_CTRL, .TA_YUV_TEX_CTRL));
         }
+        if (zgui.collapsingHeader("TEXT_CONTROL", .{ .default_open = false }))
+            display(dc.gpu.read_register(Holly.TEXT_CONTROL, .TEXT_CONTROL));
 
         if (zgui.collapsingHeader("Half Offset", .{ .frame_padding = true })) {
             const HALF_OFFSET = dc.gpu.read_register(Holly.HALF_OFFSET, .HALF_OFFSET);
@@ -1280,6 +1282,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             }
         }
         if (zgui.collapsingHeader("Texture Cache", .{})) {
+            _ = zgui.checkbox("Disable Texture Cache", .{ .v = &d.renderer.DebugDisableTextureCacheAcrossFrames });
             if (zgui.button("Clear Texture Cache", .{})) {
                 for (0..d.renderer.texture_metadata.len) |size_index| {
                     for (0..d.renderer.texture_metadata[size_index].len) |i| {

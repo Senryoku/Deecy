@@ -698,6 +698,8 @@ pub const Renderer = struct {
     ExperimentalClampSpritesUVs: bool = true,
     ExperimentalRenderOnEmulationThread: bool = false,
 
+    DebugDisableTextureCacheAcrossFrames: bool = false,
+
     render_request: bool = false,
     on_render_start_param_base: u32 = 0,
     render_passes: std.ArrayList(RenderPass),
@@ -1873,18 +1875,18 @@ pub const Renderer = struct {
     fn check_texture_usage(self: *@This()) void {
         for (self.texture_metadata) |arr| {
             for (arr) |*tm| {
-                if (tm.status != .Invalid) {
-                    if (tm.status == .Outdated) {
-                        tm.age += 1;
-                    } else {
+                switch (tm.status) {
+                    .Outdated => tm.age +|= 1,
+                    .Used, .Unused => {
                         if (tm.usage == 0) {
                             tm.status = .Unused;
-                            tm.age += 1;
+                            tm.age +|= 1;
                         } else {
                             tm.status = .Used;
                             tm.age = 0;
                         }
-                    }
+                    },
+                    .Invalid => {},
                 }
             }
         }
@@ -2157,6 +2159,12 @@ pub const Renderer = struct {
 
         self.vertices.clearRetainingCapacity();
         self.strips_metadata.clearRetainingCapacity();
+
+        if (self.DebugDisableTextureCacheAcrossFrames) {
+            for (self.texture_metadata) |arr| {
+                for (arr) |*tm| tm.status = .Invalid;
+            }
+        }
 
         self.reset_texture_usage();
         defer self.check_texture_usage();
