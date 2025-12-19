@@ -278,7 +278,7 @@ const TextureStatus = enum {
     Invalid, // Has never been written to.
     Outdated, // Has been modified in VRAM, but a version of it is still in use. Kept around longer for potential re-use. Will reclaim it if necessary.
     Unused, // Wasn't used in the last frame. Will reclaim it if necessary.
-    Used, // Was used in the last frame.
+    Used, // Was used in the last (or current) frame.
 };
 
 const TextureMetadata = struct {
@@ -1680,19 +1680,26 @@ pub const Renderer = struct {
         return null;
     }
 
+    /// For internal use only (tracks texture usage in addition to returning the texture index)
     fn get_texture_index(self: *@This(), gpu: *const HollyModule.Holly, size_index: u3, control_word: HollyModule.TextureControlWord) ?TextureIndex {
         for (self.texture_metadata[size_index], 0..) |*entry, idx| {
             if (entry.status != .Invalid and entry.match(control_word)) {
+                // This texture has not been encountered yet this frame. Check if it is still valid.
                 if (entry.usage == 0) {
                     // Texture appears to have changed in memory. Mark as outdated.
                     if (texture_hash(gpu, entry.start_address, entry.end_address) != entry.hash) {
-                        entry.status = .Outdated;
+                        if (entry.status != .Outdated) {
+                            entry.status = .Outdated;
+                            entry.age = 0;
+                        }
                         entry.usage = 0xFFFFFFFF; // Do not check it again.
                         continue; // Not valid anymore, ignore it.
-                    } else if (entry.status == .Outdated) { // It became valid again!
-                        entry.status = .Used;
                     }
-                } else if (entry.status == .Outdated) continue;
+                    entry.status = .Used;
+                    entry.age = 0;
+                }
+                if (entry.status != .Used) continue;
+                entry.usage +|= 1;
                 return @intCast(idx);
             }
         }
@@ -1806,7 +1813,7 @@ pub const Renderer = struct {
             .control_word = texture_control_word,
             .tsp_instruction = tsp_instruction,
             .index = texture_index,
-            .usage = 0,
+            .usage = 1, // Used this frame.
             // NOTE: This is used for UV calculation in the shaders.
             //       In the case of stride textures, we still need to use the power of two allocation size for UV calculation, not the actual texture size.
             .size = .{ alloc_u_size, alloc_v_size },
@@ -1876,16 +1883,14 @@ pub const Renderer = struct {
         for (self.texture_metadata) |arr| {
             for (arr) |*tm| {
                 switch (tm.status) {
-                    .Outdated => tm.age +|= 1,
-                    .Used, .Unused => {
+                    .Used => {
                         if (tm.usage == 0) {
                             tm.status = .Unused;
-                            tm.age +|= 1;
-                        } else {
-                            tm.status = .Used;
                             tm.age = 0;
                         }
                     },
+                    .Unused => tm.age +|= 1,
+                    .Outdated => tm.age +|= 1,
                     .Invalid => {},
                 }
             }
@@ -1995,7 +2000,6 @@ pub const Renderer = struct {
         // The unused fields seems to be absent.
         if (isp_tsp_instruction.texture == 1) {
             tex_idx = self.get_texture_index(gpu, texture_size_index, texture_control) orelse self.upload_texture(gpu, tsp_instruction, texture_control);
-            self.texture_metadata[texture_size_index][tex_idx].usage += 1;
 
             if (isp_tsp_instruction.uv_16bit == 1) {
                 vertex_byte_size += 4 * 1;
@@ -2575,12 +2579,10 @@ pub const Renderer = struct {
                     if (textured) {
                         const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
                         tex_idx = self.get_texture_index(gpu, texture_size_index, texture_control) orelse self.upload_texture(gpu, tsp_instruction, texture_control);
-                        self.texture_metadata[texture_size_index][tex_idx].usage += 1;
                     }
                     if (area1_texture_control) |tc| {
                         const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
                         tex_idx_area_1 = self.get_texture_index(gpu, texture_size_index, tc) orelse self.upload_texture(gpu, area1_tsp_instruction.?, tc);
-                        self.texture_metadata[texture_size_index][tex_idx_area_1].usage += 1;
                     }
 
                     const clamp = tsp_instruction.clamp_uv;
