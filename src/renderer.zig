@@ -3230,20 +3230,33 @@ pub const Renderer = struct {
 
                         if (ta_lists.translucent_modifier_volumes.items.len > 0 and Once(@src()))
                             log.err(termcolor.red("Translucent modifier volumes cannot be used in Pre-sort mode."), .{});
-                    } else if (render_pass.translucent_pass.steps.items.len > 0) {
+                    } else if (render_pass.translucent_pass.steps.items.len > 0) skip_tmv: {
                         // Generate all translucent fragments
                         const translucent_bind_group = gctx.lookupResource(self.translucent_bind_group).?;
                         const blend_bind_group = if (render_to_texture) gctx.lookupResource(self.blend_bind_group_render_to_texture).? else gctx.lookupResource(self.blend_bind_group).?;
+
+                        const translucent_modvol_pipeline = gctx.lookupResource(self.translucent_modvol_pipeline) orelse break :skip_tmv;
+                        const translucent_modvol_merge_pipeline = gctx.lookupResource(self.translucent_modvol_merge_pipeline) orelse break :skip_tmv;
+
+                        const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
+                        const translucent_modvol_bind_group = gctx.lookupResource(self.translucent_modvol_bind_group).?;
+                        const translucent_modvol_merge_bind_group = gctx.lookupResource(self.translucent_modvol_merge_bind_group).?;
+
+                        const modifier_volume_vb_info = gctx.lookupResourceInfo(self.modifier_volume_vertex_buffer).?;
+                        const vs_mv_uniform_mem = gctx.uniformsAllocate(ModifierVolumeUniforms, 1);
+                        vs_mv_uniform_mem.slice[0] = .{
+                            .min_depth = self.min_depth,
+                            .max_depth = self.max_depth,
+                            .framebuffer_width = @floatFromInt(self.guest_framebuffer_size.width),
+                            .framebuffer_height = @floatFromInt(self.guest_framebuffer_size.height),
+                        };
 
                         const slice_size = self.resolution.height / self.oit_horizontal_slices;
                         for (0..self.oit_horizontal_slices) |i| {
                             const start_y: u32 = @as(u32, @intCast(i)) * slice_size;
 
                             // Render Translucent Modifier Volumes
-                            if (ta_lists.translucent_modifier_volumes.items.len > 0) skip_tmv: {
-                                const translucent_modvol_pipeline = gctx.lookupResource(self.translucent_modvol_pipeline) orelse break :skip_tmv;
-                                const translucent_modvol_merge_pipeline = gctx.lookupResource(self.translucent_modvol_merge_pipeline) orelse break :skip_tmv;
-
+                            if (ta_lists.translucent_modifier_volumes.items.len > 0) {
                                 const oit_mv_uniform_mem = gctx.uniformsAllocate(OITTMVUniforms, 1);
                                 oit_mv_uniform_mem.slice[0] = .{
                                     .square_size = @intCast(self.translucent_modvol_dimensions().square_size),
@@ -3251,19 +3264,6 @@ pub const Renderer = struct {
                                     .target_width = self.resolution.width,
                                     .start_y = start_y,
                                 };
-
-                                const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
-                                const translucent_modvol_bind_group = gctx.lookupResource(self.translucent_modvol_bind_group).?;
-                                const translucent_modvol_merge_bind_group = gctx.lookupResource(self.translucent_modvol_merge_bind_group).?;
-                                const vs_mv_uniform_mem = gctx.uniformsAllocate(ModifierVolumeUniforms, 1);
-                                vs_mv_uniform_mem.slice[0] = .{
-                                    .min_depth = self.min_depth,
-                                    .max_depth = self.max_depth,
-                                    .framebuffer_width = @floatFromInt(self.guest_framebuffer_size.width),
-                                    .framebuffer_height = @floatFromInt(self.guest_framebuffer_size.height),
-                                };
-
-                                const modifier_volume_vb_info = gctx.lookupResourceInfo(self.modifier_volume_vertex_buffer).?;
 
                                 {
                                     const pass = encoder.beginRenderPass(.{

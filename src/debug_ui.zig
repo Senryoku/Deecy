@@ -1520,6 +1520,8 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
                     self.selected_texture.size = @intCast(texture.size_index);
                     self.selected_texture.index = @intCast(texture.index);
                 }
+            } else {
+                zgui.textColored(.{ 1.0, 0.0, 0.0, 1.0 }, "Texture not found!", .{});
             }
         }
     }
