@@ -316,6 +316,7 @@ fn display_tsp_instruction(tsp_instruction: Holly.TSPInstructionWord) void {
     }
 }
 
+/// Might lock gctx_queue_mutex
 pub fn draw(self: *@This(), d: *Deecy) !void {
     var dc = d.dc;
 

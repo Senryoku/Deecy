@@ -335,11 +335,6 @@ pub fn main() !void {
             }
         }
 
-        try d.draw_ui();
-
-        d.gctx_queue_mutex.lock();
-        defer d.gctx_queue_mutex.unlock();
-
         // Framebuffer has been written to by the CPU.
         // Update the host texture and blit it to our render target.
         // FIXME: Hackishly forced on for .bin files
@@ -360,16 +355,16 @@ pub fn main() !void {
             try d.renderer.update(&d.dc.gpu);
             try d.renderer.render(&d.dc.gpu, false);
             d.renderer.render_request = false;
-        }
-
-        // Debug aid (see force_render). NOTE: This will break if the game renders to textures.
-        if (force_render and !render_start)
+        } else if (force_render) {
+            // Debug aid (see force_render). NOTE: This will break if the game renders to textures.
             try d.renderer.render(&d.dc.gpu, false);
+        }
 
         if (d.dc.gpu.read_register(Holly.FB_R_CTRL, .FB_R_CTRL).enable) {
             d.renderer.draw(); //  Blit to screen
         }
 
+        try d.draw_ui();
         d.submit_ui();
 
         if (d.gctx.present() == .swap_chain_resized) {

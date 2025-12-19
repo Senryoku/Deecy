@@ -1661,9 +1661,6 @@ pub const Renderer = struct {
 
         // Process and render immediately when rendering to a texture. Decouples it from the host refresh rate, and some games require the result to be visible in guest VRAM ASAP.
         if (self.ExperimentalRenderOnEmulationThread or render_to_texture) {
-            // All resources (including zgpu uniforms!) are shared with standard rendering, so we have to synchronize with the main thread.
-            self._gctx_queue_mutex.lock();
-            defer self._gctx_queue_mutex.unlock();
             self.update(&dc.gpu) catch |err| return log.err(termcolor.red("Failed to update renderer: {t}"), .{err});
             self.render(&dc.gpu, render_to_texture) catch |err| return log.err(termcolor.red("Failed to render: {t}"), .{err});
         }
@@ -1733,6 +1730,7 @@ pub const Renderer = struct {
         return @as([*][4]u8, @ptrCast(self._scratch_pad.ptr));
     }
 
+    /// Assumes _gctx_queue_mutex is locked.
     fn upload_texture(self: *@This(), gpu: *const HollyModule.Holly, tsp_instruction: HollyModule.TSPInstructionWord, texture_control_word: HollyModule.TextureControlWord) TextureIndex {
         log.debug("[Upload] tsp_instruction: {any}", .{tsp_instruction});
         log.debug("[Upload] texture_control_word: {any}", .{texture_control_word});
@@ -1910,6 +1908,7 @@ pub const Renderer = struct {
         }
     }
 
+    // Assumes _gctx_queue_mutex is locked.
     pub fn update_framebuffer_texture(self: *@This(), holly: *const HollyModule.Holly) void {
         const SPG_CONTROL = holly.read_register(HollyModule.SPG_CONTROL, .SPG_CONTROL);
         const FB_R_CTRL = holly.read_register(HollyModule.FB_R_CTRL, .FB_R_CTRL);
@@ -1970,6 +1969,7 @@ pub const Renderer = struct {
                 }
             }
         }
+
         self._gctx.queue.writeTexture(
             .{
                 .texture = self._gctx.lookupResource(self.framebuffer.texture).?,
@@ -1986,6 +1986,7 @@ pub const Renderer = struct {
     }
 
     // Pulls 3 vertices from the address pointed by ISP_BACKGND_T and places them at the front of the vertex buffer.
+    // Assumes _gctx_queue_mutex is locked
     pub fn update_background(self: *@This(), gpu: *const HollyModule.Holly) !void {
         const tags = gpu.read_register(HollyModule.ISP_BACKGND_T, .ISP_BACKGND_T);
         const param_base: u32 = self.on_render_start_param_base;
@@ -2147,6 +2148,7 @@ pub const Renderer = struct {
         std.debug.assert(FirstIndex == indices.len);
     }
 
+    // Assumes _gctx_queue_mutex is locked
     pub fn update_palette(self: *@This(), gpu: *const HollyModule.Holly) !void {
         // TODO: Check if the palette has changed (palette hash) instead of updating unconditionally?
 
@@ -2164,7 +2166,11 @@ pub const Renderer = struct {
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.palette_buffer).?, 0, u8, self._scratch_pad[0 .. 4 * palette_ram.len]);
     }
 
+    // Locks _gctx_queue_mutex.
     pub fn update(self: *@This(), gpu: *const HollyModule.Holly) !void {
+        self._gctx_queue_mutex.lock();
+        defer self._gctx_queue_mutex.unlock();
+
         {
             self._ta_lists_mutex.lock();
             defer self._ta_lists_mutex.unlock();
@@ -2852,8 +2858,11 @@ pub const Renderer = struct {
     }
 
     /// Convert framebuffer from internal resolution to window resolution
+    /// Locks _gctx_queue_mutex.
     pub fn blit_framebuffer(self: *const @This()) void {
         const gctx = self._gctx;
+        self._gctx_queue_mutex.lock();
+        defer self._gctx_queue_mutex.unlock();
 
         if (gctx.lookupResource(self.blit_pipeline)) |pipeline| {
             const commands = commands: {
@@ -2898,8 +2907,11 @@ pub const Renderer = struct {
         }
     }
 
+    /// Locks _gctx_queue_mutex.
     pub fn render(self: *@This(), holly: *HollyModule.Holly, render_to_texture: bool) !void {
         const gctx = self._gctx;
+        self._gctx_queue_mutex.lock();
+        defer self._gctx_queue_mutex.unlock();
 
         if (render_to_texture) {
             log.info("Rendering to texture! [{d},{d}] to [{d},{d}]", .{ self.global_clip.x.min, self.global_clip.y.min, self.global_clip.x.max, self.global_clip.y.max });
@@ -3604,7 +3616,11 @@ pub const Renderer = struct {
         }
     }
 
+    /// Locks _gctx_queue_mutex.
     pub fn draw(self: *const @This()) void {
+        self._gctx_queue_mutex.lock();
+        defer self._gctx_queue_mutex.unlock();
+
         if (self._gctx.lookupResource(self.blit_pipeline)) |pipeline| {
             const back_buffer_view = self._gctx.swapchain.getCurrentTextureView();
             defer back_buffer_view.release();
@@ -3881,6 +3897,7 @@ pub const Renderer = struct {
         } else return error.MapFailed;
     }
 
+    // Locks gctx_queue_mutex.
     pub fn update_blit_to_screen_vertex_buffer(self: *const @This(), display_mode: DisplayMode) void {
         const iw: f32 = @floatFromInt(self.resolution.width);
         const ih: f32 = @floatFromInt(self.resolution.height);
@@ -3921,6 +3938,8 @@ pub const Renderer = struct {
                 -1.0, -1.0, 0.0, 1.0,
             },
         };
+        self._gctx_queue_mutex.lock();
+        defer self._gctx_queue_mutex.unlock();
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.blit_to_window_vertex_buffer).?, 0, f32, blit_vertex_data[0..]);
     }
 

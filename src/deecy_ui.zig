@@ -199,6 +199,7 @@ pub fn draw_vmus(self: *@This(), editable: bool) void {
     zgui.popStyleVar(.{});
 }
 
+// Locks gctx_queue_mutex.
 fn update_game_info(self: *@This(), path: []const u8, image_width: u32, image_height: u32, image: []const u8) void {
     self.deecy.gctx_queue_mutex.lock();
     const texture = self.deecy.gctx.createTexture(.{
@@ -426,6 +427,7 @@ const GameInfoCache = struct {
     }
 };
 
+/// Locks gctx_queue_mutex.
 pub fn refresh_games(self: *@This()) !void {
     if (self.deecy.config.game_directory) |dir_path| {
         const start = std.time.milliTimestamp();
