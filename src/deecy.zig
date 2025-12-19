@@ -1206,6 +1206,16 @@ pub fn submit_ui(self: *@This()) void {
     };
     defer commands.release();
 
+    // FIXME: Workaround for stale commands:
+    //        The debug ui commands are recorded before the the rendered is updated and
+    //        can reference textures that are no longer valid (the texture slot count has been dynamically increased).
+    //        Reordering the commands is probably a better fix.
+    for (self.debug_ui.renderer_texture_views, 0..) |rtv, i| {
+        if (rtv.len != self.renderer.texture_metadata[i].len) {
+            return;
+        }
+    }
+
     self.gctx.submit(&.{commands});
 }
 

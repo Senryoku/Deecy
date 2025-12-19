@@ -31,7 +31,7 @@ show_disabled_channels: bool = false,
 
 vram_texture: zgpu.TextureHandle = undefined,
 vram_texture_view: zgpu.TextureViewHandle = undefined,
-renderer_texture_views: [8][]zgpu.TextureViewHandle = undefined,
+renderer_texture_views: [8][]zgpu.TextureViewHandle = @splat(&[0]zgpu.TextureViewHandle{}),
 
 // Strip Debug Display
 selected_strip_focus: bool = false, // Element has been clicked and remain in focus
@@ -148,16 +148,7 @@ pub fn init(d: *Deecy) !@This() {
 
     self.pixels = try self._allocator.alloc(u8, (vram_width * vram_height) * 4);
 
-    for (0..self.renderer_texture_views.len) |i| {
-        self.renderer_texture_views[i] = try self._allocator.alloc(zgpu.TextureViewHandle, RendererModule.Renderer.MaxTextures[i]);
-        for (0..self.renderer_texture_views[i].len) |j| {
-            self.renderer_texture_views[i][j] = d.gctx.createTextureView(d.renderer.texture_arrays[i].texture, .{
-                .dimension = .tvdim_2d,
-                .base_array_layer = @intCast(j),
-                .array_layer_count = 1,
-            });
-        }
-    }
+    try self.init_texture_views(d);
 
     for (0..self.audio_channels.len) |i| {
         self.audio_channels[i].amplitude_envelope.xv = .empty;
@@ -173,6 +164,26 @@ pub fn init(d: *Deecy) !@This() {
     return self;
 }
 
+fn init_texture_views(self: *@This(), d: *Deecy) !void {
+    for (0..self.renderer_texture_views.len) |i| {
+        if (self.renderer_texture_views[i].len != d.renderer.texture_metadata[i].len) {
+            if (self.renderer_texture_views[i].len > 0) {
+                for (self.renderer_texture_views[i]) |view|
+                    self._gctx.releaseResource(view);
+                self._allocator.free(self.renderer_texture_views[i]);
+            }
+            self.renderer_texture_views[i] = try self._allocator.alloc(zgpu.TextureViewHandle, d.renderer.texture_metadata[i].len);
+            for (0..self.renderer_texture_views[i].len) |j| {
+                self.renderer_texture_views[i][j] = d.gctx.createTextureView(d.renderer.texture_arrays[i].texture, .{
+                    .dimension = .tvdim_2d,
+                    .base_array_layer = @intCast(j),
+                    .array_layer_count = 1,
+                });
+            }
+        }
+    }
+}
+
 pub fn deinit(self: *@This()) void {
     for (0..self.audio_channels.len) |i| {
         self.audio_channels[i].amplitude_envelope.xv.deinit(self._allocator);
@@ -182,6 +193,7 @@ pub fn deinit(self: *@This()) void {
     for (self.renderer_texture_views) |views| {
         for (views) |view|
             self._gctx.releaseResource(view);
+        self._allocator.free(views);
     }
 
     for (0..16) |i| {
@@ -193,9 +205,6 @@ pub fn deinit(self: *@This()) void {
 
     self._gctx.releaseResource(self.vram_texture_view);
     self._gctx.releaseResource(self.vram_texture);
-
-    for (self.renderer_texture_views) |views|
-        self._allocator.free(views);
 
     self._allocator.free(self.pixels);
 }
@@ -311,6 +320,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     var dc = d.dc;
 
     self.reset_hover();
+    try self.init_texture_views(d); // Make sure these are up-to-date.
 
     if (zgui.begin("Scheduler", .{})) {
         zgui.text("Global Cycle: {d}", .{dc._global_cycles});
@@ -1295,16 +1305,17 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             if (zgui.comboFromEnum("Size", &size)) {
                 self.selected_texture.size = std.math.clamp(@intFromEnum(size), 0, @as(i32, @intCast(self.renderer_texture_views.len - 1)));
                 self.selected_texture.scale = @as(f32, 512) / @as(f32, @floatFromInt((@as(u32, 8) << @intCast(self.selected_texture.size))));
-                self.selected_texture.index = std.math.clamp(self.selected_texture.index, 0, RendererModule.Renderer.MaxTextures[@intCast(self.selected_texture.size)] - 1);
+                self.selected_texture.index = std.math.clamp(self.selected_texture.index, 0, @as(i32, @intCast(d.renderer.texture_metadata[@intCast(self.selected_texture.size)].len - 1)));
             }
             if (zgui.inputInt("Index", .{ .v = &self.selected_texture.index, .step = 1 })) {
-                self.selected_texture.index = std.math.clamp(self.selected_texture.index, 0, RendererModule.Renderer.MaxTextures[@intCast(self.selected_texture.size)] - 1);
+                self.selected_texture.index = std.math.clamp(self.selected_texture.index, 0, @as(i32, @intCast(d.renderer.texture_metadata[@intCast(self.selected_texture.size)].len - 1)));
             }
             if (zgui.dragFloat("Scale", .{ .v = &self.selected_texture.scale, .min = 1.0, .max = 8.0, .speed = 0.1 })) {
                 self.selected_texture.scale = std.math.clamp(self.selected_texture.scale, 1.0, 8.0);
             }
             const tex_id = d.gctx.lookupResource(self.renderer_texture_views[@intCast(self.selected_texture.size)][@intCast(self.selected_texture.index)]).?;
-            zgui.image(tex_id, .{ .w = self.selected_texture.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(self.selected_texture.size))), .h = self.selected_texture.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(self.selected_texture.size))) });
+            const tex_size = self.selected_texture.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(self.selected_texture.size)));
+            zgui.image(tex_id, .{ .w = tex_size, .h = tex_size });
 
             const metadata = d.renderer.texture_metadata[@intCast(self.selected_texture.size)][@intCast(self.selected_texture.index)];
             zgui.text("Status: {t: <8}  Age: {d: >3}  Hash: {X:0>16}", .{ metadata.status, metadata.age, metadata.hash });

@@ -660,7 +660,8 @@ pub const Renderer = struct {
     // FIXME: Not sure what are good values.
     //        As a good stress test, Fatal Fury: Mark of the Wolves can use more than 1024 16x16 textures in a single frame right in the character select screen with the current system.
     //        In matches, I've also seen it exceed 2048 8x8 textures (!) and the current limit of 8 1024x1024 textures by using a lot of 16x1024. This might be the limit of the current solution.
-    pub const MaxTextures: [8]u16 = .{ 2048, 2048, 512, 512, 256, 128, 32, 8 };
+    pub const InitialTextureSlots: [8]u16 = .{ 2048, 2048, 512, 512, 256, 128, 32, 8 };
+    const StripMetadataSize = 16 * 4096 * @sizeOf(StripMetadata); // FIXME: Arbitrary size for testing
 
     pub const DisplayMode = enum { Center, Fit, Stretch };
 
@@ -738,7 +739,7 @@ pub const Renderer = struct {
     opaque_fragment_shader_module: wgpu.ShaderModule,
     pre_sort_fragment_shader_module: wgpu.ShaderModule,
 
-    bind_group: zgpu.BindGroupHandle = .nil,
+    textures_bind_group: zgpu.BindGroupHandle = .nil,
     modifier_volume_bind_group: zgpu.BindGroupHandle = .nil,
     modifier_volume_apply_bind_group: zgpu.BindGroupHandle = .nil,
     translucent_bind_group: zgpu.BindGroupHandle = .nil,
@@ -837,6 +838,46 @@ pub const Renderer = struct {
     _gctx_queue_mutex: *std.Thread.Mutex,
     _allocator: std.mem.Allocator,
 
+    fn create_textures_bind_group_layout(gctx: *zgpu.GraphicsContext) zgpu.BindGroupLayoutHandle {
+        return gctx.createBindGroupLayout(&.{
+            zgpu.bufferEntry(0, .{ .vertex = true, .fragment = true }, .uniform, true, 0),
+            zgpu.textureEntry(1, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.textureEntry(2, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.textureEntry(3, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.textureEntry(4, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.textureEntry(5, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.textureEntry(6, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.textureEntry(7, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.textureEntry(8, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.bufferEntry(9, .{ .vertex = true }, .read_only_storage, false, 0),
+            zgpu.bufferEntry(10, .{ .fragment = true }, .read_only_storage, false, 0),
+        });
+    }
+
+    fn create_textures_bind_group(self: *@This()) void {
+        const bind_group_layout = create_textures_bind_group_layout(self._gctx);
+        defer self._gctx.releaseResource(bind_group_layout);
+
+        if (self.textures_bind_group.id != 0) {
+            self._gctx.releaseResource(self.textures_bind_group);
+            self.textures_bind_group = .nil;
+        }
+
+        self.textures_bind_group = self._gctx.createBindGroup(bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
+            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(Uniforms) },
+            .{ .binding = 1, .texture_view_handle = self.texture_arrays[0].view },
+            .{ .binding = 2, .texture_view_handle = self.texture_arrays[1].view },
+            .{ .binding = 3, .texture_view_handle = self.texture_arrays[2].view },
+            .{ .binding = 4, .texture_view_handle = self.texture_arrays[3].view },
+            .{ .binding = 5, .texture_view_handle = self.texture_arrays[4].view },
+            .{ .binding = 6, .texture_view_handle = self.texture_arrays[5].view },
+            .{ .binding = 7, .texture_view_handle = self.texture_arrays[6].view },
+            .{ .binding = 8, .texture_view_handle = self.texture_arrays[7].view },
+            .{ .binding = 9, .buffer_handle = self.strips_metadata_buffer, .offset = 0, .size = StripMetadataSize },
+            .{ .binding = 10, .buffer_handle = self.palette_buffer, .offset = 0, .size = 4 * 1024 },
+        });
+    }
+
     pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, gctx_queue_mutex: *std.Thread.Mutex, config: Configuration) !*Renderer {
         const start = std.time.milliTimestamp();
         defer log.info("Renderer initialized in {d}ms", .{std.time.milliTimestamp() - start});
@@ -872,20 +913,8 @@ pub const Renderer = struct {
             .size = 4 * NativeResolution.width * NativeResolution.height,
         });
 
-        const bind_group_layout = gctx.createBindGroupLayout(&.{
-            zgpu.bufferEntry(0, .{ .vertex = true, .fragment = true }, .uniform, true, 0),
-            zgpu.textureEntry(1, .{ .fragment = true }, .float, .tvdim_2d_array, false),
-            zgpu.textureEntry(2, .{ .fragment = true }, .float, .tvdim_2d_array, false),
-            zgpu.textureEntry(3, .{ .fragment = true }, .float, .tvdim_2d_array, false),
-            zgpu.textureEntry(4, .{ .fragment = true }, .float, .tvdim_2d_array, false),
-            zgpu.textureEntry(5, .{ .fragment = true }, .float, .tvdim_2d_array, false),
-            zgpu.textureEntry(6, .{ .fragment = true }, .float, .tvdim_2d_array, false),
-            zgpu.textureEntry(7, .{ .fragment = true }, .float, .tvdim_2d_array, false),
-            zgpu.textureEntry(8, .{ .fragment = true }, .float, .tvdim_2d_array, false),
-            zgpu.bufferEntry(9, .{ .vertex = true }, .read_only_storage, false, 0),
-            zgpu.bufferEntry(10, .{ .fragment = true }, .read_only_storage, false, 0),
-        });
-        defer gctx.releaseResource(bind_group_layout);
+        const textures_bind_group_layout = create_textures_bind_group_layout(gctx);
+        defer gctx.releaseResource(textures_bind_group_layout);
         const sampler_bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.samplerEntry(0, .{ .fragment = true }, .filtering),
         });
@@ -960,42 +989,17 @@ pub const Renderer = struct {
         }
 
         var texture_arrays: [8]TextureAndView = undefined;
-        for (0..8) |i| {
-            texture_arrays[i].texture = gctx.createTexture(.{
-                .usage = .{ .texture_binding = true, .storage_binding = true, .copy_dst = true },
-                .size = .{
-                    .width = @as(u32, 8) << @intCast(i),
-                    .height = @as(u32, 8) << @intCast(i),
-                    .depth_or_array_layers = MaxTextures[i],
-                },
-                .format = .bgra8_unorm,
-                .mip_level_count = @intCast(4 + i),
-            });
-            texture_arrays[i].view = gctx.createTextureView(texture_arrays[i].texture, .{});
-        }
+        for (0..8) |i|
+            texture_arrays[i] = create_texture_cache_array(gctx, i, InitialTextureSlots[i]);
+
         const palette_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .storage = true },
             .size = 4 * 1024,
         });
 
-        const StripMetadataSize = 16 * 4096 * @sizeOf(StripMetadata); // FIXME: Arbitrary size for testing
         const strips_metadata_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .storage = true },
             .size = StripMetadataSize,
-        });
-
-        const bind_group = gctx.createBindGroup(bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(Uniforms) },
-            .{ .binding = 1, .texture_view_handle = texture_arrays[0].view },
-            .{ .binding = 2, .texture_view_handle = texture_arrays[1].view },
-            .{ .binding = 3, .texture_view_handle = texture_arrays[2].view },
-            .{ .binding = 4, .texture_view_handle = texture_arrays[3].view },
-            .{ .binding = 5, .texture_view_handle = texture_arrays[4].view },
-            .{ .binding = 6, .texture_view_handle = texture_arrays[5].view },
-            .{ .binding = 7, .texture_view_handle = texture_arrays[6].view },
-            .{ .binding = 8, .texture_view_handle = texture_arrays[7].view },
-            .{ .binding = 9, .buffer_handle = strips_metadata_buffer, .offset = 0, .size = StripMetadataSize },
-            .{ .binding = 10, .buffer_handle = palette_buffer, .offset = 0, .size = 4 * 1024 },
         });
 
         const vertex_buffer = gctx.createBuffer(.{
@@ -1055,7 +1059,7 @@ pub const Renderer = struct {
         }};
 
         const translucent_pipeline_layout = gctx.createPipelineLayout(&.{
-            bind_group_layout,
+            textures_bind_group_layout,
             sampler_bind_group_layout,
             translucent_bind_group_layout,
         });
@@ -1255,12 +1259,11 @@ pub const Renderer = struct {
 
             .blend_bind_group_layout = blend_bind_group_layout,
 
-            .opaque_pipeline_layout = gctx.createPipelineLayout(&.{ bind_group_layout, sampler_bind_group_layout }),
+            .opaque_pipeline_layout = gctx.createPipelineLayout(&.{ textures_bind_group_layout, sampler_bind_group_layout }),
             .opaque_vertex_shader_module = opaque_vertex_shader_module,
             .opaque_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_fs, "fs"),
             .pre_sort_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_presort_fs, "fs"),
 
-            .bind_group = bind_group,
             .modifier_volume_bind_group = modifier_volume_bind_group,
             .vertex_buffer = vertex_buffer,
             .index_buffer = index_buffer,
@@ -1291,6 +1294,8 @@ pub const Renderer = struct {
         };
         try renderer.ta_lists.append(allocator, .init());
         try renderer.ta_lists_to_render.append(allocator, .init());
+
+        renderer.create_textures_bind_group();
 
         MipMap.init(allocator, gctx);
         // Blit pipeline
@@ -1464,7 +1469,7 @@ pub const Renderer = struct {
         _ = renderer.get_or_put_pipeline(.{ .translucent = false, .src_blend_factor = .src_alpha, .dst_blend_factor = .one_minus_src_alpha, .depth_compare = .greater_equal, .depth_write_enabled = true, .culling_mode = .Small }, .Async); // Punchthrough
 
         for (0..renderer.texture_metadata.len) |i| {
-            renderer.texture_metadata[i] = try allocator.alloc(TextureMetadata, MaxTextures[i]);
+            renderer.texture_metadata[i] = try allocator.alloc(TextureMetadata, InitialTextureSlots[i]);
             for (renderer.texture_metadata[i]) |*tm| tm.* = .{};
         }
 
@@ -1795,8 +1800,16 @@ pub const Renderer = struct {
             texture_index = self.get_lru_texture_index(size_index);
 
         if (texture_index == InvalidTextureIndex) {
-            log.err(termcolor.red("Out of textures slot (size index: {d}, {d}x{d})"), .{ size_index, u_size, v_size });
-            return 0;
+            const slot_count = self.texture_metadata[size_index].len;
+            if (slot_count < 2048) { // 2048 is the hard limit requested on context creation.
+                const new_count = 2 * slot_count;
+                log.warn(termcolor.yellow("Out of textures slot (size index: {d}, {d}x{d}). Increasing from {d} to {d}."), .{ size_index, u_size, v_size, slot_count, new_count });
+                self.increase_texture_slot_count(size_index, new_count);
+                texture_index = @intCast(slot_count);
+            } else {
+                log.err(termcolor.red("Out of textures slot (size index: {d}, {d}x{d}, slot count: {d})."), .{ size_index, u_size, v_size, slot_count });
+                return 0;
+            }
         }
 
         const end_address = if (texture_control_word.vq_compressed == 1)
@@ -2926,7 +2939,7 @@ pub const Renderer = struct {
                 .fog_lut = self.fog_lut,
             };
 
-            const bind_group = gctx.lookupResource(self.bind_group).?;
+            const textures_bind_group = gctx.lookupResource(self.textures_bind_group).?;
             const depth_view = gctx.lookupResource(self.depth.view).?;
 
             // Background
@@ -2966,7 +2979,7 @@ pub const Renderer = struct {
                 pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
                 pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
 
-                pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
+                pass.setBindGroup(0, textures_bind_group, &.{uniform_mem.offset});
 
                 pass.setPipeline(background_pipeline);
                 pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)]).?, &.{});
@@ -3014,7 +3027,7 @@ pub const Renderer = struct {
                         pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
                         pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
 
-                        pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
+                        pass.setBindGroup(0, textures_bind_group, &.{uniform_mem.offset});
 
                         // Opaque and PunchThrough geometry
                         // FIXME: PunchThrough should be drawn last? Is there a case where it matters with this setup?
@@ -3206,7 +3219,7 @@ pub const Renderer = struct {
                         pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
                         pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
 
-                        pass.setBindGroup(0, bind_group, &.{pre_sort_uniform_mem.offset});
+                        pass.setBindGroup(0, textures_bind_group, &.{pre_sort_uniform_mem.offset});
 
                         var current_pipeline: ?PipelineKey = null;
                         var current_sampler: ?u8 = null;
@@ -3349,7 +3362,7 @@ pub const Renderer = struct {
                                 pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
                                 pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
 
-                                pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
+                                pass.setBindGroup(0, textures_bind_group, &.{uniform_mem.offset});
                                 pass.setBindGroup(2, translucent_bind_group, &.{oit_uniform_mem.offset});
 
                                 for (render_pass.translucent_pass.steps.items) |step| {
@@ -3936,6 +3949,27 @@ pub const Renderer = struct {
         return .{ .texture = texture, .view = view, .depth_only_view = depth_only_view };
     }
 
+    fn create_texture_cache_array(gctx: *zgpu.GraphicsContext, size_index: u64, layer_count: u64) TextureAndView {
+        const pixel_size = @as(u32, 8) << @intCast(size_index);
+        const texture = gctx.createTexture(.{
+            .usage = .{
+                .texture_binding = true,
+                .storage_binding = true,
+                .copy_dst = true,
+                .copy_src = true, // Necessary for dynamically increasing the slot count.
+            },
+            .size = .{
+                .width = pixel_size,
+                .height = pixel_size,
+                .depth_or_array_layers = @intCast(layer_count),
+            },
+            .format = .bgra8_unorm,
+            .mip_level_count = @intCast(4 + size_index),
+        });
+        const view = gctx.createTextureView(texture, .{});
+        return .{ .texture = texture, .view = view };
+    }
+
     fn create_resized_framebuffer_texture(gctx: *zgpu.GraphicsContext, resolution: Resolution, copy_src: bool, copy_dst: bool) TextureAndView {
         const resized_framebuffer_texture = gctx.createTexture(.{
             .usage = .{
@@ -4123,5 +4157,61 @@ pub const Renderer = struct {
             return 134217728; // Min WebGPU spec.
         }
         return r.limits.max_storage_buffer_binding_size;
+    }
+
+    fn increase_texture_slot_count(self: *@This(), size_index: u32, new_count: u64) void {
+        const slot_count = self.texture_metadata[size_index].len;
+        std.debug.assert(new_count > slot_count);
+
+        const size = @as(u32, 8) << @intCast(size_index);
+        const mip_level_count = 4 + @as(u32, size_index);
+        const arr = create_texture_cache_array(self._gctx, size_index, new_count);
+
+        // Copy previous textures
+        const commands = commands: {
+            const encoder = self._gctx.device.createCommandEncoder(null);
+            defer encoder.release();
+            const source = self.texture_arrays[size_index].lookup(self._gctx).texture;
+            const destination = arr.lookup(self._gctx).texture;
+            for (0..mip_level_count) |mip_level_u64| {
+                const mip_level: u32 = @intCast(mip_level_u64);
+                encoder.copyTextureToTexture(
+                    .{
+                        .texture = source,
+                        .mip_level = mip_level,
+                        .origin = .{},
+                        .aspect = .all,
+                    },
+                    .{
+                        .texture = destination,
+                        .mip_level = mip_level,
+                        .origin = .{},
+                        .aspect = .all,
+                    },
+                    .{
+                        .width = size / std.math.pow(u32, 2, mip_level),
+                        .height = size / std.math.pow(u32, 2, mip_level),
+                        .depth_or_array_layers = @intCast(slot_count),
+                    },
+                );
+            }
+            break :commands encoder.finish(null);
+        };
+        defer commands.release();
+
+        self._gctx.submit(&.{commands});
+
+        const prev_texture = self.texture_arrays[size_index];
+        self.texture_arrays[size_index] = arr;
+        defer prev_texture.release(self._gctx);
+
+        const tmp = self._allocator.alloc(TextureMetadata, new_count) catch std.debug.panic("Out of memory.", .{});
+        for (0..slot_count) |i| tmp[i] = self.texture_metadata[size_index][i];
+        for (slot_count..new_count) |i| tmp[i] = .{};
+        const prev_metadata = self.texture_metadata[size_index];
+        self.texture_metadata[size_index] = tmp;
+        defer self._allocator.free(prev_metadata);
+
+        self.create_textures_bind_group();
     }
 };
