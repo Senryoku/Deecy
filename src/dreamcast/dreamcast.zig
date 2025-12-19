@@ -620,7 +620,6 @@ pub const Dreamcast = struct {
             // Area 2 - Nothing
             0x08000000...0x0BFFFFFF => std.debug.panic("Invalid _get_memory to Area 2 @{X:0>8}", .{addr}),
             0x10000000...0x13FFFFFF => { // Area 4 - Tile accelerator command input
-                // self.panic_debug("Unexpected _get_memory to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA.", .{addr});
                 // NOTE: Marvel vs. Capcom 2 reads from here (Addr:103464A0 PC:8C031D3C). Ignoring it doesn't seem to hurt, so... Doing that instead of panicking for now.
                 dc_log.err(termcolor.red("[PC: 0x{X:0>8}] Unexpected _get_memory to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA."), .{ self.cpu.pc, addr });
                 self._dummy = .{ 0, 0, 0, 0 };
@@ -706,6 +705,8 @@ pub const Dreamcast = struct {
                 // DCA3 Hack
                 if (addr & (@as(u32, 1) << 25) != 0)
                     return self.cpu.operand_cache_read(T, addr);
+                dc_log.err(termcolor.red("[PC: 0x{X:0>8}] Unexpected read({any}) to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA."), .{ self.cpu.pc, T, addr });
+                return 0;
             },
             // Area 7
             0x1C000000...0x1FFFFFFF => {
@@ -1041,12 +1042,17 @@ pub const Dreamcast = struct {
         const dmac_len = self.cpu.read_p4_register(u32, .DMATCR2);
         std.debug.assert(32 * dmac_len == len);
 
+        const chcr2 = self.cpu.p4_register(SH4Module.P4.CHCR, .CHCR2);
+        chcr2.sm = 1;
+        chcr2.dm = 1;
+        chcr2.ts = 4;
+
         self.cpu.start_dmac(2);
 
         // TODO: Schedule for later?
 
         // In the case of Direct Texture Path DMA, the destination address is incremented with the transfer, otherwise it is maintained.
-        if (dst_addr >= 0x11000000 and dst_addr <= 0x11FFFFE0 or dst_addr >= 0x13000000 and dst_addr <= 0x13FFFFE0) {
+        if ((dst_addr >= 0x11000000 and dst_addr <= 0x11FFFFE0) or (dst_addr >= 0x13000000 and dst_addr <= 0x13FFFFE0)) {
             self.hw_register(u32, .SB_C2DSTAT).* += len;
         }
         self.hw_register(u32, .SB_C2DLEN).* = 0;
