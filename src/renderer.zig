@@ -1908,7 +1908,7 @@ pub const Renderer = struct {
         }
     }
 
-    // Assumes _gctx_queue_mutex is locked.
+    // Locks gctx_queue_mutex.
     pub fn update_framebuffer_texture(self: *@This(), holly: *const HollyModule.Holly) void {
         const SPG_CONTROL = holly.read_register(HollyModule.SPG_CONTROL, .SPG_CONTROL);
         const FB_R_CTRL = holly.read_register(HollyModule.FB_R_CTRL, .FB_R_CTRL);
@@ -1970,6 +1970,8 @@ pub const Renderer = struct {
             }
         }
 
+        self._gctx_queue_mutex.lock();
+        defer self._gctx_queue_mutex.unlock();
         self._gctx.queue.writeTexture(
             .{
                 .texture = self._gctx.lookupResource(self.framebuffer.texture).?,
@@ -2166,11 +2168,13 @@ pub const Renderer = struct {
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.palette_buffer).?, 0, u8, self._scratch_pad[0 .. 4 * palette_ram.len]);
     }
 
-    // Locks _gctx_queue_mutex.
+    // Locks gctx_queue_mutex.
     pub fn update(self: *@This(), gpu: *const HollyModule.Holly) !void {
+        // NOTE: Locking gctx_queue_mutex is necessary because of this function will upload textures and buffers to the GPU.
+        //       But! It incidently also prevents re-entering, which is important because of ta_lists_to_render (kept around to avoid unnecessary re-allocations) and all the shared GPU resources.
+        //       Re-entering `update` is possible when rendering to a texture (which is done on the emulation thread), while main rendering is done on the main thread.
         self._gctx_queue_mutex.lock();
         defer self._gctx_queue_mutex.unlock();
-
         {
             self._ta_lists_mutex.lock();
             defer self._ta_lists_mutex.unlock();
@@ -2909,9 +2913,11 @@ pub const Renderer = struct {
 
     /// Locks _gctx_queue_mutex.
     pub fn render(self: *@This(), holly: *HollyModule.Holly, render_to_texture: bool) !void {
-        const gctx = self._gctx;
+        // NOTE: Locking gctx_queue_mutex is required for submitting commands, mapping the framebuffer, but also (sadly) uniform allocation.
         self._gctx_queue_mutex.lock();
         defer self._gctx_queue_mutex.unlock();
+
+        const gctx = self._gctx;
 
         if (render_to_texture) {
             log.info("Rendering to texture! [{d},{d}] to [{d},{d}]", .{ self.global_clip.x.min, self.global_clip.y.min, self.global_clip.x.max, self.global_clip.y.max });
@@ -4178,6 +4184,7 @@ pub const Renderer = struct {
         return r.limits.max_storage_buffer_binding_size;
     }
 
+    /// Assumes gctx_queue_mutex is locked.
     fn increase_texture_slot_count(self: *@This(), size_index: u32, new_count: u64) void {
         const slot_count = self.texture_metadata[size_index].len;
         std.debug.assert(new_count > slot_count);

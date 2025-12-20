@@ -1077,6 +1077,7 @@ pub fn dc_thread_loop_realtime(self: *@This()) void {
     }
 }
 
+/// Locks gctx_queue_mutex (via Renderer.update_blit_to_screen_vertex_buffer).
 pub fn on_resize(self: *@This()) void {
     if (!self.config.fullscreen) {
         const ww = self.gctx.swapchain_descriptor.width;

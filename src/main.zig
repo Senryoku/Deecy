@@ -367,9 +367,13 @@ pub fn main() !void {
         try d.draw_ui();
         d.submit_ui();
 
-        if (d.gctx.present() == .swap_chain_resized) {
+        const resized = resized: {
+            d.gctx_queue_mutex.lock();
+            defer d.gctx_queue_mutex.unlock();
+            break :resized d.gctx.present() == .swap_chain_resized;
+        };
+        if (resized)
             d.on_resize();
-        }
 
         if (d.config.frame_limiter != .Off) {
             const ns_per_frame: u64 = switch (d.config.frame_limiter) {
