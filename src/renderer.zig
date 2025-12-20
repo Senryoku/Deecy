@@ -705,8 +705,6 @@ pub const Renderer = struct {
     on_render_start_param_base: u32 = 0,
     render_passes: std.ArrayList(RenderPass),
     ta_lists: std.ArrayList(HollyModule.TALists),
-    ta_lists_to_render: std.ArrayList(HollyModule.TALists),
-    _ta_lists_mutex: std.Thread.Mutex = .{},
 
     texture_metadata: [8][]TextureMetadata = @splat(&.{}),
 
@@ -1284,7 +1282,6 @@ pub const Renderer = struct {
 
             .render_passes = .empty,
             .ta_lists = .empty,
-            .ta_lists_to_render = .empty,
 
             ._scratch_pad = try allocator.allocWithOptions(u8, 4 * 1024 * 1024, .@"4", null),
 
@@ -1293,7 +1290,6 @@ pub const Renderer = struct {
             ._allocator = allocator,
         };
         try renderer.ta_lists.append(allocator, .init());
-        try renderer.ta_lists_to_render.append(allocator, .init());
 
         renderer.create_textures_bind_group();
 
@@ -1481,8 +1477,6 @@ pub const Renderer = struct {
     pub fn destroy(self: *@This()) void {
         for (self.ta_lists.items) |*list| list.deinit(self._allocator);
         self.ta_lists.deinit(self._allocator);
-        for (self.ta_lists_to_render.items) |*list| list.deinit(self._allocator);
-        self.ta_lists_to_render.deinit(self._allocator);
         for (self.render_passes.items) |*pass| pass.deinit(self._allocator);
         self.render_passes.deinit(self._allocator);
 
@@ -1583,7 +1577,6 @@ pub const Renderer = struct {
         for (self.texture_metadata) |arr| {
             for (arr) |*tex| tex.* = .{};
         }
-        for (self.ta_lists_to_render.items) |*list| list.clearRetainingCapacity();
         for (self.ta_lists.items) |*list| list.clearRetainingCapacity();
         for (self.render_passes.items) |*pass| pass.clearRetainingCapacity(self._allocator);
 
@@ -1599,68 +1592,67 @@ pub const Renderer = struct {
             return;
         }
 
-        {
-            self._ta_lists_mutex.lock();
-            defer self._ta_lists_mutex.unlock();
+        // NOTE: Here we also rely on this lock to protect access to `ta_lists` and `render_passes`.
+        self._gctx_queue_mutex.lock();
+        defer self._gctx_queue_mutex.unlock();
 
-            if (self.render_request and !render_to_texture)
-                log.warn(termcolor.yellow("Woops! Skipped a frame."), .{});
+        if (self.render_request and !render_to_texture)
+            log.warn(termcolor.yellow("Woops! Skipped a frame."), .{});
 
-            self.on_render_start_param_base = dc.gpu.read_register(u32, .PARAM_BASE);
+        self.on_render_start_param_base = dc.gpu.read_register(u32, .PARAM_BASE);
 
-            // Clear the previous used TA lists and swap it with the one submitted by the game.
-            // NOTE: Clearing the lists here means the game cannot render lists more than once (i.e. starting a render without
-            //       writing to LIST_INIT). No idea if there are games that actually do that, but just in case, emit a warning.
-            for (self.ta_lists.items) |*list| list.clearRetainingCapacity();
-            const list_idx: u4 = @truncate(self.on_render_start_param_base >> 20);
-            std.mem.swap(std.ArrayList(HollyModule.TALists), &dc.gpu._ta_lists[list_idx], &self.ta_lists);
-            if (self.ta_lists.items[0].opaque_list.vertex_strips.items.len == 0 and self.ta_lists.items[0].punchthrough_list.vertex_strips.items.len == 0 and self.ta_lists.items[0].translucent_list.vertex_strips.items.len == 0) {
-                log.warn(termcolor.yellow("on_render_start: Empty TA lists submitted. Is the game trying to reuse the previous TA lists?"), .{});
-            }
-
-            const header_type = dc.gpu.get_region_header_type();
-
-            var region_count: u32 = 0;
-            for (0..self.ta_lists.items.len) |region_array_idx| {
-                var region_config = dc.gpu.get_region_array_data_config(region_array_idx);
-                if (region_config.empty()) break;
-
-                switch (header_type) {
-                    .Type1 => log.debug("[{t}] ({d}) {f}", .{ header_type, region_array_idx, region_config }),
-                    .Type2 => log.debug("[{t}] ({d}) {f}", .{ header_type, region_array_idx, std.fmt.alt(region_config, .formatType1) }),
-                }
-
-                if (self.render_passes.items.len <= region_array_idx) self.render_passes.append(self._allocator, .init()) catch @panic("Out of memory");
-
-                self.render_passes.items[region_array_idx].z_clear = region_config.settings.z_clear == .Clear;
-                self.render_passes.items[region_array_idx].pre_sort = region_config.settings.pre_sort;
-                self.render_passes.items[region_array_idx].opaque_list_pointer = region_config.opaque_list_pointer;
-                self.render_passes.items[region_array_idx].opaque_modifier_volume_pointer = region_config.opaque_modifier_volume_pointer;
-                self.render_passes.items[region_array_idx].translucent_list_pointer = region_config.translucent_list_pointer;
-                self.render_passes.items[region_array_idx].translucent_modifier_volume_pointer = region_config.translucent_modifier_volume_pointer;
-                self.render_passes.items[region_array_idx].punchthrough_list_pointer = region_config.punch_through_list_pointer;
-                region_count += 1;
-
-                if (region_config.settings.last_region) break;
-            }
-
-            if (region_count != self.ta_lists.items.len)
-                log.warn(termcolor.yellow("Expected {d} regions, found {d}"), .{ self.ta_lists.items.len, region_count });
-
-            if (region_count < self.render_passes.items.len) {
-                for (region_count..self.render_passes.items.len) |i|
-                    self.render_passes.items[i].deinit(self._allocator);
-                self.render_passes.shrinkRetainingCapacity(region_count);
-            }
-
-            self.write_back_parameters = dc.gpu.get_write_back_parameters();
-
-            // Let the main thread process the list asynchronously if possible.
-            self.render_request = !self.ExperimentalRenderOnEmulationThread and !render_to_texture;
+        // Clear the previous used TA lists and swap it with the one submitted by the game.
+        // NOTE: Clearing the lists here means the game cannot render lists more than once (i.e. starting a render without
+        //       writing to LIST_INIT). No idea if there are games that actually do that, but just in case, emit a warning.
+        for (self.ta_lists.items) |*list| list.clearRetainingCapacity();
+        const list_idx: u4 = @truncate(self.on_render_start_param_base >> 20);
+        std.mem.swap(std.ArrayList(HollyModule.TALists), &dc.gpu._ta_lists[list_idx], &self.ta_lists);
+        if (self.ta_lists.items[0].opaque_list.vertex_strips.items.len == 0 and self.ta_lists.items[0].punchthrough_list.vertex_strips.items.len == 0 and self.ta_lists.items[0].translucent_list.vertex_strips.items.len == 0) {
+            log.warn(termcolor.yellow("on_render_start: Empty TA lists submitted. Is the game trying to reuse the previous TA lists?"), .{});
         }
 
+        const header_type = dc.gpu.get_region_header_type();
+
+        var region_count: u32 = 0;
+        for (0..self.ta_lists.items.len) |region_array_idx| {
+            var region_config = dc.gpu.get_region_array_data_config(region_array_idx);
+            if (region_config.empty()) break;
+
+            switch (header_type) {
+                .Type1 => log.debug("[{t}] ({d}) {f}", .{ header_type, region_array_idx, region_config }),
+                .Type2 => log.debug("[{t}] ({d}) {f}", .{ header_type, region_array_idx, std.fmt.alt(region_config, .formatType1) }),
+            }
+
+            if (self.render_passes.items.len <= region_array_idx) self.render_passes.append(self._allocator, .init()) catch @panic("Out of memory");
+
+            self.render_passes.items[region_array_idx].z_clear = region_config.settings.z_clear == .Clear;
+            self.render_passes.items[region_array_idx].pre_sort = region_config.settings.pre_sort;
+            self.render_passes.items[region_array_idx].opaque_list_pointer = region_config.opaque_list_pointer;
+            self.render_passes.items[region_array_idx].opaque_modifier_volume_pointer = region_config.opaque_modifier_volume_pointer;
+            self.render_passes.items[region_array_idx].translucent_list_pointer = region_config.translucent_list_pointer;
+            self.render_passes.items[region_array_idx].translucent_modifier_volume_pointer = region_config.translucent_modifier_volume_pointer;
+            self.render_passes.items[region_array_idx].punchthrough_list_pointer = region_config.punch_through_list_pointer;
+            region_count += 1;
+
+            if (region_config.settings.last_region) break;
+        }
+
+        if (region_count != self.ta_lists.items.len)
+            log.warn(termcolor.yellow("Expected {d} regions, found {d}"), .{ self.ta_lists.items.len, region_count });
+
+        if (region_count < self.render_passes.items.len) {
+            for (region_count..self.render_passes.items.len) |i|
+                self.render_passes.items[i].deinit(self._allocator);
+            self.render_passes.shrinkRetainingCapacity(region_count);
+        }
+
+        self.write_back_parameters = dc.gpu.get_write_back_parameters();
+
         // Process and render immediately when rendering to a texture. Decouples it from the host refresh rate, and some games require the result to be visible in guest VRAM ASAP.
-        if (self.ExperimentalRenderOnEmulationThread or render_to_texture) {
+        // Othersize, let the main thread process the list asynchronously unless explicitly disabled.
+        self.render_request = !self.ExperimentalRenderOnEmulationThread and !render_to_texture;
+
+        if (!self.render_request) {
             self.update(&dc.gpu) catch |err| return log.err(termcolor.red("Failed to update renderer: {t}"), .{err});
             self.render(&dc.gpu, render_to_texture) catch |err| return log.err(termcolor.red("Failed to render: {t}"), .{err});
         }
@@ -2168,22 +2160,10 @@ pub const Renderer = struct {
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.palette_buffer).?, 0, u8, self._scratch_pad[0 .. 4 * palette_ram.len]);
     }
 
-    // Locks gctx_queue_mutex.
+    // Assumes gctx_queue_mutex is locked.
+    // NOTE: Locking gctx_queue_mutex is necessary because of this function will upload textures and buffers to the GPU.
+    //       But! It incidently also protect concurrent access to `ta_lists` and `render_passes`.
     pub fn update(self: *@This(), gpu: *const HollyModule.Holly) !void {
-        // NOTE: Locking gctx_queue_mutex is necessary because of this function will upload textures and buffers to the GPU.
-        //       But! It incidently also prevents re-entering, which is important because of ta_lists_to_render (kept around to avoid unnecessary re-allocations) and all the shared GPU resources.
-        //       Re-entering `update` is possible when rendering to a texture (which is done on the emulation thread), while main rendering is done on the main thread.
-        self._gctx_queue_mutex.lock();
-        defer self._gctx_queue_mutex.unlock();
-        {
-            self._ta_lists_mutex.lock();
-            defer self._ta_lists_mutex.unlock();
-            for (self.ta_lists_to_render.items) |*list| {
-                list.clearRetainingCapacity();
-            }
-            std.mem.swap(std.ArrayList(HollyModule.TALists), &self.ta_lists, &self.ta_lists_to_render);
-        }
-
         self.vertices.clearRetainingCapacity();
         self.strips_metadata.clearRetainingCapacity();
 
@@ -2258,8 +2238,8 @@ pub const Renderer = struct {
         defer pre_sorted_indices.deinit(self._allocator);
 
         for (self.render_passes.items, 0..) |*render_pass, pass_idx| {
-            if (self.ta_lists_to_render.items.len <= pass_idx) break;
-            const ta_lists = &self.ta_lists_to_render.items[pass_idx];
+            if (self.ta_lists.items.len <= pass_idx) break;
+            const ta_lists = &self.ta_lists.items[pass_idx];
 
             render_pass.clearRetainingCapacity(self._allocator);
 
@@ -2911,12 +2891,10 @@ pub const Renderer = struct {
         }
     }
 
-    /// Locks _gctx_queue_mutex.
+    /// Assumes gctx_queue_mutex is locked.
+    /// NOTE: Locking gctx_queue_mutex is required for submitting commands, mapping the framebuffer, but also (sadly) uniform allocation.
+    ///       Also protects concurrent access to `ta_lists` and `render_passes`.
     pub fn render(self: *@This(), holly: *HollyModule.Holly, render_to_texture: bool) !void {
-        // NOTE: Locking gctx_queue_mutex is required for submitting commands, mapping the framebuffer, but also (sadly) uniform allocation.
-        self._gctx_queue_mutex.lock();
-        defer self._gctx_queue_mutex.unlock();
-
         const gctx = self._gctx;
 
         if (render_to_texture) {
@@ -3005,8 +2983,8 @@ pub const Renderer = struct {
             }
 
             for (self.render_passes.items, 0..) |render_pass, pass_idx| {
-                if (self.ta_lists_to_render.items.len <= pass_idx) break;
-                const ta_lists = &self.ta_lists_to_render.items[pass_idx];
+                if (self.ta_lists.items.len <= pass_idx) break;
+                const ta_lists = &self.ta_lists.items[pass_idx];
 
                 if (!render_pass.opaque_list_pointer.empty) {
                     {

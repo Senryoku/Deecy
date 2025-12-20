@@ -316,8 +316,12 @@ fn display_tsp_instruction(tsp_instruction: Holly.TSPInstructionWord) void {
     }
 }
 
-/// Might lock gctx_queue_mutex
+/// Locks gctx_queue_mutex.
+/// Accesses renderer.ta_lists. Might write a texture.
 pub fn draw(self: *@This(), d: *Deecy) !void {
+    d.gctx_queue_mutex.lock();
+    defer d.gctx_queue_mutex.unlock();
+
     var dc = d.dc;
 
     self.reset_hover();
@@ -1083,7 +1087,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             if (zgui.collapsingHeader("Polygons", .{ .frame_padding = true })) {
                 zgui.indent(.{});
                 inline for (.{ Holly.ListType.Opaque, Holly.ListType.Translucent, Holly.ListType.PunchThrough }) |list_type| {
-                    const list = d.renderer.ta_lists_to_render.items[pass_idx].get_list(list_type);
+                    const list = d.renderer.ta_lists.items[pass_idx].get_list(list_type);
                     const name = @tagName(@as(Holly.ListType, list_type));
                     const header = try std.fmt.bufPrintZ(&buffer, name ++ " ({d})###" ++ name, .{list.vertex_strips.items.len});
 
@@ -1139,7 +1143,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 zgui.indent(.{});
                 // NOTE: By the time we get there, the renderer took the volumes for itself (rather than copying them).
                 {
-                    const list = d.renderer.ta_lists_to_render.items[pass_idx].opaque_modifier_volumes;
+                    const list = d.renderer.ta_lists.items[pass_idx].opaque_modifier_volumes;
                     const header = try std.fmt.bufPrintZ(&buffer, "Opaque ({d})###OMV", .{list.items.len});
                     if (zgui.collapsingHeader(header, .{})) {
                         zgui.indent(.{});
@@ -1166,7 +1170,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     }
                 }
                 {
-                    const list = d.renderer.ta_lists_to_render.items[pass_idx].translucent_modifier_volumes;
+                    const list = d.renderer.ta_lists.items[pass_idx].translucent_modifier_volumes;
                     const header = try std.fmt.bufPrintZ(&buffer, "Translucent ({d})###TMV", .{list.items.len});
                     if (zgui.collapsingHeader(header, .{})) {
                         zgui.indent(.{});
@@ -1253,8 +1257,6 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 current_addr += bytes_per_pixels;
             }
 
-            d.gctx_queue_mutex.lock();
-            defer d.gctx_queue_mutex.unlock();
             d.gctx.queue.writeTexture(
                 .{ .texture = d.gctx.lookupResource(self.vram_texture).? },
                 .{
@@ -1454,7 +1456,7 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
     };
 
     if (self.draw_wireframe) {
-        for (d.renderer.ta_lists_to_render.items) |list| {
+        for (d.renderer.ta_lists.items) |list| {
             for ([_]*const Holly.DisplayList{ &list.opaque_list, &list.translucent_list, &list.punchthrough_list }, 0..) |l, idx| {
                 if (self.draw_list_wireframe[idx]) {
                     for (0..l.vertex_strips.items.len) |strip_idx| {
@@ -1464,17 +1466,17 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
             }
         }
         if (self.draw_modifier_volume_wireframe[0]) {
-            for (d.renderer.ta_lists_to_render.items[self.selected_volume_pass_idx].opaque_modifier_volumes.items) |*vol|
+            for (d.renderer.ta_lists.items[self.selected_volume_pass_idx].opaque_modifier_volumes.items) |*vol|
                 draw_modifier_volume(d, draw_list, vol, min, scale, 0xFFE6197A);
         }
         if (self.draw_modifier_volume_wireframe[1]) {
-            for (d.renderer.ta_lists_to_render.items[self.selected_volume_pass_idx].translucent_modifier_volumes.items) |*vol|
+            for (d.renderer.ta_lists.items[self.selected_volume_pass_idx].translucent_modifier_volumes.items) |*vol|
                 draw_modifier_volume(d, draw_list, vol, min, scale, 0xFF19E6A2);
         }
     }
 
     if (self.selected_strip_list == .Opaque or self.selected_strip_list == .PunchThrough or self.selected_strip_list == .Translucent) {
-        const list = d.renderer.ta_lists_to_render.items[self.selected_strip_pass_idx].get_list(self.selected_strip_list);
+        const list = d.renderer.ta_lists.items[self.selected_strip_pass_idx].get_list(self.selected_strip_list);
         draw_strip(draw_list, min, scale, list, self.selected_strip_index, 0xFFFF00FF);
     }
     if (self.selected_vertex) |vertex| {
@@ -1482,8 +1484,8 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
     }
     if (self.selected_volume_index) |idx| {
         const list = switch (self.selected_volume_list) {
-            .OpaqueModifierVolume => d.renderer.ta_lists_to_render.items[self.selected_volume_pass_idx].opaque_modifier_volumes.items,
-            .TranslucentModifierVolume => d.renderer.ta_lists_to_render.items[self.selected_volume_pass_idx].translucent_modifier_volumes.items,
+            .OpaqueModifierVolume => d.renderer.ta_lists.items[self.selected_volume_pass_idx].opaque_modifier_volumes.items,
+            .TranslucentModifierVolume => d.renderer.ta_lists.items[self.selected_volume_pass_idx].translucent_modifier_volumes.items,
             else => unreachable,
         };
         if (idx < list.len) draw_modifier_volume(d, draw_list, &list[idx], min, scale, 0xFF0000FF);

@@ -352,10 +352,15 @@ pub fn main() !void {
 
         const render_start = d.renderer.render_request;
         if (render_start) {
+            d.gctx_queue_mutex.lock();
+            defer d.gctx_queue_mutex.unlock();
+
             try d.renderer.update(&d.dc.gpu);
             try d.renderer.render(&d.dc.gpu, false);
             d.renderer.render_request = false;
         } else if (force_render) {
+            d.gctx_queue_mutex.lock();
+            defer d.gctx_queue_mutex.unlock();
             // Debug aid (see force_render). NOTE: This will break if the game renders to textures.
             try d.renderer.render(&d.dc.gpu, false);
         }
