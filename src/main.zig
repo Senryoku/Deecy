@@ -339,6 +339,7 @@ pub fn main() !void {
         // Update the host texture and blit it to our render target.
         // FIXME: Hackishly forced on for .bin files
         if (binary_path != null or d.dc.gpu.dirty_framebuffer) {
+            d.dc.gpu.dirty_framebuffer = false;
             d.renderer.update_framebuffer_texture(&d.dc.gpu);
             // FIXME: Yet another framebuffer hack.
             //        Skip the framebuffer blit if we recently used the PVR for rendering.
@@ -347,7 +348,6 @@ pub fn main() !void {
             //        Plus, even if PVR writing to the framebuffer was perfectly emulated, it would still only be at native resolution.
             if (std.time.microTimestamp() - d.renderer.last_frame_timestamp > 40_000)
                 d.renderer.blit_framebuffer();
-            d.dc.gpu.dirty_framebuffer = false;
         }
 
         const render_start = d.renderer.render_request;
