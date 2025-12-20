@@ -364,6 +364,7 @@ pub const Instruction = union(enum) {
     Convert: struct { dst: Operand, src: Operand },
     // FIXME: This only exists because I haven't added a way to specify the size the GPRs.
     Div64_32: struct { dividend_high: Register, dividend_low: Register, divisor: Register, result: Register },
+    Lea: struct { dst: Operand, mem: MemOperand },
 
     SaveFPRegisters: struct { count: u8 },
     RestoreFPRegisters: struct { count: u8 },
@@ -414,6 +415,7 @@ pub const Instruction = union(enum) {
             .Shrx => |shr| writer.print("shrx {f}, {f}, {f}", .{ shr.dst, shr.src, shr.amount }),
             .Convert => |cvt| writer.print("convert {f}, {f}", .{ cvt.dst, cvt.src }),
             .Div64_32 => |div| writer.print("div64_32 {f},{f}:{f},{f},", .{ div.result, div.dividend_high, div.dividend_low, div.divisor }),
+            .Lea => |lea| writer.print("lea {f}, {f}", .{ lea.dst, lea.mem }),
             .SaveFPRegisters => |instr| writer.print("SaveFPRegisters {d}", .{instr.count}),
             .RestoreFPRegisters => |instr| writer.print("RestoreFPRegisters {d}", .{instr.count}),
         };
@@ -698,6 +700,7 @@ pub const Emitter = struct {
                 .Neg => |r| try self.unary_group3(.Neg, r.dst),
                 .Convert => |r| try self.convert(r.dst, r.src),
                 .Div64_32 => |d| try self.div64_32(d.dividend_high, d.dividend_low, d.divisor, d.result),
+                .Lea => |l| try self.lea(l.dst, l.mem),
 
                 .SaveFPRegisters => |s| try self.save_fp_registers(s.count),
                 .RestoreFPRegisters => |s| try self.restore_fp_registers(s.count),
@@ -892,7 +895,7 @@ pub const Emitter = struct {
         const r_m: u3 = if (mem.index != null) 0b100 // A SIB is following
             else encode(mem.base); // If base is ESP/R12, a SIB will also be emitted.
 
-        const mod: Mod = if (mem.base == .rbp and mem.displacement == 0) .disp8 // Special case: If the base is rbp, the displacement is mandatory. See Intel Manual Vol. 2A 2-11.
+        const mod: Mod = if ((mem.base == .rbp or mem.base == .r13) and mem.displacement == 0) .disp8 // Special case: If the base is rbp or r13, the displacement is mandatory. See Intel Manual Vol. 2A 2-11.
             else (if (mem.displacement == 0) .indirect else if (mem.displacement < 0x80) .disp8 else .disp32);
 
         try self.emit(MODRM, .{
@@ -1651,6 +1654,22 @@ pub const Emitter = struct {
         try self.unary_group3(.Div, .{ .reg = divisor });
         if (result != .rax)
             try self.mov(.{ .reg = result }, .{ .reg = .rax }, false);
+    }
+
+    fn lea(self: *@This(), dst: Operand, mem: MemOperand) !void {
+        switch (dst) {
+            .reg, .reg64 => |dst_reg| {
+                try self.emit_rex_if_needed(.{
+                    .w = dst == .reg64,
+                    .r = need_rex(dst_reg),
+                    .x = if (mem.index) |i| need_rex(i) else false,
+                    .b = need_rex(mem.base),
+                });
+                try self.emit(u8, 0x8D);
+                try self.emit_mem_addressing(encode(dst_reg), mem);
+            },
+            else => return error.InvalidLeaDestination,
+        }
     }
 
     pub fn bit_test(self: *@This(), reg: Register, offset: Operand) !void {

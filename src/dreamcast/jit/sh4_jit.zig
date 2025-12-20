@@ -1527,20 +1527,48 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
     if (vpn_match) |j| j.patch();
 }
 
+const AddressingMode = union(enum) { HostReg: JIT.Register, Reg: u4, Reg_R0: u4, GBR };
+
+fn compute_address(block: *IRBlock, ctx: *JITContext, addr: JIT.Register, addressing: AddressingMode, displacement: u32) !void {
+    const dst: JIT.Operand = .{ .reg = addr };
+    switch (addressing) {
+        .HostReg => |host_reg| {
+            if (host_reg != addr) {
+                if (displacement != 0) {
+                    try block.lea(dst, .{ .base = host_reg, .displacement = displacement, .size = 32 });
+                } else {
+                    try block.mov(dst, .{ .reg = host_reg });
+                }
+            } else if (displacement != 0) {
+                try block.add(dst, .{ .imm32 = displacement });
+            }
+        },
+        .Reg => |guest_reg| {
+            const reg = try load_register(block, ctx, guest_reg);
+            if (displacement != 0) {
+                try block.lea(dst, .{ .base = reg, .displacement = displacement, .size = 32 });
+            } else {
+                try block.mov(dst, .{ .reg = reg });
+            }
+        },
+        .Reg_R0 => |guest_reg| {
+            const reg = try load_register(block, ctx, guest_reg);
+            const r0 = try load_register(block, ctx, 0);
+            try block.lea(dst, .{ .base = reg, .index = r0, .displacement = displacement, .size = 32 });
+        },
+        .GBR => {
+            try block.mov(dst, sh4_mem("gbr"));
+            if (displacement != 0)
+                try block.add(dst, .{ .imm32 = displacement });
+        },
+    }
+}
+
 // Load a u<size> from memory into a host register, with a fast path if the address lies in RAM.
-fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, addressing: union(enum) { Reg: u4, Reg_R0: u4, GBR }, displacement: u32, comptime size: u32) !void {
+fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, addressing: AddressingMode, displacement: u32, comptime size: u32) !void {
     const addr = ArgRegisters[1];
 
-    switch (addressing) {
-        .Reg, .Reg_R0 => |src_guest_reg| {
-            try block.mov(.{ .reg = addr }, .{ .reg = try load_register(block, ctx, src_guest_reg) });
-            if (addressing == .Reg_R0)
-                try block.add(.{ .reg = addr }, .{ .reg = try load_register(block, ctx, 0) });
-        },
-        .GBR => try block.mov(.{ .reg = addr }, sh4_mem("gbr")),
-    }
-    if (displacement != 0)
-        try block.add(.{ .reg = addr }, .{ .imm32 = displacement });
+    try compute_address(block, ctx, addr, addressing, displacement);
 
     if (ctx.mmu_enabled)
         try mmu_translation(.Read, size, block, ctx, addr, null);
@@ -1588,28 +1616,12 @@ fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, addressing: u
     }
 }
 
-fn store_mem(block: *IRBlock, ctx: *JITContext, addressing: union(enum) { HostReg: JIT.Register, Reg: u4, Reg_R0: u4, GBR }, displacement: u32, value: JIT.Operand, comptime size: u32) !void {
+fn store_mem(block: *IRBlock, ctx: *JITContext, addressing: AddressingMode, displacement: u32, value: JIT.Operand, comptime size: u32) !void {
     std.debug.assert(value.size() == size);
 
     const addr = ArgRegisters[1];
 
-    switch (addressing) {
-        .HostReg => |r| {
-            if (r != addr)
-                try block.mov(.{ .reg = addr }, .{ .reg = r });
-        },
-        .Reg, .Reg_R0 => |dest_guest_reg| {
-            const dest_guest_reg_location = try load_register(block, ctx, dest_guest_reg);
-            try block.mov(.{ .reg = addr }, .{ .reg = dest_guest_reg_location });
-            if (addressing == .Reg_R0) {
-                const r0 = try load_register(block, ctx, 0);
-                try block.add(.{ .reg = addr }, .{ .reg = r0 });
-            }
-        },
-        .GBR => try block.mov(.{ .reg = addr }, sh4_mem("gbr")),
-    }
-    if (displacement != 0)
-        try block.add(.{ .reg = addr }, .{ .imm32 = displacement });
+    try compute_address(block, ctx, addr, addressing, displacement);
 
     if (ctx.mmu_enabled) {
         // Make sure value isn't overwritten

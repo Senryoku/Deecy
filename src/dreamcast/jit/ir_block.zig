@@ -65,6 +65,10 @@ pub const IRBlock = struct {
         try self.instructions.append(self._allocator, .{ .Cmov = .{ .condition = condition, .dst = dst, .src = src } });
     }
 
+    pub fn lea(self: *@This(), dst: Operand, mem: Architecture.MemOperand) !void {
+        try self.instructions.append(self._allocator, .{ .Lea = .{ .dst = dst, .mem = mem } });
+    }
+
     pub fn cmp(self: *@This(), lhs: Operand, rhs: Operand) !void {
         try self.instructions.append(self._allocator, .{ .Cmp = .{ .lhs = lhs, .rhs = rhs } });
     }
