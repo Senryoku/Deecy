@@ -1038,8 +1038,20 @@ pub const Emitter = struct {
                 switch (src) {
                     .reg64 => |src_reg| try self.binary_reg_reg(._64, &[_]u8{0x89}, src_reg, dst_reg),
                     .imm64 => |imm| {
+                        const lea_rip: i64 = @intCast(@intFromPtr(self.block_buffer.ptr) + self.block_size + 3 + 4);
+                        const simm: i64 = @bitCast(imm);
                         if (imm == 0 and !preserve_flags) {
                             try self.xor_(dst, dst);
+                        } else if (simm > 0 and simm - lea_rip > std.math.minInt(i32) and simm - lea_rip < std.math.maxInt(i32)) {
+                            // LEA <reg>, [RIP + 32-bit signed displacement]
+                            try self.emit(REX, .{ .w = true, .r = need_rex(dst_reg) });
+                            try self.emit(u8, 0x8D);
+                            try self.emit(u8, @bitCast(MODRM{
+                                .mod = .indirect,
+                                .reg_opcode = encode(dst),
+                                .r_m = 0b101, // In 64bits mode only: [RIP + 32-bit signed displacement]
+                            }));
+                            try self.emit(u32, @bitCast(@as(i32, @intCast(simm - lea_rip))));
                         } else {
                             // movabs <reg>,<imm64>
                             try self.emit_rex_if_needed(.{ .w = true, .b = need_rex(dst_reg) });
