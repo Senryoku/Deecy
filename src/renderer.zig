@@ -1598,6 +1598,14 @@ pub const Renderer = struct {
 
         if (self.render_request and !render_to_texture)
             log.warn(termcolor.yellow("Woops! Skipped a frame."), .{});
+        if (self.render_request and render_to_texture) {
+            log.warn(termcolor.yellow("Render to a texture with a pending render request. Force enabling Render on Emulation Thread."), .{});
+            // NOTE: This has a greater chance of happening with the frame limiter enabled. Render requests can easily be delayed by a frame.
+            // We cannot simply wait on the main thread here, as we could end up in a deadlock (On exit for example: main thread joining on the emulation thread, while the emulation thread is waiting on the main thread to finish rendering).
+            // So for now we'll guarantee order of operations by rendering everything in the emulation thread. FIXME: If exiting is the only problematic case, and we're careful, waiting might be a better option.
+            self.render_request = false; // Cancel the render request, it will be invalid after this render-to-texture anyway.
+            self.ExperimentalRenderOnEmulationThread = true;
+        }
 
         self.on_render_start_param_base = dc.gpu.read_register(u32, .PARAM_BASE);
 
@@ -3445,6 +3453,9 @@ pub const Renderer = struct {
                     const FB_W_SOF = if (field == 0) self.write_back_parameters.fb_w_sof1 else self.write_back_parameters.fb_w_sof2;
                     const addr = FB_W_SOF & HollyModule.Holly.VRAMMask;
                     const pixel_size: u32 = 2;
+                    const width = @min(self.global_clip.x.max, NativeResolution.width);
+                    const height = @min(self.global_clip.y.max, NativeResolution.height);
+                    const end_address = addr + pixel_size * width * height;
 
                     var texture_index: TextureIndex = InvalidTextureIndex;
                     for (0..self.texture_metadata[size_index].len) |i| {
@@ -3453,8 +3464,8 @@ pub const Renderer = struct {
                             if (texture_index == InvalidTextureIndex)
                                 texture_index = @as(TextureIndex, @intCast(i));
                         } else {
-                            // Replace previously used texture slot by this mechanism
-                            if (self.texture_metadata[size_index][i].start_address == addr) {
+                            // Replace texture slot previously used by this mechanism.
+                            if (self.texture_metadata[size_index][i].start_address == addr and self.texture_metadata[size_index][i].end_address == end_address) {
                                 self.texture_metadata[size_index][i].status = .Invalid;
                                 texture_index = @as(TextureIndex, @intCast(i));
                                 break;
@@ -3479,12 +3490,11 @@ pub const Renderer = struct {
                                 .aspect = .all,
                             },
                             .{
-                                .width = @min(self.global_clip.x.max, NativeResolution.width),
-                                .height = @min(self.global_clip.y.max, NativeResolution.height),
+                                .width = width,
+                                .height = height,
                                 .depth_or_array_layers = 1,
                             },
                         );
-                        const end_address = addr + pixel_size * NativeResolution.width * NativeResolution.height;
                         // FIXME: All of these settings are those used by Virtual Tennis 2 during replay.
                         //        I need to find a better way to find them at runtime.
                         //        (Wait the next frame, look for this speficic address, and update them 'JIT'?
