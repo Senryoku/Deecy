@@ -380,6 +380,7 @@ pub const SH4 = struct {
         self.reset_utlb_fast_lookup();
 
         self._mmu_state = .Disabled;
+        self.execution_state = .Running;
     }
 
     pub fn software_reset(self: *@This()) void {
@@ -426,6 +427,7 @@ pub const SH4 = struct {
         self.reset_utlb_fast_lookup();
 
         self._mmu_state = .Disabled;
+        self.execution_state = .Running;
     }
 
     // Reset state to after bios.
@@ -469,6 +471,7 @@ pub const SH4 = struct {
         self.fpul = 0x00000000;
 
         self.pc = 0xAC008300; // Start address of IP.bin Licence screen
+        self.execution_state = .Running;
     }
 
     pub fn set_sr(self: *@This(), value: SR) callconv(.c) void {

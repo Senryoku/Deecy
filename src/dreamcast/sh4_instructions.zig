@@ -46,7 +46,7 @@ pub fn init_table() void {
 }
 
 const fsca_table_file = @embedFile("./data/fsca.bin");
-pub const FSCATable = @as([*]const f32, @alignCast(@ptrCast(fsca_table_file.ptr)))[0 .. 2 * 0x10000];
+pub const FSCATable = @as([*]const f32, @ptrCast(@alignCast(fsca_table_file.ptr)))[0 .. 2 * 0x10000];
 
 const CacheAccess = packed struct {
     r0: bool = false,
@@ -257,7 +257,7 @@ pub const Opcodes = [_]OpcodeDescription{
     .{ .code = 0b0000000000101011, .mask = 0b0000000000000000, .fn_ = interpreter.rte, .name = "rte", .is_branch = true, .privileged = true, .issue_cycles = 5, .latency_cycles = 5, .jit_emit_fn = sh4_jit.rte, .access = .{ .r = .{ .pc = true } } },
     .{ .code = 0b0000000001011000, .mask = 0b0000000000000000, .fn_ = interpreter.sets, .name = "sets", .jit_emit_fn = sh4_jit.sets, .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b0000000000011000, .mask = 0b0000000000000000, .fn_ = interpreter.sett, .name = "sett", .jit_emit_fn = sh4_jit.sett, .access = .{ .r = .{}, .w = .{} } },
-    .{ .code = 0b0000000000011011, .mask = 0b0000000000000000, .fn_ = interpreter.sleep, .name = "sleep", .privileged = true, .issue_cycles = 4, .latency_cycles = 4, .access = .{ .r = .{}, .w = .{} } },
+    .{ .code = 0b0000000000011011, .mask = 0b0000000000000000, .fn_ = interpreter.sleep, .name = "sleep", .privileged = true, .jit_emit_fn = sh4_jit.sleep, .issue_cycles = 4, .latency_cycles = 4, .access = .{ .r = .{}, .w = .{} } },
 
     .{ .code = 0b0000000000000010, .mask = 0b0000111100000000, .fn_ = interpreter.stc_Reg_Rn("sr"), .name = "stc SR,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2, .jit_emit_fn = sh4_jit.stc_Reg_Rn("sr"), .access = .{ .r = .{}, .w = .Rn } },
     .{ .code = 0b0000000000010010, .mask = 0b0000111100000000, .fn_ = interpreter.stc_Reg_Rn("gbr"), .name = "stc GBR,Rn", .issue_cycles = 2, .latency_cycles = 2, .jit_emit_fn = sh4_jit.stc_Reg_Rn("gbr"), .access = .{ .r = .{}, .w = .Rn } },

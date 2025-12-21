@@ -326,6 +326,7 @@ pub const JITContext = struct {
     sr_fpu_status: enum { Unknown, Checked } = .Unknown,
 
     in_delay_slot: bool = false,
+    force_exit: bool = false,
 
     gpr_cache: RegisterCache(JIT.Register, if (Architecture.JITABI == .Win64) 5 else 4) = .{
         .highest_saved_register_used = 0,
@@ -848,7 +849,7 @@ pub const SH4JIT = struct {
 
         try b.add(sh4_mem("_pending_cycles"), .{ .imm32 = ctx.cycles });
         // Jump to the next block (Disabled when instrumentation is on, otherwise it would be a hassle to measure individual blocks)
-        if (ctx.cycles < MaxCyclesPerExecution and ctx.fpscr_pr != .Unknown and ctx.fpscr_sz != .Unknown and !BasicBlock.EnableInstrumentation) {
+        if (!ctx.force_exit and ctx.cycles < MaxCyclesPerExecution and ctx.fpscr_pr != .Unknown and ctx.fpscr_sz != .Unknown and !BasicBlock.EnableInstrumentation) {
             try b.cmp(.{ .mem = .{ .base = SH4PtrRegister, .displacement = @offsetOf(sh4.SH4, "interrupt_requests"), .size = 64 } }, .{ .imm8 = 0 });
             var handle_interrupt = try b.jmp(.NotEqual);
 
@@ -3427,4 +3428,10 @@ pub fn movcal_R0_atRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool
     const r0 = try load_register(block, ctx, 0);
     try store_mem(block, ctx, .{ .Reg = instr.nmd.n }, 0, .{ .reg = r0 }, 32);
     return false;
+}
+
+pub fn sleep(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    _ = try interpreter_fallback_cached(block, ctx, instr);
+    ctx.force_exit = true;
+    return true;
 }

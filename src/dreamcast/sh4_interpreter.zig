@@ -1561,7 +1561,6 @@ pub fn sleep(cpu: *SH4, _: Instr) !void {
     } else {
         cpu.execution_state = .Sleep;
     }
-    // std.debug.print("\u{001B}[33mSleep State: .{t}\u{001B}[0m\n", .{cpu.execution_state});
 }
 
 pub fn stc_Reg_Rn(comptime reg: []const u8) *const fn (cpu: *SH4, opcode: Instr) anyerror!void {
