@@ -1342,6 +1342,14 @@ fn load_t(block: *IRBlock, _: *JITContext) !void {
     try block.bit_test(ReturnRegister, @bitOffsetOf(sh4.SR, "t"));
 }
 
+/// Loads the guest t bit into the host zero flag.
+fn load_t_zf(block: *IRBlock, _: *JITContext) !void {
+    std.debug.assert(@bitOffsetOf(sh4.SR, "t") == 0);
+    var sr_mem = sh4_mem("sr");
+    sr_mem.mem.size = 8;
+    try block.test_(sr_mem, .{ .imm8 = 0x01 });
+}
+
 /// Sets T bit in SR if Condition is fullfilled (In the Host!), otherwise clears it.
 // TODO: We'll want to cache the T bit at some point too!
 fn set_t(block: *IRBlock, _: *JITContext, condition: JIT.Condition) !void {
@@ -3049,11 +3057,11 @@ pub fn shlr16(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 fn default_conditional_branch(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, comptime jump_if: bool, comptime delay_slot: bool) !bool {
     const dest = sh4_interpreter.d8_disp(ctx.current_pc, instr);
-    try load_t(block, ctx);
+    try load_t_zf(block, ctx);
 
     try block.mov(.{ .reg = ReturnRegister }, .{ .imm32 = dest });
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm32 = ctx.current_pc + if (delay_slot) 4 else 2 });
-    try block.cmov(if (jump_if) .NotCarry else .Carry, .{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[0] });
+    try block.cmov(if (jump_if) .Zero else .NotZero, .{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[0] });
     try block.mov(sh4_mem("pc"), .{ .reg = ReturnRegister });
 
     ctx.outdated_pc = false;

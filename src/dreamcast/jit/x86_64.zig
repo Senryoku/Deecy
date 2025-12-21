@@ -1559,6 +1559,11 @@ pub const Emitter = struct {
 
     fn unary_group3(self: *@This(), opcode: UnaryGroup3RegOpcode, operand: Operand) !void {
         switch (operand) {
+            .reg8 => |reg| {
+                try self.emit_rex_if_needed(.{ .w = false, .b = need_rex(reg) });
+                try self.emit(u8, 0xF6);
+                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(opcode), .r_m = encode(operand) });
+            },
             .reg, .reg64 => |reg| {
                 try self.emit_rex_if_needed(.{ .w = operand == .reg64, .b = need_rex(reg) });
                 try self.emit(u8, 0xF7);
@@ -1570,7 +1575,7 @@ pub const Emitter = struct {
                     .x = if (mem.index) |i| need_rex(i) else false,
                     .b = need_rex(mem.base),
                 });
-                try self.emit(u8, 0xF7);
+                try self.emit(u8, if (mem.size == 8) 0xF6 else 0xF7);
                 try self.emit_mem_addressing(@intFromEnum(opcode), mem);
             },
             else => return error.InvalidUG3Destination,
@@ -1690,27 +1695,43 @@ pub const Emitter = struct {
 
     pub fn test_(self: *@This(), lhs: Operand, rhs: Operand) !void {
         switch (lhs) {
-            .reg, .reg64 => |lhs_reg| {
-                if (lhs_reg == .rax and rhs == .imm32) { // Shorter form for RAX
-                    try self.emit_rex_if_needed(.{ .w = lhs == .reg64 });
-                    try self.emit(u8, 0xA9);
-                    try self.emit(u32, rhs.imm32);
-                } else {
-                    switch (rhs) {
-                        .imm32 => |imm| {
+            .reg8, .reg16, .reg, .reg64 => |lhs_reg| {
+                switch (rhs) {
+                    .imm8 => |imm| {
+                        if (lhs != .reg8) return error.OperandSizeMismatch;
+                        if (lhs_reg == .rax) {
+                            // Shorter form for AL
+                            try self.emit(u8, 0xA8);
+                            try self.emit(u8, rhs.imm8);
+                        } else {
+                            try self.unary_group3(.Test, lhs);
+                            try self.emit(u8, imm);
+                        }
+                    },
+                    .imm32 => |imm| {
+                        if (lhs != .reg and lhs != .reg64) return error.OperandSizeMismatch;
+                        if (lhs_reg == .rax) { // Shorter form for EAX/RAX
+                            try self.emit_rex_if_needed(.{ .w = lhs == .reg64 });
+                            try self.emit(u8, 0xA9);
+                            try self.emit(u32, rhs.imm32);
+                        } else {
                             try self.unary_group3(.Test, lhs);
                             try self.emit(u32, imm);
-                        },
-                        .reg, .reg64 => |rhs_reg| try self.binary_reg_reg(if (lhs == .reg64) ._64 else ._32, &[_]u8{0x85}, rhs_reg, lhs_reg),
-                        else => return error.UnsupportedTestRHS,
-                    }
+                        }
+                    },
+                    .reg8, .reg16, .reg, .reg64 => |rhs_reg| {
+                        if (lhs.size() != rhs.size()) return error.OperandSizeMismatch;
+                        try self.binary_reg_reg(.fromInt(lhs.size()), if (lhs == .reg8) &[_]u8{0x84} else &[_]u8{0x85}, rhs_reg, lhs_reg);
+                    },
+                    else => return error.UnsupportedTestRHS,
                 }
             },
             .mem => {
                 switch (rhs) {
-                    .imm32 => |imm| {
+                    inline .imm8, .imm16, .imm32, .imm64 => |imm| {
+                        if (rhs.size() != lhs.mem.size) return error.OperandSizeMismatch;
                         try self.unary_group3(.Test, lhs);
-                        try self.emit(u32, imm);
+                        try self.emit(@TypeOf(imm), imm);
                     },
                     else => return error.UnsupportedTestRHS,
                 }
