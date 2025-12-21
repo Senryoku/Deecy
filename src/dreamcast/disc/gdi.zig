@@ -31,16 +31,25 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
     try self.tracks.resize(allocator, track_count);
 
     for (0..track_count) |i| {
-        var vals = std.mem.splitSequence(u8, lines.next().?, " ");
+        var vals = std.mem.splitSequence(u8, lines.next() orelse return error.EoF, " ");
 
-        const num = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
+        const num = try std.fmt.parseUnsigned(u32, vals.next() orelse return error.EoF, 10);
         if (num > track_count) return error.InvalidTrackNumber;
-        var offset = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
-        const track_type_int = try std.fmt.parseUnsigned(u8, vals.next().?, 10);
+        var offset = try std.fmt.parseUnsigned(u32, vals.next() orelse return error.EoF, 10);
+        const track_type_int = try std.fmt.parseUnsigned(u8, vals.next() orelse return error.EoF, 10);
         if (track_type_int != 0 and track_type_int != 4) return error.UnsupportedTrackType;
-        const format = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
-        const filename = vals.next().?;
-        const pregap = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
+        const format = try std.fmt.parseUnsigned(u32, vals.next() orelse return error.EoF, 10);
+        var filename = vals.next() orelse return error.EoF;
+        // Handle quoted filenames
+        if (std.mem.startsWith(u8, filename, "\"")) {
+            var filename_len = filename.len;
+            while (vals.next()) |next| {
+                filename_len += 1 + next.len; // Space plus the next token.
+                if (std.mem.endsWith(u8, next, "\"")) break;
+            }
+            filename = @as([*]const u8, @ptrCast(filename.ptr))[1 .. filename_len - 1]; // Remove quotes
+        }
+        const pregap = try std.fmt.parseUnsigned(u32, vals.next() orelse return error.EoF, 10);
         if (pregap != 0) return error.UnsupportedNonZeroPregap; // FIXME: Not handled.
 
         if (i >= 2) offset += GDISectorOffset;
