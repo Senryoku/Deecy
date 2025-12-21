@@ -534,9 +534,9 @@ fn handle_condition(b: *IRBlock, ctx: *JITContext, instruction: u32) !?JIT.Patch
             std.debug.assert(@bitOffsetOf(arm7.CPSR, "c") < @bitOffsetOf(arm7.CPSR, "z"));
             // FIXME: This is untested.
             try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = CPUPointer, .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
-            try b.bit_test(ReturnRegister, @bitOffsetOf(arm7.CPSR, "c")); // Set carry flag to 'c'.
+            try b.bit_test(.{ .reg = ReturnRegister }, @bitOffsetOf(arm7.CPSR, "c")); // Set carry flag to 'c'.
             var do_label = try b.jmp(.NotCarry);
-            try b.bit_test(ReturnRegister, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
+            try b.bit_test(.{ .reg = ReturnRegister }, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
             const skip_label = try b.jmp(.NotCarry);
             do_label.patch();
             return skip_label;
@@ -580,7 +580,7 @@ fn handle_condition(b: *IRBlock, ctx: *JITContext, instruction: u32) !?JIT.Patch
         .LE => {
             // return cpu.cpsr.z or (cpu.cpsr.n != cpu.cpsr.v)
             try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = CPUPointer, .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
-            try b.bit_test(ReturnRegister, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
+            try b.bit_test(.{ .reg = ReturnRegister }, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
             var do_label_0 = try b.jmp(.Carry);
 
             try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = cpsr_mask("nv") } } });

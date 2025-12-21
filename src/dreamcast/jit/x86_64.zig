@@ -347,7 +347,7 @@ pub const Instruction = union(enum) {
     Xor: struct { dst: Operand, src: Operand },
     Cmp: struct { lhs: Operand, rhs: Operand },
     SetByteCondition: struct { condition: Condition, dst: Operand },
-    BitTest: struct { reg: Register, offset: Operand },
+    BitTest: struct { src: Operand, offset: Operand },
     Test: struct { lhs: Operand, rhs: Operand }, // Ands lhs and rhs together, setting the status flags accordingly and discards the result
     Rol: struct { dst: Operand, amount: Operand },
     Ror: struct { dst: Operand, amount: Operand },
@@ -396,7 +396,7 @@ pub const Instruction = union(enum) {
             .Xor => |xor_| writer.print("xor {f}, {f}", .{ xor_.dst, xor_.src }),
             .Cmp => |cmp| writer.print("cmp {f}, {f}", .{ cmp.lhs, cmp.rhs }),
             .SetByteCondition => |set| writer.print("set{f} {f}", .{ set.condition, set.dst }),
-            .BitTest => |bit_test| writer.print("bt {f}, {f}", .{ bit_test.reg, bit_test.offset }),
+            .BitTest => |bit_test| writer.print("bt {f}, {f}", .{ bit_test.src, bit_test.offset }),
             .Test => |t| writer.print("test {f}, {f}", .{ t.lhs, t.rhs }),
             .Jmp => |jmp| switch (jmp.dst) {
                 .rel => writer.print("jmp {f} {d}", .{ jmp.condition, jmp.dst.rel }),
@@ -684,7 +684,7 @@ pub const Emitter = struct {
                 .SetByteCondition => |a| try self.set_byte_condition(a.condition, a.dst),
                 .Jmp => |j| try self.jmp(instructions[idx + 1 ..], j.condition, @intCast(idx), j.dst),
                 .BlockEpilogue => try self.emit_block_epilogue(),
-                .BitTest => |b| try self.bit_test(b.reg, b.offset),
+                .BitTest => |b| try self.bit_test(b.src, b.offset),
                 .Test => |t| try self.test_(t.lhs, t.rhs),
                 .Rol => |r| try self.shift_instruction(.Rol, r.dst, r.amount),
                 .Ror => |r| try self.shift_instruction(.Ror, r.dst, r.amount),
@@ -1677,16 +1677,23 @@ pub const Emitter = struct {
         }
     }
 
-    pub fn bit_test(self: *@This(), reg: Register, offset: Operand) !void {
-        // NOTE: We only support 32-bit registers here.
+    pub fn bit_test(self: *@This(), src: Operand, offset: Operand) !void {
         switch (offset) {
             .imm8 => |imm| {
                 try self.emit_slice(u8, &[_]u8{ 0x0F, 0xBA });
-                try self.emit(MODRM, .{
-                    .mod = .reg,
-                    .reg_opcode = @intFromEnum(Group8RegOpcode.BT),
-                    .r_m = encode(reg),
-                });
+                switch (src) {
+                    .reg => |reg| {
+                        try self.emit(MODRM, .{
+                            .mod = .reg,
+                            .reg_opcode = @intFromEnum(Group8RegOpcode.BT),
+                            .r_m = encode(reg),
+                        });
+                    },
+                    .mem => |mem| {
+                        try self.emit_mem_addressing(@intFromEnum(Group8RegOpcode.BT), mem);
+                    },
+                    else => return error.UnsupportedBitTestSource,
+                }
                 try self.emit(u8, imm);
             },
             else => return error.UnsupportedBitTestOffset,

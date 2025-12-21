@@ -146,8 +146,8 @@ pub const IRBlock = struct {
     }
 
     // NOTE: offset could also be a register
-    pub fn bit_test(self: *@This(), reg: Register, offset: u8) !void {
-        try self.instructions.append(self._allocator, .{ .BitTest = .{ .reg = reg, .offset = .{ .imm8 = offset } } });
+    pub fn bit_test(self: *@This(), src: Operand, offset: u8) !void {
+        try self.instructions.append(self._allocator, .{ .BitTest = .{ .src = src, .offset = .{ .imm8 = offset } } });
     }
 
     pub fn test_(self: *@This(), lhs: Operand, rhs: Operand) !void {

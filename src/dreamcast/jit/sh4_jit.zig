@@ -1336,10 +1336,9 @@ fn sh4_mem(comptime name: []const u8) Architecture.Operand {
     return .{ .mem = .{ .base = SH4PtrRegister, .displacement = @offsetOf(sh4.SH4, name), .size = 32 } };
 }
 
-/// Loads the guest t bit into the host carry flag. NOTE: Overwrites ReturnRegister.
+/// Loads the guest t bit into the host carry flag.
 fn load_t(block: *IRBlock, _: *JITContext) !void {
-    try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
-    try block.bit_test(ReturnRegister, @bitOffsetOf(sh4.SR, "t"));
+    try block.bit_test(sh4_mem("sr"), @bitOffsetOf(sh4.SR, "t"));
 }
 
 /// Loads the guest t bit into the host zero flag.
@@ -2033,7 +2032,7 @@ fn check_fd_bit(block: *IRBlock, ctx: *JITContext) !void {
         switch (ctx.sr_fpu_status) {
             .Unknown => {
                 try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
-                try block.bit_test(ReturnRegister, @bitOffsetOf(sh4.SR, "fd"));
+                try block.bit_test(.{ .reg = ReturnRegister }, @bitOffsetOf(sh4.SR, "fd"));
                 var skip = try block.jmp(.NotCarry);
 
                 try ctx.gpr_cache.commit_all_speculatively(block);
@@ -3095,7 +3094,7 @@ fn conditional_branch(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, compt
         } else {
             try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
         }
-        try block.bit_test(ReturnRegister, @bitOffsetOf(sh4.SR, "t"));
+        try block.bit_test(.{ .reg = ReturnRegister }, @bitOffsetOf(sh4.SR, "t"));
         var not_taken = try block.jmp(if (jump_if) .NotCarry else .Carry);
 
         // Break out if we already spent too many cycles here. NOTE: This doesn't currently take the base cycles into account.
@@ -3162,7 +3161,7 @@ fn conditional_branch(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, compt
             } else {
                 try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
             }
-            try block.bit_test(ReturnRegister, @bitOffsetOf(sh4.SR, "t"));
+            try block.bit_test(.{ .reg = ReturnRegister }, @bitOffsetOf(sh4.SR, "t"));
             var taken = try block.jmp(if (jump_if) .Carry else .NotCarry);
 
             var optional_cycles: u32 = 0;
