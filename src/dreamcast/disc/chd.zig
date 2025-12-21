@@ -434,8 +434,8 @@ fn decode_map_v5(self: *@This()) !void {
 
     if (decoder.unused_bits != 0) {
         const unused_bits = decoder.unused_bits + bit_reader.count;
-        const unused_bytes = std.mem.alignForward(u64, unused_bits, 8) / 8;
-        const consumed_bits = 8 - (unused_bits % 8);
+        const unused_bytes = std.mem.alignForward(u8, unused_bits, 8) / 8;
+        const consumed_bits = 8 * unused_bytes - unused_bits;
         // NOTE: This is only valid because we use a fixed reader.
         reader.seek -= unused_bytes;
         bit_reader = .init(&reader);
