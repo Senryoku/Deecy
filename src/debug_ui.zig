@@ -336,6 +336,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     zgui.end();
 
     if (zgui.begin("SH4", .{})) {
+        zgui.alignTextToFramePadding();
+        zgui.text("{t}", .{dc.cpu.execution_state});
+        zgui.sameLine(.{});
         if (zgui.button("Dump DC State", .{})) {
             const was_running = d.running;
             if (was_running)
