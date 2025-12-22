@@ -665,19 +665,34 @@ pub const VibrationPack = struct {
         inc: u8 = 0,
     };
 
-    callback: ?struct {
-        function: ?*const fn (*anyopaque) void,
+    pub const Callback = struct {
+        function: ?*const fn (*anyopaque, f32) void,
         context: *anyopaque,
 
-        pub fn call(self: @This()) void {
+        pub fn call(self: @This(), strenght: f32) void {
             if (self.function != null)
-                self.function.?(self.context);
+                self.function.?(self.context, strenght);
         }
-    } = null,
+    };
+
+    const Settings = VibrationSourceSettings{
+        .vd = .None,
+        .vp = .Front,
+        .vn = 1,
+        .va = .MinMax,
+        .owf = false,
+        .pd = true,
+        .cv = true,
+        .pf = true,
+        .fm0 = 0x07,
+        .fm1 = 0x3B,
+    };
+
+    callback: ?Callback = null,
     vibration_source: VibrationConfiguration = .{},
 
-    pub fn init() @This() {
-        return .{};
+    pub fn init(callback: Callback) @This() {
+        return .{ .callback = callback };
     }
 
     pub fn get_identity(_: *const @This()) DeviceInfoPayload {
@@ -690,19 +705,7 @@ pub const VibrationPack = struct {
         maple_log.warn(termcolor.yellow("VibrationPack.get_media_info for function: {f}, vibration_source: {d}"), .{ @as(FunctionCodesMask, @bitCast(function)), vibration_source });
         switch (function) {
             FunctionCodesMask.Vibration.as_u32() => {
-                const value: VibrationSourceSettings = .{
-                    .vd = .None,
-                    .vp = .Front,
-                    .vn = 1,
-                    .va = .MinMax,
-                    .owf = false,
-                    .pd = true,
-                    .cv = true,
-                    .pf = true,
-                    .fm0 = 0x07,
-                    .fm1 = 0x3B,
-                };
-                @memcpy(dest[0..@sizeOf(VibrationSourceSettings)], std.mem.asBytes(&value));
+                @memcpy(dest[0..@sizeOf(VibrationSourceSettings)], std.mem.asBytes(&Settings));
                 return @sizeOf(VibrationSourceSettings) / 4;
             },
             else => maple_log.err(termcolor.red("Unimplemented VibrationPack.get_media_info for function: {f}"), .{@as(FunctionCodesMask, @bitCast(function))}),
@@ -769,7 +772,11 @@ pub const VibrationPack = struct {
                 maple_log.debug("[VibrationPack.set_condition] Vibration settings: {any}", .{value});
                 if (value.vn != 1) maple_log.warn(termcolor.yellow("Only vibration source 1 is supported: {any}"), .{value});
                 self.vibration_source = value;
-                if (self.callback) |c| c.call(); // TODO: What's a good API here? Strength and Duration as floats?
+                const frequency = switch (Settings.va) {
+                    .MinMax => @as(f32, @floatFromInt(value.freq)) / 16.0 * @as(f32, @floatFromInt(Settings.fm1 - Settings.fm0)),
+                    else => 0, // Unimplemented
+                };
+                if (self.callback) |c| c.call(frequency); // TODO: What's a good API here? Strength and Duration as floats?
             },
             else => maple_log.err("Unimplemented VibrationPack.set_condition for function: {f}", .{@as(FunctionCodesMask, @bitCast(function))}),
         }

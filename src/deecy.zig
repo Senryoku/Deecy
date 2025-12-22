@@ -1,11 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const comptime_config = @import("config");
+const Self = @This();
 
 const zglfw = @import("zglfw");
 const zgpu = @import("zgpu");
 const zgui = @import("zgui");
 const zaudio = @import("zaudio");
+const rumble = @import("rumble");
 
 extern fn glfwSetWindowIcon(window: *zglfw.Window, count: i32, images: [*]const zglfw.Image) void;
 const icon_48_data = @embedFile("assets/icon-48.rgba");
@@ -684,6 +686,49 @@ pub fn deinit_peripheral(self: *@This(), controller_idx: u8, slot: u8) void {
     self.dc.maple.ports[controller_idx].subperipherals[slot] = null;
 }
 
+const XINPUT_GAMEPAD = extern struct {
+    wButtons: std.os.windows.WORD,
+    bLeftTrigger: std.os.windows.BYTE,
+    bRightTrigger: std.os.windows.BYTE,
+    sThumbLX: std.os.windows.SHORT,
+    sThumbLY: std.os.windows.SHORT,
+    sThumbRX: std.os.windows.SHORT,
+    sThumbRY: std.os.windows.SHORT,
+};
+const XINPUT_STATE = extern struct {
+    dwPacketNumber: std.os.windows.DWORD,
+    Gamepad: XINPUT_GAMEPAD,
+};
+extern fn XInputGetState(dwUserIndex: std.os.windows.DWORD, pVibration: *XINPUT_STATE) std.os.windows.DWORD;
+
+fn VibrationCallback(comptime Slot: u8) *const fn (*Self, f32) void {
+    return struct {
+        fn handler(self: *Self, frequency: f32) void {
+            deecy_log.warn("Vibration {d}: {d}", .{ Slot, frequency });
+            deecy_log.warn("  controllers[{d}]={any}", .{ Slot, self.controllers[Slot] });
+            if (self.controllers[Slot]) |j| {
+                deecy_log.warn("  j.id.isPresent()={any}", .{j.id.isPresent()});
+                if (j.id.isPresent()) {
+                    // var state: XINPUT_STATE = undefined;
+
+                    // for (0..4) |i| {
+                    //     const r: std.os.windows.Win32Error = @enumFromInt(XInputGetState(@intCast(i), &state));
+                    //     if (r == .SUCCESS) {
+                    //         std.debug.print("XInputGetState({d})={any}\n", .{ i, state });
+                    //     } else {
+                    //         std.debug.print("XInputGetState({d})={t}\n", .{ i, r });
+                    //     }
+                    // }
+
+                    if (!rumble.set_gamepad_rumble(@intCast(@intFromEnum(j.id)), 0.5, 0.5, 0.5))
+                        deecy_log.err("Failed to set gamepad rumble", .{});
+                }
+            }
+        }
+    }.handler;
+}
+const VibrationCallbacks = [4]*const fn (*Self, f32) void{ VibrationCallback(0), VibrationCallback(1), VibrationCallback(2), VibrationCallback(3) };
+
 pub fn init_peripheral(self: *@This(), idx: u8, slot: u8) !void {
     self.deinit_peripheral(idx, slot);
     switch (self.config.controllers[idx].subperipherals[slot]) {
@@ -694,7 +739,7 @@ pub fn init_peripheral(self: *@This(), idx: u8, slot: u8) !void {
             try self.load_vmu(idx, slot, vmu_path);
         },
         .VibrationPack => {
-            self.dc.maple.ports[idx].subperipherals[slot] = .{ .VibrationPack = .init() };
+            self.dc.maple.ports[idx].subperipherals[slot] = .{ .VibrationPack = .init(.{ .function = @ptrCast(VibrationCallbacks[idx]), .context = self }) };
         },
     }
 }
@@ -761,7 +806,8 @@ pub fn stop(self: *@This()) !void {
     self.dc.gdrom.disc = null;
 }
 
-pub fn update(self: *@This()) void {
+pub fn update(self: *@This(), delta_time: f32) void {
+    rumble.poll_gamepads(delta_time);
     self.poll_controllers();
     self.dc.maple.flush_vmus();
     if (self._stop_request) {

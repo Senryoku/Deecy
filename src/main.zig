@@ -321,9 +321,13 @@ pub fn main() !void {
 
     var precise_sleep: PreciseSleep = .init();
     defer precise_sleep.deinit();
+    var then = zglfw.getTime();
     while (!d.window.shouldClose()) {
         zglfw.pollEvents();
-        d.update();
+
+        const now = zglfw.getTime();
+        d.update(@floatCast(now - then));
+        then = now;
 
         if (EnabledHacks) |hacks| {
             for (hacks) |hack| {
