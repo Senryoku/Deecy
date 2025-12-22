@@ -207,7 +207,7 @@ pub const DefaultVMUPaths = default_vmu_paths: {
 const ControllerSettings = struct {
     enabled: bool,
     subcapabilities: DreamcastModule.Maple.InputCapabilities = DreamcastModule.Maple.StandardControllerCapabilities,
-    subperipherals: [2]union(enum) { None, VMU: struct { filename: []const u8 } } = .{ .None, .None },
+    subperipherals: [2]union(enum) { None, VMU: struct { filename: []const u8 }, VibrationPack } = .{ .None, .None },
 };
 
 const Configuration = struct {
@@ -692,6 +692,9 @@ pub fn init_peripheral(self: *@This(), idx: u8, slot: u8) !void {
             const vmu_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), vmu.filename });
             defer self._allocator.free(vmu_path);
             try self.load_vmu(idx, slot, vmu_path);
+        },
+        .VibrationPack => {
+            self.dc.maple.ports[idx].subperipherals[slot] = .VibrationPack;
         },
     }
 }

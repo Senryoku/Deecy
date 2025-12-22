@@ -895,6 +895,7 @@ pub fn draw(self: *@This()) !void {
                                 d.config.controllers[i].subperipherals[slot] = switch (peripheral_type) {
                                     .None => .None,
                                     .VMU => .{ .VMU = .{ .filename = Deecy.DefaultVMUPaths[i][slot] } },
+                                    .VibrationPack => .VibrationPack,
                                 };
                                 try d.init_peripheral(i, slot);
                             }

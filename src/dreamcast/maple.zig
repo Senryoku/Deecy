@@ -104,12 +104,14 @@ pub const InputCapabilities = packed struct(u32) {
 };
 
 const FunctionCodesMask = packed struct(u32) {
-    _: u20 = 0,
+    _: u16 = 0,
 
     vibration: u1 = 0,
-    mouse: u1 = 0,
+    pointing: u1 = 0,
+    exchange_media: u1 = 0,
+    camera: u1 = 0,
 
-    _2: u2 = 0,
+    _2: u4 = 0,
 
     controller: u1 = 0,
     storage: u1 = 0,
@@ -128,6 +130,7 @@ const FunctionCodesMask = packed struct(u32) {
     const Storage = @This(){ .storage = 1 };
     const Timer = @This(){ .timer = 1 };
     const Controller = @This(){ .controller = 1 };
+    const Vibration = @This(){ .vibration = 1 };
 
     pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         if (@popCount(self.as_u32()) == 1) {
@@ -153,7 +156,7 @@ const DeviceInfoPayload = extern struct {
     RegionCode: u8 align(1) = 0xFF,
     ConnectionDirectionCode: u8 align(1) = 0,
     DescriptionString: [31]u8 align(1) = @splat(0),
-    ProducerString: [60]u8 align(1) = @splat(0),
+    ProducerString: [60]u8 align(1) = "Produced By or Under License From SEGA ENTERPRISES,LTD.     ".*,
     StandbyConsumption: u16 align(1) = 0,
     MaximumConsumption: u16 align(1) = 0,
     // Possible extension
@@ -232,7 +235,6 @@ pub const Controller = struct {
             .FunctionCodesMask = Capabilities,
             .SubFunctionCodesMasks = self.subcapabilities,
             .DescriptionString = "Dreamcast Controller           ".*, // NOTE: dc-arm7wrestler checks for this, maybe some games do too?
-            .ProducerString = "Produced By or Under License From SEGA ENTERPRISES,LTD.     ".*,
             .StandbyConsumption = 0x01AE,
             .MaximumConsumption = 0x01F4,
         };
@@ -247,23 +249,6 @@ pub const Controller = struct {
         }
         return r;
     }
-};
-
-const GetMediaInformationResponse = packed struct(u192) {
-    total_size: u16,
-    partition_number: u16,
-    system_area_block_number: u16,
-    fat_area_block_number: u16,
-
-    number_of_fat_area_blocks: u16,
-    file_information_block_number: u16,
-    number_of_file_information_blocks: u16,
-    volume_icon: u8,
-    _reserved: u8 = 0,
-
-    save_area_block_number: u16,
-    number_of_save_area_blocks: u16,
-    _reserved_for_execution_file: u32 = 0x80_0000, // Fixed to 0 *if* execution files cannot be executed.
 };
 
 const StorageFunctionDefinition = packed struct(u32) {
@@ -292,6 +277,21 @@ const ScreenFunctionDefinition = packed struct(u32) {
         Vertical1 = 2,
         Vertical2 = 3,
     },
+};
+
+const VibrationFunctionDefinition = packed struct(u32) {
+    /// VN: Vibration source number
+    ///   Indicates the number of vibration sources
+    ///   The 4 upper bits are fixed at '0', and the number of vibration sources is represented by the 4 lower bits.
+    ///   The number of vibration sources is 1～15 ('1h'～'Fh'). '0' setting is not permitted.
+    vibration_source_number: u8,
+    /// SE: Number of vibration sources that can be concurrently selected.
+    ///   Indicates the number of vibration sources which can be concurrently specified to generate vibration.
+    ///   The 4 upper bits are fixed at '0', and the number of vibration sources is represented by the 4 lower bits.
+    ///   The number of vibration sources is 1～15 ('1h'～'Fh').
+    ///   '0' setting is not permitted. The settings must conform to SE <= VN.
+    concurrent_sources: u8,
+    _reserved: u16 = 0,
 };
 
 const FATValue = enum(u16) {
@@ -332,9 +332,25 @@ pub const VMU = struct {
         .SubFunctionCodesMasks = Subcapabilities,
         .RegionCode = 0xFF,
         .DescriptionString = "Visual Memory                  ".*,
-        .ProducerString = "Produced By or Under License From SEGA ENTERPRISES,LTD.     ".*,
         .StandbyConsumption = 0x007C,
         .MaximumConsumption = 0x0082,
+    };
+
+    const GetMediaInformationResponse = packed struct(u192) {
+        total_size: u16,
+        partition_number: u16,
+        system_area_block_number: u16,
+        fat_area_block_number: u16,
+
+        number_of_fat_area_blocks: u16,
+        file_information_block_number: u16,
+        number_of_file_information_blocks: u16,
+        volume_icon: u8,
+        _reserved: u8 = 0,
+
+        save_area_block_number: u16,
+        number_of_save_area_blocks: u16,
+        _reserved_for_execution_file: u32 = 0x80_0000, // Fixed to 0 *if* execution files cannot be executed.
     };
 
     blocks: [][BlockSize]u8,
@@ -572,9 +588,97 @@ pub const VMU = struct {
     }
 };
 
+pub const VibrationPack = struct {
+    const Capabilities = FunctionCodesMask.Vibration;
+    const Subcapabilities: [3]u32 = .{
+        @bitCast(VibrationFunctionDefinition{
+            .vibration_source_number = 1,
+            .concurrent_sources = 1,
+        }),
+        0,
+        0,
+    };
+
+    const Identity: DeviceInfoPayload = .{
+        .FunctionCodesMask = Capabilities,
+        .SubFunctionCodesMasks = Subcapabilities,
+        .RegionCode = 0xFF,
+        .DescriptionString = "Puru Puru Pack                 ".*,
+        .StandbyConsumption = 0x00CB,
+        .MaximumConsumption = 0x0640,
+    };
+
+    const GetMediaInformationResponse = packed struct(u32) {
+        vset0: u8,
+        vset1: u8,
+        fm0: u8,
+        fm1: u8,
+    };
+
+    pub fn get_identity(_: *const @This()) DeviceInfoPayload {
+        return Identity;
+    }
+
+    /// Writes Media Info to dest. Returns the payload size in 32-bit words.
+    pub fn get_media_info(self: *const @This(), dest: [*]u8, function: u32, vibration_source: u8) u8 {
+        _ = self;
+        maple_log.warn(termcolor.yellow("VibrationPack.get_media_info for function: {f}, vibration_source: {d}"), .{ @as(FunctionCodesMask, @bitCast(function)), vibration_source });
+        switch (function) {
+            FunctionCodesMask.Vibration.as_u32() => {
+                const value: GetMediaInformationResponse = .{
+                    .vset0 = 0x3B,
+                    .vset1 = 0x07,
+                    .fm0 = 0xE0,
+                    .fm1 = 0x10,
+                };
+                @memcpy(dest[0..4], std.mem.asBytes(&value)[0..4]);
+                return 4 / 4;
+            },
+            else => maple_log.err(termcolor.red("Unimplemented VibrationPack.get_media_info for function: {f}"), .{@as(FunctionCodesMask, @bitCast(function))}),
+        }
+        return 0;
+    }
+
+    /// Returns payload size in 32-bit words
+    pub fn block_read(self: *const @This(), dest: [*]u8, function: u32, partition: u8, block_num: u16, phase: u8) u8 {
+        _ = self;
+        _ = dest;
+        maple_log.warn(termcolor.yellow("VibrationPack.block_read for function: {f}, partition: {d}, block_num: {d}, phase: {d}"), .{ @as(FunctionCodesMask, @bitCast(function)), partition, block_num, phase });
+        switch (function) {
+            else => maple_log.err("Unimplemented VibrationPack.block_read for function: {f}", .{@as(FunctionCodesMask, @bitCast(function))}),
+        }
+        return 0;
+    }
+
+    /// Returns payload size in 32-bit words
+    pub fn block_write(self: *@This(), function: u32, partition: u8, phase: u8, block_num: u16, data: []const u32) u8 {
+        _ = self;
+        _ = data;
+        maple_log.warn(termcolor.yellow("VibrationPack.block_write for function: {f}, partition: {d}, block_num: {d}, phase: {d}"), .{ @as(FunctionCodesMask, @bitCast(function)), partition, block_num, phase });
+        switch (function) {
+            else => maple_log.err("Unimplemented VibrationPack.block_write for function: {f}", .{@as(FunctionCodesMask, @bitCast(function))}),
+        }
+        return 0;
+    }
+
+    pub fn set_condition(self: *@This(), function: u32, data: u32) void {
+        _ = self;
+        _ = data;
+        maple_log.warn(termcolor.yellow("VibrationPack.set_condition for function: {f}"), .{@as(FunctionCodesMask, @bitCast(function))});
+        switch (function) {
+            else => maple_log.err("Unimplemented VibrationPack.set_condition for function: {f}", .{@as(FunctionCodesMask, @bitCast(function))}),
+        }
+    }
+
+    pub fn serialize(_: @This(), _: anytype) !usize {
+        return 0;
+    }
+};
+
 const Peripheral = union(enum) {
     Controller: Controller,
     VMU: VMU,
+    VibrationPack: VibrationPack,
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -595,7 +699,7 @@ const Peripheral = union(enum) {
 
     pub fn block_read(self: *const @This(), dest: [*]u8, function: u32, partition: u8, block_num: u16, phase: u8) u8 {
         return switch (self.*) {
-            .VMU => |*v| v.block_read(dest, function, partition, block_num, phase),
+            inline .VMU, .VibrationPack => |*v| v.block_read(dest, function, partition, block_num, phase),
             else => s: {
                 maple_log.err(termcolor.red("Unimplemented BlockRead for target: {t}"), .{self.tag()});
                 break :s 0;
@@ -605,7 +709,7 @@ const Peripheral = union(enum) {
 
     pub fn block_write(self: *@This(), function: u32, partition: u8, phase: u8, block_num: u16, data: []const u32) u8 {
         switch (self.*) {
-            .VMU => |*v| return v.block_write(function, partition, phase, block_num, data),
+            inline .VMU, .VibrationPack => |*v| return v.block_write(function, partition, phase, block_num, data),
             else => maple_log.warn(termcolor.yellow("BlockWrite Unimplemented for target: {t}"), .{self.tag()}),
         }
         return 0;
@@ -695,7 +799,7 @@ const MaplePort = struct {
                     maple_log.warn(termcolor.yellow("  GetMediaInformation: Function: {f}, Partition number: {d}"), .{ @as(FunctionCodesMask, @bitCast(function_type)), partition_number });
 
                     switch (target.*) {
-                        .VMU => |*v| {
+                        inline .VMU, .VibrationPack => |*v| {
                             const dest = @as([*]u8, @ptrCast(dc._get_memory(return_addr + 8)))[0..];
                             const payload_size = v.get_media_info(dest, function_type, partition_number);
                             if (payload_size > 0) {
