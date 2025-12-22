@@ -963,14 +963,22 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     if (zgui.begin("Holly", .{})) {
         if (zgui.collapsingHeader("SPG Registers", .{ .frame_padding = true })) {
             zgui.indent(.{});
-            zgui.text("SPG_HBLANK_INT: {X:0>8} - {any}", .{ dc.gpu._get_register(u32, .SPG_HBLANK_INT).*, dc.gpu._get_register(Holly.SPG_HBLANK_INT, .SPG_HBLANK_INT).* });
-            zgui.text("SPG_VBLANK_INT: {X:0>8} - {any}", .{ dc.gpu._get_register(u32, .SPG_VBLANK_INT).*, dc.gpu._get_register(Holly.SPG_VBLANK_INT, .SPG_VBLANK_INT).* });
-            zgui.text("SPG_CONTROL:    {X:0>8} - {any}", .{ dc.gpu._get_register(u32, .SPG_CONTROL).*, dc.gpu._get_register(Holly.SPG_CONTROL, .SPG_CONTROL).* });
-            zgui.text("SPG_HBLANK:     {X:0>8} - {any}", .{ dc.gpu._get_register(u32, .SPG_HBLANK).*, dc.gpu._get_register(Holly.SPG_HBLANK, .SPG_HBLANK).* });
-            zgui.text("SPG_VBLANK:     {X:0>8} - {any}", .{ dc.gpu._get_register(u32, .SPG_VBLANK).*, dc.gpu._get_register(Holly.SPG_VBLANK, .SPG_VBLANK).* });
-            zgui.text("SPG_WIDTH:      {X:0>8} - {any}", .{ dc.gpu._get_register(u32, .SPG_WIDTH).*, dc.gpu._get_register(Holly.SPG_WIDTH, .SPG_WIDTH).* });
-            zgui.text("SPG_STATUS:     {X:0>8} - {any}", .{ dc.gpu._get_register(u32, .SPG_STATUS).*, dc.gpu._get_register(Holly.SPG_STATUS, .SPG_STATUS).* });
-            zgui.text("SPG_LOAD:       {X:0>8} - {any}", .{ dc.gpu._get_register(u32, .SPG_LOAD).*, dc.gpu._get_register(Holly.SPG_LOAD, .SPG_LOAD).* });
+            zgui.text("SPG_HBLANK_INT: {X:0>8}", .{dc.gpu._get_register(u32, .SPG_HBLANK_INT).*});
+            display(dc.gpu._get_register(Holly.SPG_HBLANK_INT, .SPG_HBLANK_INT).*);
+            zgui.text("SPG_VBLANK_INT: {X:0>8}", .{dc.gpu._get_register(u32, .SPG_VBLANK_INT).*});
+            display(dc.gpu._get_register(Holly.SPG_VBLANK_INT, .SPG_VBLANK_INT).*);
+            zgui.text("SPG_CONTROL:    {X:0>8}", .{dc.gpu._get_register(u32, .SPG_CONTROL).*});
+            display(dc.gpu._get_register(Holly.SPG_CONTROL, .SPG_CONTROL).*);
+            zgui.text("SPG_HBLANK:     {X:0>8}", .{dc.gpu._get_register(u32, .SPG_HBLANK).*});
+            display(dc.gpu._get_register(Holly.SPG_HBLANK, .SPG_HBLANK).*);
+            zgui.text("SPG_VBLANK:     {X:0>8}", .{dc.gpu._get_register(u32, .SPG_VBLANK).*});
+            display(dc.gpu._get_register(Holly.SPG_VBLANK, .SPG_VBLANK).*);
+            zgui.text("SPG_WIDTH:      {X:0>8}", .{dc.gpu._get_register(u32, .SPG_WIDTH).*});
+            display(dc.gpu._get_register(Holly.SPG_WIDTH, .SPG_WIDTH).*);
+            zgui.text("SPG_STATUS:     {X:0>8}", .{dc.gpu._get_register(u32, .SPG_STATUS).*});
+            display(dc.gpu._get_register(Holly.SPG_STATUS, .SPG_STATUS).*);
+            zgui.text("SPG_LOAD:       {X:0>8}", .{dc.gpu._get_register(u32, .SPG_LOAD).*});
+            display(dc.gpu._get_register(Holly.SPG_LOAD, .SPG_LOAD).*);
             zgui.unindent(.{});
         }
         const ISP_BACKGND_D = dc.gpu._get_register(u32, .ISP_BACKGND_D).*;

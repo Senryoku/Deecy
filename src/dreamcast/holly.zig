@@ -249,10 +249,13 @@ pub const FB_W_CTRL = packed struct(u32) {
         ARGB8888 = 6,
         Reserved = 7,
     },
-    fb_dither: bool, // Dithering enable
+    /// Dithering enable
+    fb_dither: bool,
     _0: u4,
-    fb_kval: u8, // This field sets the K value for writing to the frame buffer. (default = 0x00)
-    fb_alpha_threshold: u8, // This field sets the comparison value that is used to determine the alpha value when the data that is written to the frame buffer is ARGB1555 format data. (default = 0x00) When pixel alpha ≥ fb_alpha_threshold, a "1" is written in the alpha value.
+    /// This field sets the K value for writing to the frame buffer. (default = 0x00)
+    fb_kval: u8,
+    /// This field sets the comparison value that is used to determine the alpha value when the data that is written to the frame buffer is ARGB1555 format data. (default = 0x00) When pixel alpha ≥ fb_alpha_threshold, a "1" is written in the alpha value.
+    fb_alpha_threshold: u8,
     _1: u8,
 };
 
@@ -290,13 +293,13 @@ pub const FPU_PARAM_CFG = packed struct(u32) {
     isp_parameter_burst_trigger_threshold: u6,
     tsp_parameter_burst_trigger_threshold: u6,
     _r: u1,
+    /// 0: 5 x 32bit/Tile Type 1 (default)
+    ///   The Translucent polygon sort mode is specified by the
+    ///   ISP_FEED_CFG register.
+    /// 1: 6 x 32bit/Tile Type 2
+    ///   The Translucent polygon sort mode is specified by the
+    ///   pre-sort bit within the Region Array data.
     region_header_type: RegionHeaderType,
-    // 0: 5 × 32bit/Tile Type 1 (default)
-    //   The Translucent polygon sort mode is specified by the
-    //   ISP_FEED_CFG register.
-    // 1: 6 × 32bit/Tile Type 2
-    //   The Translucent polygon sort mode is specified by the
-    //   pre-sort bit within the Region Array data.
     _: u10,
 };
 
@@ -331,19 +334,24 @@ pub const FB_R_CTRL = packed struct(u32) {
 };
 
 pub const FB_R_SIZE = packed struct(u32) {
-    x_size: u10, // Number of display pixels on each line - 1, in 32-bit units
-    y_size: u10, // Number of display lines - 1
-    modulus: u10, // Amount of data between each line, in 32-bit units
+    /// Number of display pixels on each line - 1, in 32-bit units
+    x_size: u10,
+    /// Number of display lines - 1
+    y_size: u10,
+    /// Amount of data between each line, in 32-bit units
+    modulus: u10,
     _: u2,
 };
 
 pub const TEXT_CONTROL = packed struct(u32) {
-    stride: u5, // This field specifies the U size of the stride texture. The U size is the stride value × 32.
+    /// This field specifies the U size of the stride texture. The U size is the stride value × 32.
+    stride: u5,
     _r0: u3,
-    bank_bit: u5 = 0, // This field specifies the position of the bank bit when accessing texture memory (default = 0x00). Normally, set 0x00
+    /// This field specifies the position of the bank bit when accessing texture memory (default = 0x00). Normally, set 0x00
+    bank_bit: u5 = 0,
     _r1: u3,
-    index_endian_reg: u1 = 0, // 0 = Little Endian, 1 = Big Endian
-    code_book_endian_reg: u1 = 0,
+    index_endian_reg: enum(u1) { Little = 0, Big = 1 } = .Little,
+    code_book_endian_reg: enum(u1) { Little = 0, Big = 1 } = .Little,
     _r2: u14,
 };
 
@@ -440,13 +448,16 @@ pub const TA_ALLOC_CTRL = packed struct(u32) {
 };
 
 pub const TA_YUV_TEX_CTRL = packed struct(u32) {
-    u_size: u6, // Actual size in pixels is 16 * (u_size + 1)
+    /// Actual size in pixels is 16 * (u_size + 1)
+    u_size: u6,
     _r0: u2,
     v_size: u6,
     _r1: u2,
-    tex: u1, // 0: One texture of [(YUV_U_Size + 1) * 16] pixels (H) × [(YUV_V_Size + 1) * 16] pixels (V) ; 1 : [(YUV_U_Size + 1) * (YUV_V_Size + 1)] textures of 16 texels (H) × 16 texels (V)
+    /// 0: One texture of [(YUV_U_Size + 1) * 16] pixels (H) × [(YUV_V_Size + 1) * 16] pixels (V)
+    /// 1: [(YUV_U_Size + 1) * (YUV_V_Size + 1)] textures of 16 texels (H) × 16 texels (V)
+    tex: u1,
     _r2: u7,
-    format: u1, // 0: YUV420, 1: YUV422
+    format: enum(u1) { YUV420 = 0, YUV422 = 1 },
     _r3: u7,
 };
 
@@ -1916,7 +1927,7 @@ pub const Holly = struct {
 
         if (static.index == static.buffer.len) {
             const ctrl = self._get_register(TA_YUV_TEX_CTRL, .TA_YUV_TEX_CTRL).*;
-            std.debug.assert(ctrl.format == 0 and ctrl.tex == 0); // Other variations aren't implemented.
+            std.debug.assert(ctrl.format == .YUV420 and ctrl.tex == 0); // Other variations aren't implemented.
             const u_size = @as(u32, ctrl.u_size) + 1; // In 16x16 blocks
             const v_size = @as(u32, ctrl.v_size) + 1; // In 16x16 blocks
 
@@ -1945,34 +1956,36 @@ pub const Holly = struct {
         const u_size = @as(u32, ctrl.u_size) + 1; // In 16x16 blocks
         const v_size = @as(u32, ctrl.v_size) + 1; // In 16x16 blocks
         const tex: [*]YUV422 = @ptrCast(@alignCast(&self.vram[tex_base]));
-        if (ctrl.format == 0) {
-            // YUV 420
-            if (ctrl.tex == 0) {
-                //   YUV_Tex = 0
-                // The YUV data that is input is stored in texture memory as one texture with a size of
-                // [(YUV_U_Size + 1) * 16] (H) * [(YUV_V_Size + 1) * 16] (V). This format has a weakness
-                // in that storage time is longer because the storage addresses in texture memory will
-                // not be continuous every 16 pixels (32 bytes) in the horizontal direction.
-                var offset: u32 = 0;
-                for (0..v_size) |y| {
-                    for (0..u_size) |x| {
-                        yuv_converter_process_macro_block(u_size, v_size, @intCast(x), @intCast(y), tex, data[offset..]);
-                        offset += 6 * 64;
+        switch (ctrl.format) {
+            .YUV420 => {
+                if (ctrl.tex == 0) {
+                    //   YUV_Tex = 0
+                    // The YUV data that is input is stored in texture memory as one texture with a size of
+                    // [(YUV_U_Size + 1) * 16] (H) * [(YUV_V_Size + 1) * 16] (V). This format has a weakness
+                    // in that storage time is longer because the storage addresses in texture memory will
+                    // not be continuous every 16 pixels (32 bytes) in the horizontal direction.
+                    var offset: u32 = 0;
+                    for (0..v_size) |y| {
+                        for (0..u_size) |x| {
+                            yuv_converter_process_macro_block(u_size, v_size, @intCast(x), @intCast(y), tex, data[offset..]);
+                            offset += 6 * 64;
+                        }
                     }
+                    self._get_register(u32, .TA_YUV_TEX_CNT).* += u_size * v_size; // NOTE: If this was async, we could update it as we go.
+                    // FIXME: Delay is arbitrary.
+                    if (self._get_register(u32, .TA_YUV_TEX_CNT).* == u_size * v_size)
+                        self._dc.schedule_interrupt(.{ .EoT_YUV = 1 }, u_size * v_size * 8000);
+                } else {
+                    //   YUV_Tex = 1
+                    // [(YUV_U_Size + 1) * (YUV_V_Size + 1)] textures of the macro size (16 * 16 pixels) are
+                    // stored in texture memory. Storage time is shorter, because the storage addresses in
+                    // texture memory are continuous. However, each texture must be used with a different
+                    // polygon and arranged on screen.
+                    holly_log.err(termcolor.red("ta_fifo_yuv_converter_path: Unimplemented tex=1"), .{});
                 }
-                self._get_register(u32, .TA_YUV_TEX_CNT).* += u_size * v_size; // NOTE: If this was async, we could update it as we go.
-                // FIXME: Delay is arbitrary.
-                if (self._get_register(u32, .TA_YUV_TEX_CNT).* == u_size * v_size)
-                    self._dc.schedule_interrupt(.{ .EoT_YUV = 1 }, u_size * v_size * 8000);
-            } else {
-                //   YUV_Tex = 1
-                // [(YUV_U_Size + 1) * (YUV_V_Size + 1)] textures of the macro size (16 * 16 pixels) are
-                // stored in texture memory. Storage time is shorter, because the storage addresses in
-                // texture memory are continuous. However, each texture must be used with a different
-                // polygon and arranged on screen.
-                @panic("ta_fifo_yuv_converter_path: Unimplemented tex=1");
-            }
-        } else std.debug.panic("ta_fifo_yuv_converter_path: Unimplemented format: {d}", .{ctrl.format});
+            },
+            else => holly_log.err(termcolor.red("ta_fifo_yuv_converter_path: Unimplemented format: {d}"), .{ctrl.format}),
+        }
     }
 
     inline fn ta_list_index(self: *const @This()) u4 {

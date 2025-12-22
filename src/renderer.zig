@@ -2219,15 +2219,19 @@ pub const Renderer = struct {
         };
 
         const vo_control = self.write_back_parameters.video_out_ctrl;
+        const fb_r_ctrl = gpu.read_register(HollyModule.FB_R_CTRL, .FB_R_CTRL);
+
         // I suspect I'll have to come back to this: Printing some information to help detect unusual configurations.
         if (vo_control.pixel_double)
             if (Once(@src())) log.warn(termcolor.yellow("VO_CONTROL.pixel_double is set: {any}"), .{vo_control});
         if (self.write_back_parameters.scaler_ctl.get_x_scale_factor() != 1.0 or self.write_back_parameters.scaler_ctl.get_y_scale_factor() != 1.0)
             if (Once(@src())) log.warn(termcolor.yellow("Unusual SCALER_CTL: {any}"), .{self.write_back_parameters.scaler_ctl});
+        if (fb_r_ctrl.line_double) // Not handled: Emit a warning.
+            if (Once(@src())) log.warn(termcolor.yellow("FB_R_CTRL.line_double is set: {any}"), .{fb_r_ctrl});
+
         const horizontal_scaling: u16 = if (vo_control.pixel_double) 2 else 1;
-        // FIXME: VO_CONTROL.pixel_double should only affect horizontal scaling, but games like "The King of Fighters 99 Evolution"
-        //        also need vertical scaling (rendering at 320x240 instead of 640x480). This is probably controlled by another register, but I'm not sure which one.
-        const vertical_scaling: u16 = if (vo_control.pixel_double) 2 else 1;
+        // vclk_div == 0 for halved pixel clock (480i or 240p); vclk_div == 1 for VGA mode (480p)
+        const vertical_scaling: u16 = if (fb_r_ctrl.vclk_div == 0) 2 else 1;
 
         self.global_clip.x.min = horizontal_scaling * self.write_back_parameters.x_clip.min;
         self.global_clip.x.max = horizontal_scaling * (@as(u16, self.write_back_parameters.x_clip.max) + 1);
