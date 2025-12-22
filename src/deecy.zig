@@ -694,7 +694,7 @@ pub fn init_peripheral(self: *@This(), idx: u8, slot: u8) !void {
             try self.load_vmu(idx, slot, vmu_path);
         },
         .VibrationPack => {
-            self.dc.maple.ports[idx].subperipherals[slot] = .VibrationPack;
+            self.dc.maple.ports[idx].subperipherals[slot] = .{ .VibrationPack = .init() };
         },
     }
 }

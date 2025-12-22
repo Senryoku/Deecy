@@ -240,7 +240,8 @@ pub const Controller = struct {
         };
     }
 
-    pub fn get_condition(self: *const @This()) [3]u32 {
+    pub fn get_condition(self: *const @This(), function: u32) [3]u32 {
+        _ = function;
         var r = [3]u32{ 0xFFFFFFFF, 0x8080FFFF, 0x80808080 };
         r[0] = @bitCast(Capabilities);
         r[1] = @as(u16, @bitCast(self.buttons));
@@ -608,12 +609,76 @@ pub const VibrationPack = struct {
         .MaximumConsumption = 0x0640,
     };
 
-    const GetMediaInformationResponse = packed struct(u32) {
-        vset0: u8,
-        vset1: u8,
+    const VibrationSourceSettings = packed struct(u32) {
+        /// Vibration source vibration axis.
+        ///   Indicates the axis (direction) the vibration source vibrates along.
+        vd: enum(u2) { None = 0, X = 1, Y = 2, Z = 3 },
+        /// Vibration source position.
+        ///    Indicates the position where the vibration source is installed.
+        vp: enum(u2) { Front = 0, Back = 1, Left = 2, Right = 3 },
+        /// Vibration source No.
+        ///   Indicates the number of vibration sources.
+        ///   The number of vibration sources is 1～15 ('1h'～'Fh').
+        ///   '0h' is not permitted.
+        vn: u4,
+        /// Vibration attribute flag
+        ///   Information following this attribute changes according.
+        ///   The 3 kinds of VA settings are '0000','0001','1111'. All others are reserved.
+        ///     VA='0000': fm0 and fm1 represents the minimum and maximum vibration frequency values, respectively.
+        ///     VA='0001': fm0 represents a fixed frequency 0.5～128Hz (00h～FFh). (fm1 is not used and should be 0)
+        ///     VA='1111': the vibration frequency cannot be specified. (fm0 and fm1 are not used and should be 0)
+        va: enum(u4) { MinMax = 0b0000, Fixed = 0b0001, None = 0b1111, _ },
+        /// Arbitrary vibration waveform flag
+        ///   Indicates if the arbitrary vibration waveform can be selected.
+        owf: bool,
+        /// Vibration source direction setting flag
+        ///   Indicates if + directions and - directions are settable.
+        ///   If +/- settings are not permitted, the setting is specified as + direction. Even if - direction is specified, it is treated as + direction.
+        pd: bool,
+        /// Vibration source continuous vibration flag
+        ///   Indicates if a specified vibration can continue until the next setting command.
+        cv: bool,
+        /// Setting of variable vibration intensity
+        ///   Indicates if the intensity of the vibration source is variable. (Fixed or up to 8 levels)
+        pf: bool,
         fm0: u8,
         fm1: u8,
     };
+
+    const VibrationConfiguration = packed struct(u32) {
+        /// Continuous vibration setting bits
+        cnt: bool = false,
+        _res: u3 = 0,
+        /// Vibration source No
+        vn: u4 = 0,
+        /// Backward direction (- direction) intensity setting bit
+        mpow: u3 = 0,
+        /// Divergent vibration setting bit
+        exh: bool = false,
+        /// Forward direction (+ direction) intensity setting bit
+        ppow: u3 = 0,
+        /// Convergent vibration setting bit
+        inh: bool = false,
+        /// Vibration frequency setting bit
+        freq: u8 = 0,
+        /// Vibration inclination period setting bit
+        inc: u8 = 0,
+    };
+
+    callback: ?struct {
+        function: ?*const fn (*anyopaque) void,
+        context: *anyopaque,
+
+        pub fn call(self: @This()) void {
+            if (self.function != null)
+                self.function.?(self.context);
+        }
+    } = null,
+    vibration_source: VibrationConfiguration = .{},
+
+    pub fn init() @This() {
+        return .{};
+    }
 
     pub fn get_identity(_: *const @This()) DeviceInfoPayload {
         return Identity;
@@ -625,14 +690,20 @@ pub const VibrationPack = struct {
         maple_log.warn(termcolor.yellow("VibrationPack.get_media_info for function: {f}, vibration_source: {d}"), .{ @as(FunctionCodesMask, @bitCast(function)), vibration_source });
         switch (function) {
             FunctionCodesMask.Vibration.as_u32() => {
-                const value: GetMediaInformationResponse = .{
-                    .vset0 = 0x3B,
-                    .vset1 = 0x07,
-                    .fm0 = 0xE0,
-                    .fm1 = 0x10,
+                const value: VibrationSourceSettings = .{
+                    .vd = .None,
+                    .vp = .Front,
+                    .vn = 1,
+                    .va = .MinMax,
+                    .owf = false,
+                    .pd = true,
+                    .cv = true,
+                    .pf = true,
+                    .fm0 = 0x07,
+                    .fm1 = 0x3B,
                 };
-                @memcpy(dest[0..4], std.mem.asBytes(&value)[0..4]);
-                return 4 / 4;
+                @memcpy(dest[0..@sizeOf(VibrationSourceSettings)], std.mem.asBytes(&value));
+                return @sizeOf(VibrationSourceSettings) / 4;
             },
             else => maple_log.err(termcolor.red("Unimplemented VibrationPack.get_media_info for function: {f}"), .{@as(FunctionCodesMask, @bitCast(function))}),
         }
@@ -640,32 +711,59 @@ pub const VibrationPack = struct {
     }
 
     /// Returns payload size in 32-bit words
-    pub fn block_read(self: *const @This(), dest: [*]u8, function: u32, partition: u8, block_num: u16, phase: u8) u8 {
+    pub fn block_read(self: *const @This(), dest: [*]u8, function: u32, vn: u8, block_num: u16, phase: u8) u8 {
         _ = self;
         _ = dest;
-        maple_log.warn(termcolor.yellow("VibrationPack.block_read for function: {f}, partition: {d}, block_num: {d}, phase: {d}"), .{ @as(FunctionCodesMask, @bitCast(function)), partition, block_num, phase });
+        _ = block_num;
+        _ = phase;
+        // In response to the function, this command requests the data of the specified
+        // vibration source (VN). It is used to read the settings for both current
+        // arbitrary waveforms in the vibration source and auto-stop time.
+        // In vibration functions, Phase='00h' ,Block No. ='0000h' are fixed values. VN
+        // for each vibration source is '01h'～'0Fh' for Vibration Source -1～Vibration
+        // Source -15, respectively.
+        maple_log.warn(termcolor.yellow("VibrationPack.block_read for function: {f}, source: {d}"), .{ @as(FunctionCodesMask, @bitCast(function)), vn });
         switch (function) {
+            FunctionCodesMask.Vibration.as_u32() => {},
             else => maple_log.err("Unimplemented VibrationPack.block_read for function: {f}", .{@as(FunctionCodesMask, @bitCast(function))}),
         }
         return 0;
     }
 
     /// Returns payload size in 32-bit words
-    pub fn block_write(self: *@This(), function: u32, partition: u8, phase: u8, block_num: u16, data: []const u32) u8 {
+    pub fn block_write(self: *@This(), function: u32, vn: u8, phase: u8, block_num: u16, data: []const u32) u8 {
         _ = self;
-        _ = data;
-        maple_log.warn(termcolor.yellow("VibrationPack.block_write for function: {f}, partition: {d}, block_num: {d}, phase: {d}"), .{ @as(FunctionCodesMask, @bitCast(function)), partition, block_num, phase });
+        _ = data; // Arbitrary waveform data
+        _ = block_num;
+        _ = phase;
+        // In response to the vibration function, this command records (writes) data in
+        // the specified vibration source. It is used to specify arbitrary waveforms and
+        // vibration auto-stop time.
+        // In vibration functions, Phase='00h' ,Block No. ='0000h' are fixed values. VN
+        // for each vibration source is '01h'～'0Fh' for Vibration Source -1～Vibration
+        // Source -15, respectively.
+        maple_log.warn(termcolor.yellow("VibrationPack.block_write for function: {f}, source: {d}"), .{ @as(FunctionCodesMask, @bitCast(function)), vn });
         switch (function) {
+            FunctionCodesMask.Vibration.as_u32() => {},
             else => maple_log.err("Unimplemented VibrationPack.block_write for function: {f}", .{@as(FunctionCodesMask, @bitCast(function))}),
         }
         return 0;
     }
 
+    pub fn get_condition(self: *const @This(), function: u32) [1]u32 {
+        maple_log.warn(termcolor.yellow("VibrationPack.get_condition for function: {f}"), .{@as(FunctionCodesMask, @bitCast(function))});
+        return .{@bitCast(self.vibration_source)};
+    }
+
     pub fn set_condition(self: *@This(), function: u32, data: u32) void {
-        _ = self;
-        _ = data;
-        maple_log.warn(termcolor.yellow("VibrationPack.set_condition for function: {f}"), .{@as(FunctionCodesMask, @bitCast(function))});
+        // NOTE: Multiple vibration sources can be set at once, but only one is supported (and advertised).
         switch (function) {
+            FunctionCodesMask.Vibration.as_u32() => {
+                const value: VibrationConfiguration = @bitCast(data);
+                maple_log.warn(termcolor.yellow("Vibration settings: {any}"), .{value});
+                self.vibration_source = value;
+                if (self.callback) |c| c.call(); // TODO: What's a good API here? Strength and Duration as floats?
+            },
             else => maple_log.err("Unimplemented VibrationPack.set_condition for function: {f}", .{@as(FunctionCodesMask, @bitCast(function))}),
         }
     }
@@ -695,6 +793,15 @@ const Peripheral = union(enum) {
         return switch (self) {
             inline else => |impl| impl.get_identity(),
         };
+    }
+
+    pub fn set_condition(self: *@This(), function: u32, data: u32) void {
+        _ = self;
+        _ = data;
+        maple_log.warn(termcolor.yellow("VibrationPack.set_condition for function: {f}"), .{@as(FunctionCodesMask, @bitCast(function))});
+        switch (function) {
+            else => maple_log.err("Unimplemented VibrationPack.set_condition for function: {f}", .{@as(FunctionCodesMask, @bitCast(function))}),
+        }
     }
 
     pub fn block_read(self: *const @This(), dest: [*]u8, function: u32, partition: u8, block_num: u16, phase: u8) u8 {
@@ -777,10 +884,9 @@ const MaplePort = struct {
                 },
                 .GetCondition => {
                     switch (target.*) {
-                        .Controller => |*c| {
+                        inline .Controller, .VibrationPack => |*c| {
                             std.debug.assert(command.payload_length == 1);
-                            std.debug.assert(function_type == 0x01000000);
-                            const condition = c.get_condition();
+                            const condition = c.get_condition(function_type);
                             dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = @intCast(condition.len) }));
                             const ptr: [*]u32 = @ptrCast(@alignCast(dc._get_memory(return_addr + 4)));
                             @memcpy(ptr[0..condition.len], &condition);
@@ -853,7 +959,7 @@ const MaplePort = struct {
                 },
                 .SetCondition => {
                     switch (target.*) {
-                        .VMU => |*vmu| {
+                        inline .VMU, .VibrationPack => |*vmu| {
                             vmu.set_condition(function_type, data[2]);
                             dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                             return 1;
