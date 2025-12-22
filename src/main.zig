@@ -169,7 +169,7 @@ pub fn main() !void {
                     std.log.err(termcolor.red("Expected path to VMU after --vmu."), .{});
                     return error.InvalidArguments;
                 };
-                try d.load_vmu(0, path);
+                try d.load_vmu(0, 0, path);
                 d.config.per_game_vmu = false;
             } else if (std.mem.eql(u8, arg, "-d")) {
                 dc.cpu.debug_trace = true;

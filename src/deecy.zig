@@ -194,10 +194,20 @@ pub const KeyboardBindings = struct {
     };
 };
 
+pub const DefaultVMUPaths = default_vmu_paths: {
+    var paths: [4][2][]const u8 = undefined;
+    for (0..4) |port| {
+        for (0..2) |slot| {
+            paths[port][slot] = std.fmt.comptimePrint("vmu_{d}_{d}.bin", .{ port, slot });
+        }
+    }
+    break :default_vmu_paths paths;
+};
+
 const ControllerSettings = struct {
     enabled: bool,
     subcapabilities: DreamcastModule.Maple.InputCapabilities = DreamcastModule.Maple.StandardControllerCapabilities,
-    subperipherals: [5]enum { None, VMU } = .{ .VMU, .None, .None, .None, .None },
+    subperipherals: [2]union(enum) { None, VMU: struct { filename: []const u8 } } = .{ .None, .None },
 };
 
 const Configuration = struct {
@@ -215,7 +225,7 @@ const Configuration = struct {
     renderer: Renderer.Configuration = .{},
 
     keyboard_bindings: [4]KeyboardBindings = .{ .Default, .{}, .{}, .{} },
-    controllers: [4]ControllerSettings = .{ .{ .enabled = true }, .{ .enabled = true }, .{ .enabled = false }, .{ .enabled = false } },
+    controllers: [4]ControllerSettings = .{ .{ .enabled = true, .subperipherals = .{ .{ .VMU = .{ .filename = DefaultVMUPaths[0][0] } }, .None } }, .{ .enabled = true }, .{ .enabled = false }, .{ .enabled = false } },
     region: enum(u8) {
         /// USA by default and auto detect when using a disc.
         Auto = std.math.maxInt(u8),
@@ -658,21 +668,32 @@ pub fn set_per_game_vmu(self: *@This(), value: bool) !void {
     if (self.config.per_game_vmu != value) {
         self.config.per_game_vmu = value;
         if (!self.config.per_game_vmu) {
-            try self.load_default_vmu(0);
+            try self.init_peripheral(0, 0);
         } else {
             try self.load_per_game_vmu();
         }
     }
 }
 
-pub fn load_default_vmu(self: *@This(), idx: u8) !void {
-    const vmu_filename = try std.fmt.allocPrint(self._allocator, "vmu_{d}.bin", .{idx});
-    defer self._allocator.free(vmu_filename);
-    const vmu_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), vmu_filename });
-    defer self._allocator.free(vmu_path);
-    self.load_vmu(@intCast(idx), vmu_path) catch |err| {
-        deecy_log.err("Failed to load default VMU for controller #{d}: {t}", .{ idx, err });
-    };
+pub fn deinit_peripheral(self: *@This(), controller_idx: u8, slot: u8) void {
+    if (self.dc.maple.ports[controller_idx].subperipherals[slot]) |*peripheral| {
+        if (slot == 0 and peripheral.* == .VMU)
+            self.ui.vmu_displays[controller_idx].valid = false;
+        peripheral.deinit(self._allocator);
+    }
+    self.dc.maple.ports[controller_idx].subperipherals[slot] = null;
+}
+
+pub fn init_peripheral(self: *@This(), idx: u8, slot: u8) !void {
+    self.deinit_peripheral(idx, slot);
+    switch (self.config.controllers[idx].subperipherals[slot]) {
+        .None => {},
+        .VMU => |vmu| {
+            const vmu_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), vmu.filename });
+            defer self._allocator.free(vmu_path);
+            try self.load_vmu(idx, slot, vmu_path);
+        },
+    }
 }
 
 pub fn load_per_game_vmu(self: *@This()) !void {
@@ -680,9 +701,25 @@ pub fn load_per_game_vmu(self: *@This()) !void {
         defer self._allocator.free(game_dir);
         const vmu_path = try std.fs.path.join(self._allocator, &[_][]const u8{ game_dir, "vmu_0.bin" });
         defer self._allocator.free(vmu_path);
-        try self.load_vmu(0, vmu_path);
+        try self.load_vmu(0, 0, vmu_path);
     } else {
-        try self.load_default_vmu(0);
+        try self.init_peripheral(0, 0);
+    }
+}
+
+pub fn load_vmu(self: *@This(), controller_idx: u8, slot: u8, vmu_path: []const u8) !void {
+    std.debug.assert(controller_idx < 4);
+    std.debug.assert(slot < 2);
+
+    self.deinit_peripheral(controller_idx, slot);
+
+    self.dc.maple.ports[controller_idx].subperipherals[slot] = .{ .VMU = try .init(self._allocator, vmu_path) };
+    if (slot == 0) {
+        self.dc.maple.ports[controller_idx].subperipherals[slot].?.VMU.on_screen_update = .{ .function = @ptrCast(&switch (controller_idx) {
+            inline 0, 1, 2, 3 => |pidx| UI.vmu_screen_callback(pidx).callback,
+            else => unreachable,
+        }), .userdata = self.ui };
+        self.ui.vmu_displays[controller_idx].valid = true;
     }
 }
 
@@ -690,10 +727,11 @@ pub fn enable_controller(self: *@This(), idx: u8, value: bool) !void {
     const config = &self.config.controllers[idx];
     if (value) {
         self.dc.maple.ports[idx].main = .{ .Controller = .{ .subcapabilities = .{ @bitCast(config.subcapabilities), 0, 0 } } };
-        // NOTE: Only the first subperipheral is actually supported for now.
-        if (config.subperipherals[0] == .VMU)
-            try self.load_default_vmu(idx);
+        inline for (0..config.subperipherals.len) |slot| {
+            try self.init_peripheral(idx, slot);
+        }
     } else {
+        self.ui.vmu_displays[idx].valid = false;
         self.dc.maple.ports[idx].deinit(self._allocator);
     }
     config.enabled = value;
@@ -916,19 +954,6 @@ pub fn get_product_name(self: *const @This()) ?[]const u8 {
 
 pub fn get_product_id(self: *const @This()) ?[]const u8 {
     return if (self.dc.gdrom.disc) |*disc| disc.get_product_id() else null;
-}
-
-pub fn load_vmu(self: *@This(), controller_idx: u8, vmu_path: []const u8) !void {
-    std.debug.assert(controller_idx < 4);
-    if (self.dc.maple.ports[controller_idx].subperipherals[0]) |*peripheral|
-        peripheral.deinit(self._allocator);
-
-    self.dc.maple.ports[controller_idx].subperipherals[0] = .{ .VMU = try .init(self._allocator, vmu_path) };
-    self.dc.maple.ports[controller_idx].subperipherals[0].?.VMU.on_screen_update = .{ .function = @ptrCast(&switch (controller_idx) {
-        inline 0, 1, 2, 3 => |pidx| UI.vmu_screen_callback(pidx).callback,
-        else => unreachable,
-    }), .userdata = self.ui };
-    self.ui.vmu_displays[controller_idx].valid = true;
 }
 
 /// Game specific sub directory name (for VMUs, save states...)
