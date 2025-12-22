@@ -568,7 +568,7 @@ pub const VMU = struct {
         return 0;
     }
 
-    pub fn set_condition(self: *@This(), function: u32, data: u32) void {
+    pub fn set_condition(self: *@This(), function: u32, data: []const u32) void {
         _ = self;
         _ = data;
         switch (function) {
@@ -751,16 +751,23 @@ pub const VibrationPack = struct {
     }
 
     pub fn get_condition(self: *const @This(), function: u32) [1]u32 {
-        maple_log.warn(termcolor.yellow("VibrationPack.get_condition for function: {f}"), .{@as(FunctionCodesMask, @bitCast(function))});
-        return .{@bitCast(self.vibration_source)};
+        maple_log.debug("VibrationPack.get_condition for function: {f}", .{@as(FunctionCodesMask, @bitCast(function))});
+        switch (function) {
+            FunctionCodesMask.Vibration.as_u32() => return .{@bitCast(self.vibration_source)},
+            else => {
+                maple_log.err("Unimplemented VibrationPack.get_condition for function: {f}", .{@as(FunctionCodesMask, @bitCast(function))});
+                return .{0};
+            },
+        }
     }
 
-    pub fn set_condition(self: *@This(), function: u32, data: u32) void {
-        // NOTE: Multiple vibration sources can be set at once, but only one is supported (and advertised).
+    pub fn set_condition(self: *@This(), function: u32, data: []const u32) void {
+        // NOTE: Multiple vibration sources can be set at once (one 32bits VibrationConfiguration each), but only one is supported (and advertised).
         switch (function) {
             FunctionCodesMask.Vibration.as_u32() => {
-                const value: VibrationConfiguration = @bitCast(data);
-                maple_log.warn(termcolor.yellow("Vibration settings: {any}"), .{value});
+                const value: VibrationConfiguration = @bitCast(data[0]);
+                maple_log.debug("[VibrationPack.set_condition] Vibration settings: {any}", .{value});
+                if (value.vn != 1) maple_log.warn(termcolor.yellow("Only vibration source 1 is supported: {any}"), .{value});
                 self.vibration_source = value;
                 if (self.callback) |c| c.call(); // TODO: What's a good API here? Strength and Duration as floats?
             },
@@ -793,15 +800,6 @@ const Peripheral = union(enum) {
         return switch (self) {
             inline else => |impl| impl.get_identity(),
         };
-    }
-
-    pub fn set_condition(self: *@This(), function: u32, data: u32) void {
-        _ = self;
-        _ = data;
-        maple_log.warn(termcolor.yellow("VibrationPack.set_condition for function: {f}"), .{@as(FunctionCodesMask, @bitCast(function))});
-        switch (function) {
-            else => maple_log.err("Unimplemented VibrationPack.set_condition for function: {f}", .{@as(FunctionCodesMask, @bitCast(function))}),
-        }
     }
 
     pub fn block_read(self: *const @This(), dest: [*]u8, function: u32, partition: u8, block_num: u16, phase: u8) u8 {
@@ -960,7 +958,7 @@ const MaplePort = struct {
                 .SetCondition => {
                     switch (target.*) {
                         inline .VMU, .VibrationPack => |*vmu| {
-                            vmu.set_condition(function_type, data[2]);
+                            vmu.set_condition(function_type, data[3..][0 .. command.payload_length - 1]);
                             dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                             return 1;
                         },
