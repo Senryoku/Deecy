@@ -247,9 +247,12 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
     // AFAIK these are fixed for CHDs. Keeping the distinction around just in case.
     const channel_count = expected_channel_count;
     const bits_per_sample = expected_bits_per_sample;
+    const samples_per_frame = expected_block_size * channel_count;
 
     var samples_working_buffer = try allocator.alloc(InterType, expected_block_size);
     defer allocator.free(samples_working_buffer);
+    var frame_working_buffer = try allocator.allocWithOptions(InterType, samples_per_frame, .@"32", null);
+    defer allocator.free(frame_working_buffer);
 
     var frame_sample_offset: usize = 0;
     while (frame_sample_offset < num_samples) {
@@ -323,11 +326,11 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
                 else => bits_per_sample,
             };
 
-            const subframe_samples = output[frame_sample_offset..][channel .. @as(usize, channel_count) * block_size];
+            const subframe_samples = frame_working_buffer[channel..];
             switch (subframe_header.subframe_type) {
                 0b000000 => { // Constant subframe
                     log_subframe.debug("Subframe #{d}: Constant, {d} wasted bits", .{ channel, wasted_bits });
-                    const sample = try read_unencoded_sample(SampleType, &bit_reader, wasted_bits, bits_per_sample);
+                    const sample = try read_unencoded_sample(InterType, &bit_reader, wasted_bits, bits_per_sample);
                     if (channel_count == 1) {
                         @memset(subframe_samples, sample);
                     } else {
@@ -338,7 +341,7 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
                 0b000001 => { // Verbatim subframe
                     log_subframe.debug("Subframe #{d}: Verbatim subframe, {d} wasted bits", .{ channel, wasted_bits });
                     for (0..block_size) |i|
-                        subframe_samples[channel_count * i] = try read_unencoded_sample(SampleType, &bit_reader, wasted_bits, unencoded_samples_bit_depth);
+                        subframe_samples[channel_count * i] = try read_unencoded_sample(InterType, &bit_reader, wasted_bits, unencoded_samples_bit_depth);
                 },
                 0b001000...0b001100 => |t| { // Subframe with a fixed predictor of order v-8; i.e., 0, 1, 2, 3 or 4
                     if (samples_working_buffer.len < block_size)
@@ -348,7 +351,7 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
                     if (order > 4) return error.InvalidSubframeHeader;
                     // Unencoded warm-up samples (n = subframe's bits per sample * LPC order).
                     for (0..order) |i|
-                        samples_working_buffer[i] = try read_unencoded_sample(SampleType, &bit_reader, wasted_bits, unencoded_samples_bit_depth);
+                        samples_working_buffer[i] = try read_unencoded_sample(InterType, &bit_reader, wasted_bits, unencoded_samples_bit_depth);
 
                     log_subframe.debug("Subframe #{d}: Fixed predictor of order {d}, {d} wasted bits", .{ channel, order, wasted_bits });
                     log_subframe.debug("  Warmup Samples: {any}", .{samples_working_buffer[0..order]});
@@ -367,11 +370,8 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
                     }
 
                     // Interleave
-                    for (0..block_size) |i| {
-                        if (samples_working_buffer[i] < std.math.minInt(SampleType) or samples_working_buffer[i] > std.math.maxInt(SampleType))
-                            return error.FLPCOverflow;
+                    for (0..block_size) |i|
                         subframe_samples[channel_count * i] = @intCast(samples_working_buffer[i]);
-                    }
                 },
                 0b100000...0b111111 => |t| { // Subframe with a linear predictor of order v-31; i.e., 1 through 32 (inclusive)
                     if (samples_working_buffer.len < block_size)
@@ -380,7 +380,7 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
                     const order: u6 = @intCast(t - 31);
                     // Unencoded warm-up samples (n = subframe's bits per sample * LPC order).
                     for (0..order) |i|
-                        samples_working_buffer[i] = try read_unencoded_sample(SampleType, &bit_reader, wasted_bits, unencoded_samples_bit_depth);
+                        samples_working_buffer[i] = try read_unencoded_sample(InterType, &bit_reader, wasted_bits, unencoded_samples_bit_depth);
                     // (Predictor coefficient precision in bits)-1 (Note: 0b1111 is forbidden).
                     const coefficient_precision = (try bit_reader.readBitsNoEof(u4, 4)) + 1;
                     // Prediction right shift needed in bits.
@@ -409,11 +409,8 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
                         },
                     }
                     // Interleave
-                    for (0..block_size) |i| {
-                        if (samples_working_buffer[i] < std.math.minInt(SampleType) or samples_working_buffer[i] > std.math.maxInt(SampleType))
-                            return error.LPCOverflow;
+                    for (0..block_size) |i|
                         subframe_samples[channel_count * i] = @intCast(samples_working_buffer[i]);
-                    }
                 },
                 0b000010...0b000111, 0b001101...0b011111 => return error.InvalidSubframeHeader, // Reserved
             }
@@ -429,28 +426,33 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
         // Frame CRC
         _ = try reader.takeInt(u16, .big);
 
+        const frame_out_samples = output[frame_sample_offset..];
+        for (0..samples_per_frame) |i| {
+            // NOTE: Truncating here to avoid issues prior to stereo decorrelation, some samples might not fit before decorrelation, they will be overwritten.
+            frame_out_samples[i] = @truncate(frame_working_buffer[i]);
+        }
         // Stereo decorrelation
         switch (frame_header.channels) {
             .LRLeftSideStereo => {
                 for (0..block_size) |i| {
-                    const idx = frame_sample_offset + channel_count * i;
-                    output[idx + 1] = output[idx] - output[idx + 1];
+                    const idx = channel_count * i;
+                    frame_out_samples[idx + 1] = @intCast(frame_working_buffer[idx] - frame_working_buffer[idx + 1]);
                 }
             },
             .LRSideRightStereo => {
                 for (0..block_size) |i| {
-                    const idx = frame_sample_offset + channel_count * i;
-                    output[idx] += output[idx + 1];
+                    const idx = channel_count * i;
+                    frame_out_samples[idx] = @intCast(frame_working_buffer[idx] + frame_working_buffer[idx + 1]);
                 }
             },
             .LRMidSideStereo => {
                 for (0..block_size) |i| {
-                    const idx = frame_sample_offset + channel_count * i;
-                    var mid = @as(InterType, output[idx]) << 1;
-                    const side = output[idx + 1];
+                    const idx = channel_count * i;
+                    var mid = frame_working_buffer[idx] << 1;
+                    const side = frame_working_buffer[idx + 1];
                     mid += side & 1;
-                    output[idx] = @intCast((mid + side) >> 1);
-                    output[idx + 1] = @intCast((mid - side) >> 1);
+                    frame_out_samples[idx] = @intCast((mid + side) >> 1);
+                    frame_out_samples[idx + 1] = @intCast((mid - side) >> 1);
                 }
             },
             else => {},
