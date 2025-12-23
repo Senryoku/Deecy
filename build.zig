@@ -102,13 +102,6 @@ pub fn build(b: *std.Build) void {
             deecy_module.linkSystemLibrary("winmm", .{});
             // XInput for gamepad rumble
             deecy_module.linkSystemLibrary("xinput1_4", .{});
-            const rumble_module = b.createModule(.{
-                .target = target,
-                .optimize = optimize,
-                .root_source_file = b.path("ext/rumble/src/rumble.zig"),
-            });
-            rumble_module.addIncludePath(b.path("ext/rumble/src/"));
-            deecy_module.addImport("rumble", rumble_module);
         },
         else => {},
     }

@@ -662,16 +662,33 @@ pub const VibrationPack = struct {
         /// Vibration frequency setting bit
         freq: u8 = 0,
         /// Vibration inclination period setting bit
+        ///   Specifies the vibration inclination period.
+        ///   Is specified when either convergence or divergence is used. When convergence and divergence are not used, the arbitrary value "00h" is used.
+        ///   1 convergent (or 1 divergent) vibration is completed in the period specified in Inc.
+        ///   Specifying Inc="00h" when convergence or divergence are selected results in an error.
         inc: u8 = 0,
+
+        pub fn frequency(self: @This()) f32 {
+            const freq: f32 = @floatFromInt(self.freq);
+            return (freq + 1.0) / 2.0;
+        }
+
+        pub fn intensity_change(self: @This(), freq: f32) f32 {
+            if (self.cnt) return 0;
+            const abs = (1.0 / 7.0) * @as(f32, @floatFromInt(self.inc)) * 1.0 / freq;
+            if (self.inh) return -abs;
+            if (self.exh) return abs;
+            return 0;
+        }
     };
 
     pub const Callback = struct {
-        function: ?*const fn (*anyopaque, f32) void,
+        function: ?*const fn (*anyopaque, f32, f32) void,
         context: *anyopaque,
 
-        pub fn call(self: @This(), strenght: f32) void {
+        pub fn call(self: @This(), power: f32, change: f32) void {
             if (self.function != null)
-                self.function.?(self.context, strenght);
+                self.function.?(self.context, power, change);
         }
     };
 
@@ -690,6 +707,9 @@ pub const VibrationPack = struct {
 
     callback: ?Callback = null,
     vibration_source: VibrationConfiguration = .{},
+
+    positive_peak: f32 = 0.0,
+    negative_peak: f32 = 0.0,
 
     pub fn init(callback: Callback) @This() {
         return .{ .callback = callback };
@@ -769,14 +789,26 @@ pub const VibrationPack = struct {
         switch (function) {
             FunctionCodesMask.Vibration.as_u32() => {
                 const value: VibrationConfiguration = @bitCast(data[0]);
-                maple_log.debug("[VibrationPack.set_condition] Vibration settings: {any}", .{value});
+                maple_log.warn("[VibrationPack.set_condition] Vibration settings: {any}", .{value});
                 if (value.vn != 1) maple_log.warn(termcolor.yellow("Only vibration source 1 is supported: {any}"), .{value});
                 self.vibration_source = value;
                 const frequency = switch (Settings.va) {
-                    .MinMax => @as(f32, @floatFromInt(value.freq)) / 16.0 * @as(f32, @floatFromInt(Settings.fm1 - Settings.fm0)),
-                    else => 0, // Unimplemented
+                    .MinMax => value.frequency(),
+                    .Fixed => (@as(f32, @floatFromInt(Settings.fm0)) + 1.0) / 2.0,
+                    else => 0.0,
                 };
-                if (self.callback) |c| c.call(frequency); // TODO: What's a good API here? Strength and Duration as floats?
+                // "When no axis direction is specified (when VD='00'), the + peak value and the - peak value cannot
+                //  be specified concurrently. Concurrent configuration results in an error."
+                if (value.ppow != 0) {
+                    self.positive_peak = @floatFromInt(value.ppow);
+                } else if (value.mpow != 0) {
+                    self.negative_peak = @floatFromInt(value.mpow);
+                } else {
+                    self.positive_peak = 0.0;
+                    self.negative_peak = 0.0;
+                }
+                const power = (self.positive_peak + self.negative_peak) / 14.0;
+                if (self.callback) |c| c.call(power, value.intensity_change(frequency));
             },
             else => maple_log.err("Unimplemented VibrationPack.set_condition for function: {f}", .{@as(FunctionCodesMask, @bitCast(function))}),
         }
