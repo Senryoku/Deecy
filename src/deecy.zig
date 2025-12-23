@@ -818,11 +818,8 @@ pub fn update(self: *@This(), delta_time: f32) void {
 
 fn update_rumble(self: *@This(), dt: f32) void {
     for (&self.controllers) |*maybe| {
-        if (maybe.*) |*controller| {
-            if (controller.rumble.active) {
-                controller.update(dt);
-            }
-        }
+        if (maybe.*) |*controller|
+            controller.update(dt);
     }
 }
 
