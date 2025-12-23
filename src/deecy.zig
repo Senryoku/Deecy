@@ -886,24 +886,6 @@ pub fn poll_controllers(self: *@This()) void {
 pub fn load_and_start(self: *@This(), path: []const u8) !void {
     self.pause();
     try self.load_disc(path);
-    if (self.config.region == .Auto) {
-        self.dc.set_region(self.dc.gdrom.disc.?.get_region()) catch |err| {
-            switch (err) {
-                error.FileNotFound => return error.MissingFlash,
-                else => return err,
-            }
-        };
-    }
-    if (self.config.video_cable == .Auto) {
-        self.dc.cable_type = .VGA;
-        if (self.dc.gdrom.disc.?.get_ip_bin_header()) |ip_bin| {
-            if (!ip_bin.peripherals().vga) {
-                self.dc.cable_type = .RGB;
-                deecy_log.info("Game claims not to support VGA, defaulting to RGB.", .{});
-            }
-        }
-    }
-    try self.on_game_load();
     try self.dc.reset();
     self.start();
     self.display_ui = false;
@@ -946,6 +928,42 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
     } else {
         self.dc.gdrom.disc = try .init(self._allocator, path);
     }
+
+    if (self.config.region == .Auto) {
+        self.dc.set_region(self.dc.gdrom.disc.?.get_region()) catch |err| {
+            switch (err) {
+                error.FileNotFound => return error.MissingFlash,
+                else => return err,
+            }
+        };
+    }
+    if (self.config.video_cable == .Auto) {
+        self.dc.cable_type = .VGA;
+        if (self.dc.gdrom.disc.?.get_ip_bin_header()) |ip_bin| {
+            if (!ip_bin.peripherals().vga) {
+                self.dc.cable_type = .RGB;
+                deecy_log.info("Game claims not to support VGA, defaulting to RGB.", .{});
+            }
+        }
+    }
+
+    if (self.config.per_game_vmu) try self.load_per_game_vmu();
+    try self.check_save_state_slots();
+
+    var title = try std.ArrayList(u8).initCapacity(self._allocator, 64);
+    defer title.deinit(self._allocator);
+    try title.appendSlice(self._allocator, "Deecy");
+    if (self.get_product_name()) |name| {
+        try title.appendSlice(self._allocator, " - ");
+        try title.appendSlice(self._allocator, name);
+        if (self.get_product_id()) |id| {
+            try title.appendSlice(self._allocator, " (");
+            try title.appendSlice(self._allocator, id);
+            try title.append(self._allocator, ')');
+        }
+    }
+    try title.append(self._allocator, 0);
+    self.window.setTitle(title.items[0 .. title.items.len - 1 :0]);
 }
 
 pub fn get_product_name(self: *const @This()) ?[]const u8 {
@@ -966,26 +984,6 @@ fn userdata_game_directory(self: *@This()) !?[]const u8 {
     defer self._allocator.free(folder_name);
     const path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), folder_name });
     return path;
-}
-
-pub fn on_game_load(self: *@This()) !void {
-    if (self.config.per_game_vmu) try self.load_per_game_vmu();
-    try self.check_save_state_slots();
-
-    var title = try std.ArrayList(u8).initCapacity(self._allocator, 64);
-    defer title.deinit(self._allocator);
-    try title.appendSlice(self._allocator, "Deecy");
-    if (self.get_product_name()) |name| {
-        try title.appendSlice(self._allocator, " - ");
-        try title.appendSlice(self._allocator, name);
-        if (self.get_product_id()) |id| {
-            try title.appendSlice(self._allocator, " (");
-            try title.appendSlice(self._allocator, id);
-            try title.append(self._allocator, ')');
-        }
-    }
-    try title.append(self._allocator, 0);
-    self.window.setTitle(title.items[0 .. title.items.len - 1 :0]);
 }
 
 // Caller owns the returned ArrayList

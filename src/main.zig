@@ -263,9 +263,6 @@ pub fn main() !void {
         std.log.info("Loading Disc: {s}...", .{path});
 
         try d.load_disc(path);
-        if (d.config.region == .Auto)
-            try d.dc.set_region(d.dc.gdrom.disc.?.get_region());
-        try d.on_game_load();
 
         if (skip_bios) {
             try dc.skip_bios(true);
