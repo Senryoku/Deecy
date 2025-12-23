@@ -811,7 +811,7 @@ pub fn draw(self: *@This()) !void {
                         }
                         switch (peripheral.*) {
                             .Controller => |*controller| {
-                                var capabilities: MapleModule.InputCapabilities = @bitCast(controller.subcapabilities[0]);
+                                var capabilities: MapleModule.Controller.InputCapabilities = @bitCast(controller.subcapabilities[0]);
 
                                 if (zgui.collapsingHeader("Button Check", .{})) {
                                     zgui.textColored(if (controller.buttons.a == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[A] ", .{});
