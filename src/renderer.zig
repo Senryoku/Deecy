@@ -798,7 +798,9 @@ pub const Renderer = struct {
     fog_lut: [0x80]u32 = @splat(0),
     guest_framebuffer_size: struct { width: u32, height: u32 } = .{ .width = 640, .height = 480 },
     global_clip: struct { x: struct { min: u16, max: u16 }, y: struct { min: u16, max: u16 } } = .{ .x = .{ .min = 0, .max = 0 }, .y = .{ .min = 0, .max = 0 } },
+    fb_r_ctrl: HollyModule.FB_R_CTRL = undefined,
     write_back_parameters: HollyModule.Holly.WritebackParameters = undefined,
+    palette_bgra: []u32,
 
     // Some memory to avoid repeated allocations accross frames.
     vertices: std.ArrayList(Vertex),
@@ -1283,6 +1285,7 @@ pub const Renderer = struct {
             .render_passes = .empty,
             .ta_lists = .empty,
 
+            .palette_bgra = try allocator.alloc(u32, 1024),
             ._scratch_pad = try allocator.allocWithOptions(u8, 4 * 1024 * 1024, .@"4", null),
 
             ._gctx = gctx,
@@ -1507,6 +1510,7 @@ pub const Renderer = struct {
         self.deinit_screen_textures();
 
         self._allocator.free(self._scratch_pad);
+        self._allocator.free(self.palette_bgra);
 
         self.modifier_volume_vertices.deinit(self._allocator);
         self.strips_metadata.deinit(self._allocator);
@@ -1654,7 +1658,8 @@ pub const Renderer = struct {
             self.render_passes.shrinkRetainingCapacity(region_count);
         }
 
-        self.write_back_parameters = dc.gpu.get_write_back_parameters();
+        self.update_registers(&dc.gpu);
+        self.update_palette(&dc.gpu);
 
         // Process and render immediately when rendering to a texture. Decouples it from the host refresh rate, and some games require the result to be visible in guest VRAM ASAP.
         // Othersize, let the main thread process the list asynchronously unless explicitly disabled.
@@ -1908,7 +1913,8 @@ pub const Renderer = struct {
         }
     }
 
-    // Locks gctx_queue_mutex.
+    /// Uploads framebuffer from guest VRAM to host texture.
+    /// Locks gctx_queue_mutex.
     pub fn update_framebuffer_texture(self: *@This(), holly: *const HollyModule.Holly) void {
         const SPG_CONTROL = holly.read_register(HollyModule.SPG_CONTROL, .SPG_CONTROL);
         const FB_R_CTRL = holly.read_register(HollyModule.FB_R_CTRL, .FB_R_CTRL);
@@ -1987,8 +1993,84 @@ pub const Renderer = struct {
         );
     }
 
+    /// Assumes gctx_queue_mutex is locked: Modifies parameters used in rendering.
+    fn update_registers(self: *@This(), gpu: *const HollyModule.Holly) void {
+        self.pt_alpha_ref = @as(f32, @floatFromInt(gpu.read_register(u8, .PT_ALPHA_REF))) / 255.0;
+
+        self.fpu_shad_scale = gpu.read_register(HollyModule.FPU_SHAD_SCALE, .FPU_SHAD_SCALE).get_factor();
+
+        const col_pal = gpu.read_register(PackedColor, .FOG_COL_RAM);
+        const col_vert = gpu.read_register(PackedColor, .FOG_COL_VERT);
+        self.fog_col_pal = fRGBA.from_packed(col_pal, true);
+        self.fog_col_vert = fRGBA.from_packed(col_vert, true);
+
+        const fog_density = gpu.read_register(u16, .FOG_DENSITY);
+        const fog_density_mantissa = (fog_density >> 8) & 0xFF;
+        const fog_density_exponent: i8 = @bitCast(@as(u8, @truncate(fog_density & 0xFF)));
+        self.fog_density = @as(f32, @floatFromInt(fog_density_mantissa)) / 128.0 * std.math.pow(f32, 2.0, @floatFromInt(fog_density_exponent));
+        for (0..0x80) |i| {
+            self.fog_lut[i] = gpu.get_fog_table()[i] & 0x0000FFFF;
+        }
+
+        // NOTE: The renderer will scale whatever the DC outputs to the host framebuffer size.
+        //       This isn't the correct behaviour, but I expect a limited set of correct configurations:
+        //         ta_glob_tile_clip.tile_x_num = 19 for a 640 pixels wide framebuffer.
+        //         ta_glob_tile_clip.tile_x_num = 39 with 0.5 scaling (see SCALER_CTL) still for a 640 pixels wide framebuffer.
+        //       A varity of combinations for the vertical resolution (depending on interlacing, line doubling...) that I don't
+        //       currently handle, but always resulting in a 480 pixels high framebuffer.
+        const ta_glob_tile_clip = gpu.read_register(HollyModule.TA_GLOB_TILE_CLIP, .TA_GLOB_TILE_CLIP);
+        if (ta_glob_tile_clip.tile_x_num != 19 and ta_glob_tile_clip.tile_x_num != 39)
+            if (Once(@src())) log.warn(termcolor.yellow("Unusual TA_GLOB_TILE_CLIP: tile_x_num={d}, tile_y_num={d}."), .{ ta_glob_tile_clip.tile_x_num, ta_glob_tile_clip.tile_y_num });
+        self.guest_framebuffer_size = .{
+            .width = 32 * @as(u32, ta_glob_tile_clip.tile_x_num + 1),
+            .height = 32 * @as(u32, ta_glob_tile_clip.tile_y_num + 1),
+        };
+
+        self.fb_r_ctrl = gpu.read_register(HollyModule.FB_R_CTRL, .FB_R_CTRL);
+        self.write_back_parameters = gpu.get_write_back_parameters();
+        const vo_control = self.write_back_parameters.video_out_ctrl;
+
+        // I suspect I'll have to come back to this: Printing some information to help detect unusual configurations.
+        if (vo_control.pixel_double)
+            if (Once(@src())) log.warn(termcolor.yellow("VO_CONTROL.pixel_double is set: {any}"), .{vo_control});
+        if (self.write_back_parameters.scaler_ctl.get_x_scale_factor() != 1.0 or self.write_back_parameters.scaler_ctl.get_y_scale_factor() != 1.0)
+            if (Once(@src())) log.warn(termcolor.yellow("Unusual SCALER_CTL: {any}"), .{self.write_back_parameters.scaler_ctl});
+        if (self.fb_r_ctrl.line_double) // Not handled: Emit a warning.
+            if (Once(@src())) log.warn(termcolor.yellow("FB_R_CTRL.line_double is set: {any}"), .{self.fb_r_ctrl});
+
+        const horizontal_scaling: u16 = if (vo_control.pixel_double) 2 else 1;
+        // vclk_div == 0 for halved pixel clock (480i or 240p); vclk_div == 1 for VGA mode (480p)
+        const vertical_scaling: u16 = if (self.fb_r_ctrl.vclk_div == 0) 2 else 1;
+
+        self.global_clip.x.min = horizontal_scaling * self.write_back_parameters.x_clip.min;
+        self.global_clip.x.max = horizontal_scaling * (@as(u16, self.write_back_parameters.x_clip.max) + 1);
+        self.global_clip.y.min = vertical_scaling * self.write_back_parameters.y_clip.min;
+        self.global_clip.y.max = vertical_scaling * (@as(u16, self.write_back_parameters.y_clip.max) + 1);
+    }
+
+    /// Assumes gctx_queue_mutex is locked: Modifies parameters used in rendering.
+    pub fn update_palette(self: *@This(), gpu: *const HollyModule.Holly) void {
+        // TODO: Check if the palette has changed (palette hash) instead of updating unconditionally?
+        const palette_ram = gpu.get_palette();
+        const palette_ctrl_ram: u2 = @truncate(gpu.read_register(u32, .PAL_RAM_CTRL) & 0b11);
+
+        for (0..palette_ram.len) |i| {
+            self.palette_bgra[i] = switch (palette_ctrl_ram) {
+                // ARGB1555, RGB565, ARGB4444. These happen to match the values of TexturePixelFormat.
+                0x0, 0x1, 0x2 => std.mem.bytesToValue(u32, &(Color16{ .value = @truncate(palette_ram[i]) }).bgra(@enumFromInt(palette_ctrl_ram), true)),
+                // ARGB8888
+                0x3 => @bitCast(palette_ram[i]),
+            };
+        }
+    }
+
+    // Assumes _gctx_queue_mutex is locked.
+    pub fn upload_palette(self: *const @This()) void {
+        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.palette_buffer).?, 0, u8, std.mem.sliceAsBytes(self.palette_bgra));
+    }
+
     // Pulls 3 vertices from the address pointed by ISP_BACKGND_T and places them at the front of the vertex buffer.
-    // Assumes _gctx_queue_mutex is locked
+    // Assumes _gctx_queue_mutex is locked.
     pub fn update_background(self: *@This(), gpu: *const HollyModule.Holly) !void {
         const tags = gpu.read_register(HollyModule.ISP_BACKGND_T, .ISP_BACKGND_T);
         const param_base: u32 = self.on_render_start_param_base;
@@ -2150,27 +2232,10 @@ pub const Renderer = struct {
         std.debug.assert(FirstIndex == indices.len);
     }
 
-    // Assumes _gctx_queue_mutex is locked
-    pub fn update_palette(self: *@This(), gpu: *const HollyModule.Holly) !void {
-        // TODO: Check if the palette has changed (palette hash) instead of updating unconditionally?
-
-        const palette_ram = gpu.get_palette();
-        const palette_ctrl_ram: u2 = @truncate(gpu.read_register(u32, .PAL_RAM_CTRL) & 0b11);
-
-        for (0..palette_ram.len) |i| {
-            self.bgra_scratch_pad()[i] = switch (palette_ctrl_ram) {
-                // ARGB1555, RGB565, ARGB4444. These happen to match the values of TexturePixelFormat.
-                0x0, 0x1, 0x2 => (Color16{ .value = @truncate(palette_ram[i]) }).bgra(@enumFromInt(palette_ctrl_ram), true),
-                // ARGB8888
-                0x3 => @bitCast(palette_ram[i]),
-            };
-        }
-        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.palette_buffer).?, 0, u8, self._scratch_pad[0 .. 4 * palette_ram.len]);
-    }
-
-    // Assumes gctx_queue_mutex is locked.
-    // NOTE: Locking gctx_queue_mutex is necessary because of this function will upload textures and buffers to the GPU.
-    //       But! It incidently also protect concurrent access to `ta_lists` and `render_passes`.
+    /// Updates and transfers indices and vertices buffer.
+    /// Assumes gctx_queue_mutex is locked.
+    /// NOTE: Locking gctx_queue_mutex is necessary because of this function will upload textures and buffers to the GPU.
+    ///       But! It incidently also protect concurrent access to `ta_lists` and `render_passes`.
     pub fn update(self: *@This(), gpu: *const HollyModule.Holly) !void {
         self.vertices.clearRetainingCapacity();
         self.strips_metadata.clearRetainingCapacity();
@@ -2187,59 +2252,8 @@ pub const Renderer = struct {
         self.min_depth = std.math.floatMax(f32);
         self.max_depth = 0.0;
 
-        self.pt_alpha_ref = @as(f32, @floatFromInt(gpu.read_register(u8, .PT_ALPHA_REF))) / 255.0;
-
-        self.fpu_shad_scale = gpu.read_register(HollyModule.FPU_SHAD_SCALE, .FPU_SHAD_SCALE).get_factor();
-
-        const col_pal = gpu.read_register(PackedColor, .FOG_COL_RAM);
-        const col_vert = gpu.read_register(PackedColor, .FOG_COL_VERT);
-
-        self.fog_col_pal = fRGBA.from_packed(col_pal, true);
-        self.fog_col_vert = fRGBA.from_packed(col_vert, true);
-        const fog_density = gpu.read_register(u16, .FOG_DENSITY);
-        const fog_density_mantissa = (fog_density >> 8) & 0xFF;
-        const fog_density_exponent: i8 = @bitCast(@as(u8, @truncate(fog_density & 0xFF)));
-        self.fog_density = @as(f32, @floatFromInt(fog_density_mantissa)) / 128.0 * std.math.pow(f32, 2.0, @floatFromInt(fog_density_exponent));
-        for (0..0x80) |i| {
-            self.fog_lut[i] = gpu.get_fog_table()[i] & 0x0000FFFF;
-        }
-
-        // NOTE: The renderer will scale whatever the DC outputs to the host framebuffer size.
-        //       This isn't the correct behaviour, but I expect a limited set of correct configurations:
-        //         ta_glob_tile_clip.tile_x_num = 19 for a 640 pixels wide framebuffer.
-        //         ta_glob_tile_clip.tile_x_num = 39 with 0.5 scaling (see SCALER_CTL) still for a 640 pixels wide framebuffer.
-        //       A varity of combinations for the vertical resolution (depending on interlacing, line doubling...) that I don't
-        //       currently handle, but always resulting in a 480 pixels high framebuffer.
-        const ta_glob_tile_clip = gpu.read_register(HollyModule.TA_GLOB_TILE_CLIP, .TA_GLOB_TILE_CLIP);
-        if (ta_glob_tile_clip.tile_x_num != 19 and ta_glob_tile_clip.tile_x_num != 39)
-            if (Once(@src())) log.warn(termcolor.yellow("Unusual TA_GLOB_TILE_CLIP: tile_x_num={d}, tile_y_num={d}."), .{ ta_glob_tile_clip.tile_x_num, ta_glob_tile_clip.tile_y_num });
-        self.guest_framebuffer_size = .{
-            .width = 32 * @as(u32, ta_glob_tile_clip.tile_x_num + 1),
-            .height = 32 * @as(u32, ta_glob_tile_clip.tile_y_num + 1),
-        };
-
-        const vo_control = self.write_back_parameters.video_out_ctrl;
-        const fb_r_ctrl = gpu.read_register(HollyModule.FB_R_CTRL, .FB_R_CTRL);
-
-        // I suspect I'll have to come back to this: Printing some information to help detect unusual configurations.
-        if (vo_control.pixel_double)
-            if (Once(@src())) log.warn(termcolor.yellow("VO_CONTROL.pixel_double is set: {any}"), .{vo_control});
-        if (self.write_back_parameters.scaler_ctl.get_x_scale_factor() != 1.0 or self.write_back_parameters.scaler_ctl.get_y_scale_factor() != 1.0)
-            if (Once(@src())) log.warn(termcolor.yellow("Unusual SCALER_CTL: {any}"), .{self.write_back_parameters.scaler_ctl});
-        if (fb_r_ctrl.line_double) // Not handled: Emit a warning.
-            if (Once(@src())) log.warn(termcolor.yellow("FB_R_CTRL.line_double is set: {any}"), .{fb_r_ctrl});
-
-        const horizontal_scaling: u16 = if (vo_control.pixel_double) 2 else 1;
-        // vclk_div == 0 for halved pixel clock (480i or 240p); vclk_div == 1 for VGA mode (480p)
-        const vertical_scaling: u16 = if (fb_r_ctrl.vclk_div == 0) 2 else 1;
-
-        self.global_clip.x.min = horizontal_scaling * self.write_back_parameters.x_clip.min;
-        self.global_clip.x.max = horizontal_scaling * (@as(u16, self.write_back_parameters.x_clip.max) + 1);
-        self.global_clip.y.min = vertical_scaling * self.write_back_parameters.y_clip.min;
-        self.global_clip.y.max = vertical_scaling * (@as(u16, self.write_back_parameters.y_clip.max) + 1);
-
         try self.update_background(gpu);
-        try self.update_palette(gpu);
+        self.upload_palette();
 
         var modifier_volumes_offset: usize = 0;
 
