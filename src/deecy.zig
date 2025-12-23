@@ -7,7 +7,6 @@ const zglfw = @import("zglfw");
 const zgpu = @import("zgpu");
 const zgui = @import("zgui");
 const zaudio = @import("zaudio");
-const rumble = @import("rumble.zig");
 
 extern fn glfwSetWindowIcon(window: *zglfw.Window, count: i32, images: [*]const zglfw.Image) void;
 const icon_48_data = @embedFile("assets/icon-48.rgba");
@@ -294,7 +293,36 @@ _dc_thread: ?std.Thread = null, // Used for unlimited frame rate, i.e. when real
 enable_jit: bool = true,
 breakpoints: std.ArrayList(u32),
 
-controllers: [4]?struct { id: zglfw.Joystick, deadzone: f32 = 0.1 } = @splat(null),
+controllers: [4]?struct {
+    id: zglfw.Joystick,
+    rumble: struct {
+        active: bool = false,
+        power: f32 = 0,
+        change: f32 = 0,
+    } = .{},
+    // FIXME: Move to config?
+    deadzone: f32 = 0.1,
+
+    pub fn set_rumble(self: *@This(), power: f32, change: f32) bool {
+        self.rumble = .{
+            .active = power != 0 or change != 0,
+            .power = std.math.clamp(power, 0.0, 1.0),
+            .change = change,
+        };
+        return self.id.setRumble(self.rumble.power, self.rumble.power);
+    }
+
+    pub fn update(self: *@This(), dt: f32) void {
+        if (self.rumble.active) {
+            self.rumble.power += self.rumble.change * dt;
+            if (self.rumble.power <= 0)
+                self.rumble = .{};
+            if (self.rumble.change >= 0 and self.rumble.power > 1)
+                self.rumble = .{};
+            _ = self.id.setRumble(self.rumble.power, self.rumble.power);
+        }
+    }
+} = @splat(null),
 
 display_ui: bool = true,
 ui: *UI = undefined,
@@ -690,9 +718,9 @@ fn VibrationCallback(comptime Slot: u8) *const fn (*Self, f32, f32) void {
     return struct {
         fn handler(self: *Self, power: f32, change: f32) void {
             deecy_log.warn("Vibration {d}: Power={d}, Change={d}", .{ Slot, power, change });
-            if (self.controllers[Slot]) |j| {
+            if (self.controllers[Slot]) |*j| {
                 if (j.id.isPresent()) {
-                    if (!rumble.set_rumble(j.id, power, power))
+                    if (!j.set_rumble(power, change))
                         deecy_log.err("Failed to set gamepad rumble", .{});
                 }
             }
@@ -779,12 +807,30 @@ pub fn stop(self: *@This()) !void {
 }
 
 pub fn update(self: *@This(), delta_time: f32) void {
-    rumble.update_rumble(delta_time);
+    self.update_rumble(delta_time);
     self.poll_controllers();
     self.dc.maple.flush_vmus();
     if (self._stop_request) {
         self.pause();
         self._stop_request = false;
+    }
+}
+
+fn update_rumble(self: *@This(), dt: f32) void {
+    for (&self.controllers) |*maybe| {
+        if (maybe.*) |*controller| {
+            if (controller.rumble.active) {
+                controller.update(dt);
+            }
+        }
+    }
+}
+
+pub fn stop_rumble(self: *@This()) void {
+    for (&self.controllers) |*maybe| {
+        if (maybe.*) |*controller| {
+            _ = controller.set_rumble(0, 0);
+        }
     }
 }
 
@@ -1096,7 +1142,7 @@ pub fn pause(self: *@This()) void {
         }
         self.dc.maple.flush_vmus();
     }
-    rumble.stop_all();
+    self.stop_rumble();
 }
 
 pub fn set_realtime(self: *@This(), realtime: bool) void {

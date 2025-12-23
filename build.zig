@@ -100,8 +100,6 @@ pub fn build(b: *std.Build) void {
             deecy_module.linkSystemLibrary("dwmapi", .{});
             // Windows Multimedia API for timeBeginPeriod
             deecy_module.linkSystemLibrary("winmm", .{});
-            // XInput for gamepad rumble
-            deecy_module.linkSystemLibrary("xinput1_4", .{});
         },
         else => {},
     }
