@@ -359,7 +359,7 @@ pub const Instruction = union(enum) {
     Sarx: struct { dst: Register, src: Operand, amount: Register },
     Shlx: struct { dst: Register, src: Operand, amount: Register },
     Shrx: struct { dst: Register, src: Operand, amount: Register },
-    Jmp: struct { condition: Condition, dst: union(enum) { rel: i32, abs_indirect: Operand } },
+    Jmp: struct { condition: Condition, dst: union(enum) { rel: i32, abs_indirect: Operand, abs: u64 } },
     BlockEpilogue: void,
     Convert: struct { dst: Operand, src: Operand },
     // FIXME: This only exists because I haven't added a way to specify the size the GPRs.
@@ -1847,6 +1847,26 @@ pub const Emitter = struct {
                         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 4, .r_m = encode(reg) });
                     },
                     else => std.debug.panic("Unsupported indirect jump destination: {f}", .{op}),
+                }
+            },
+            .abs => |op| {
+                if (condition != .Always) return error.UnsupportedAbsoluteJumpCondition;
+                const rip: i64 = @intCast(@intFromPtr(self.block_buffer.ptr) + self.block_size);
+                const rel_8 = @as(i64, @intCast(op)) - (rip + 1 + 1);
+                const rel_32 = @as(i64, @intCast(op)) - (rip + 1 + 4);
+                if (rel_8 >= std.math.minInt(i8) and rel_8 <= std.math.maxInt(i8)) {
+                    try self.emit(u8, 0xEB);
+                    try self.emit(u8, @bitCast(@as(i8, @intCast(rel_8))));
+                } else if (rel_32 >= std.math.minInt(i32) and rel_32 <= std.math.maxInt(i32)) {
+                    try self.emit(u8, 0xE9);
+                    try self.emit(u32, @bitCast(@as(i32, @intCast(rel_32))));
+                } else {
+                    // Turn into
+                    //   mov rax, op
+                    //   jmp rax
+                    try self.mov(.{ .reg64 = .rax }, .{ .imm64 = op }, true);
+                    try self.emit(u8, 0xFF);
+                    try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 4, .r_m = encode(Register.rax) });
                 }
             },
         }

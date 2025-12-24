@@ -328,11 +328,6 @@ pub const JITContext = struct {
     in_delay_slot: bool = false,
     force_exit: bool = false,
 
-    read_8_ptr: *const anyopaque,
-    read_16_ptr: *const anyopaque,
-    read_32_ptr: *const anyopaque,
-    read_64_ptr: *const anyopaque,
-
     gpr_cache: RegisterCache(JIT.Register, if (Architecture.JITABI == .Win64) 5 else 4) = .{
         .highest_saved_register_used = 0,
         .entries = if (Architecture.JITABI == .Win64) .{
@@ -372,7 +367,7 @@ pub const JITContext = struct {
         },
     },
 
-    pub fn init(cpu: *sh4.SH4, read_8_ptr: *const anyopaque, read_16_ptr: *const anyopaque, read_32_ptr: *const anyopaque, read_64_ptr: *const anyopaque) @This() {
+    pub fn init(cpu: *sh4.SH4) @This() {
         const physical_pc = cpu.get_physical_pc();
 
         if (!((physical_pc >= 0x00000000 and physical_pc < 0x00020000) or (physical_pc >= 0x0C000000 and physical_pc < 0x10000000)))
@@ -389,11 +384,6 @@ pub const JITContext = struct {
             .instructions = @ptrCast(@alignCast(cpu._dc.?._get_memory(physical_pc))),
             .fpscr_sz = if (cpu.fpscr.sz == 1) .Double else .Single,
             .fpscr_pr = if (cpu.fpscr.pr == 1) .Double else .Single,
-
-            .read_8_ptr = read_8_ptr,
-            .read_16_ptr = read_16_ptr,
-            .read_32_ptr = read_32_ptr,
-            .read_64_ptr = read_64_ptr,
         };
     }
 
@@ -562,14 +552,6 @@ pub const SH4JIT = struct {
 
     enter_block_offset: usize = 0,
     return_offset: usize = 0,
-    read_8_offset: usize = 0,
-    read_16_offset: usize = 0,
-    read_32_offset: usize = 0,
-    read_64_offset: usize = 0,
-    write_8_offset: usize = 0,
-    write_16_offset: usize = 0,
-    write_32_offset: usize = 0,
-    write_64_offset: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator, ram_base: ?[*]u8) !@This() {
         var r: @This() = .{
@@ -658,114 +640,90 @@ pub const SH4JIT = struct {
             self.block_cache.cursor += e.block_size;
             self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
         }
-        {
-            self.read_8_offset = self.block_cache.cursor;
+        if (FastMem) {
             var b = &self._working_block;
-            b.clearRetainingCapacity();
-            try b.call(_out_of_line_read8);
-            const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
-            // self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
-            // self.block_cache.cursor += block_size + 1;
-            self.block_cache.cursor += block_size;
-            self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+            {
+                VirtualAddressSpace.VAS.read_8_offset = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
+                b.clearRetainingCapacity();
+
+                try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = @intFromPtr(&_out_of_line_read8) } } });
+                const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+
+                self.block_cache.cursor += block_size;
+                self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+            }
+            {
+                VirtualAddressSpace.VAS.read_16_offset = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
+                b.clearRetainingCapacity();
+
+                try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = @intFromPtr(&_out_of_line_read16) } } });
+                const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+
+                self.block_cache.cursor += block_size;
+                self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+            }
+            {
+                VirtualAddressSpace.VAS.read_32_offset = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
+                b.clearRetainingCapacity();
+
+                try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = @intFromPtr(&_out_of_line_read32) } } });
+                const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+
+                self.block_cache.cursor += block_size;
+                self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+            }
+            {
+                VirtualAddressSpace.VAS.read_64_offset = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
+                b.clearRetainingCapacity();
+
+                try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = @intFromPtr(&_out_of_line_read64) } } });
+                const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+
+                self.block_cache.cursor += block_size;
+                self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+            }
+
+            {
+                VirtualAddressSpace.VAS.write_8_offset = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
+                b.clearRetainingCapacity();
+
+                try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = @intFromPtr(&_out_of_line_write8) } } });
+                const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+
+                self.block_cache.cursor += block_size;
+                self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+            }
+            {
+                VirtualAddressSpace.VAS.write_16_offset = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
+                b.clearRetainingCapacity();
+
+                try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = @intFromPtr(&_out_of_line_write16) } } });
+                const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+
+                self.block_cache.cursor += block_size;
+                self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+            }
+            {
+                VirtualAddressSpace.VAS.write_32_offset = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
+                b.clearRetainingCapacity();
+
+                try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = @intFromPtr(&_out_of_line_write32) } } });
+                const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+
+                self.block_cache.cursor += block_size;
+                self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+            }
+            {
+                VirtualAddressSpace.VAS.write_64_offset = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
+                b.clearRetainingCapacity();
+
+                try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = @intFromPtr(&_out_of_line_write64) } } });
+                const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+
+                self.block_cache.cursor += block_size;
+                self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+            }
         }
-        {
-            self.read_16_offset = self.block_cache.cursor;
-            var b = &self._working_block;
-            b.clearRetainingCapacity();
-
-            try b.call(_out_of_line_read16);
-            const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
-            // self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
-            // self.block_cache.cursor += block_size + 1;
-            self.block_cache.cursor += block_size;
-            self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
-        }
-        {
-            self.read_32_offset = self.block_cache.cursor;
-            var b = &self._working_block;
-            b.clearRetainingCapacity();
-
-            try b.call(_out_of_line_read32);
-            const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
-            // self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
-            // self.block_cache.cursor += block_size + 1;
-            self.block_cache.cursor += block_size;
-            self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
-        }
-        {
-            self.read_64_offset = self.block_cache.cursor;
-            var b = &self._working_block;
-            b.clearRetainingCapacity();
-
-            try b.call(_out_of_line_read64);
-            const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
-            // self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
-            // self.block_cache.cursor += block_size + 1;
-            self.block_cache.cursor += block_size;
-            self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
-        }
-
-        {
-            self.write_8_offset = self.block_cache.cursor;
-            var b = &self._working_block;
-            b.clearRetainingCapacity();
-
-            try b.mov(.{ .reg = ReturnRegister }, .{ .imm64 = 0 }); // Zero-out upper bits of the return value. Not sure if this is needed, still debugging :)
-            try b.call(_out_of_line_write8);
-            const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
-            // self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
-            // self.block_cache.cursor += block_size + 1;
-            self.block_cache.cursor += block_size;
-            self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
-        }
-        {
-            self.write_16_offset = self.block_cache.cursor;
-            var b = &self._working_block;
-            b.clearRetainingCapacity();
-
-            try b.mov(.{ .reg = ReturnRegister }, .{ .imm64 = 0 });
-            try b.call(_out_of_line_write16);
-            const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
-            // self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
-            // self.block_cache.cursor += block_size + 1;
-            self.block_cache.cursor += block_size;
-            self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
-        }
-        {
-            self.write_32_offset = self.block_cache.cursor;
-            var b = &self._working_block;
-            b.clearRetainingCapacity();
-
-            try b.mov(.{ .reg = ReturnRegister }, .{ .imm64 = 0 });
-            try b.call(_out_of_line_write32);
-            const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
-            // self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
-            // self.block_cache.cursor += block_size + 1;
-            self.block_cache.cursor += block_size;
-            self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
-        }
-        {
-            self.write_64_offset = self.block_cache.cursor;
-            var b = &self._working_block;
-            b.clearRetainingCapacity();
-
-            try b.call(_out_of_line_write64);
-            const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
-            // self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
-            // self.block_cache.cursor += block_size + 1;
-            self.block_cache.cursor += block_size;
-            self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
-        }
-
-        VirtualAddressSpace.VAS.read_8_offset = @intFromPtr(self.block_cache.buffer[self.read_8_offset..].ptr);
-        VirtualAddressSpace.VAS.read_16_offset = @intFromPtr(self.block_cache.buffer[self.read_16_offset..].ptr);
-        VirtualAddressSpace.VAS.read_32_offset = @intFromPtr(self.block_cache.buffer[self.read_32_offset..].ptr);
-        VirtualAddressSpace.VAS.read_64_offset = @intFromPtr(self.block_cache.buffer[self.read_64_offset..].ptr);
-        VirtualAddressSpace.VAS.write_8_offset = @intFromPtr(self.block_cache.buffer[self.write_8_offset..].ptr);
-        VirtualAddressSpace.VAS.write_16_offset = @intFromPtr(self.block_cache.buffer[self.write_16_offset..].ptr);
-        VirtualAddressSpace.VAS.write_32_offset = @intFromPtr(self.block_cache.buffer[self.write_32_offset..].ptr);
-        VirtualAddressSpace.VAS.write_64_offset = @intFromPtr(self.block_cache.buffer[self.write_64_offset..].ptr);
     }
 
     /// Resets block offsets without resetting the block cache immediately. Intended to be used from JITed code.
@@ -824,26 +782,14 @@ pub const SH4JIT = struct {
         const cpu = get_cpu();
         sh4_jit_log.info("(Cache Miss) Compiling {X:0>8} (SZ={d}, PR={d})...", .{ cpu.pc, cpu.fpscr.sz, cpu.fpscr.pr });
 
-        const block = self.compile(.init(
-            cpu,
-            @ptrCast(self.block_cache.buffer[self.read_8_offset..].ptr),
-            @ptrCast(self.block_cache.buffer[self.read_16_offset..].ptr),
-            @ptrCast(self.block_cache.buffer[self.read_32_offset..].ptr),
-            @ptrCast(self.block_cache.buffer[self.read_64_offset..].ptr),
-        )) catch |err| retry: {
+        const block = self.compile(.init(cpu)) catch |err| retry: {
             if (err == error.JITCacheFull) {
                 sh4_jit_log.warn("JIT cache full: Resetting.", .{});
                 self.reset() catch |reset_err| {
                     sh4_jit_log.err("Failed to reset JIT: {t}", .{reset_err});
                     std.process.exit(1);
                 };
-                break :retry self.compile(.init(
-                    cpu,
-                    @ptrCast(self.block_cache.buffer[self.read_8_offset..].ptr),
-                    @ptrCast(self.block_cache.buffer[self.read_16_offset..].ptr),
-                    @ptrCast(self.block_cache.buffer[self.read_32_offset..].ptr),
-                    @ptrCast(self.block_cache.buffer[self.read_64_offset..].ptr),
-                ));
+                break :retry self.compile(.init(cpu));
             } else break :retry err;
         } catch |err| {
             sh4_jit_log.err("Failed to compile {X:0>8}: {t}\n", .{ cpu.pc, err });
