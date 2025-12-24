@@ -662,11 +662,11 @@ pub const SH4JIT = struct {
             self.read_8_offset = self.block_cache.cursor;
             var b = &self._working_block;
             b.clearRetainingCapacity();
-
             try b.call(_out_of_line_read8);
-            const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
-            self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
-            self.block_cache.cursor += block_size + 1;
+            const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
+            // self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
+            // self.block_cache.cursor += block_size + 1;
+            self.block_cache.cursor += block_size;
             self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
         }
         {
@@ -675,9 +675,10 @@ pub const SH4JIT = struct {
             b.clearRetainingCapacity();
 
             try b.call(_out_of_line_read16);
-            const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
-            self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
-            self.block_cache.cursor += block_size + 1;
+            const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
+            // self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
+            // self.block_cache.cursor += block_size + 1;
+            self.block_cache.cursor += block_size;
             self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
         }
         {
@@ -686,9 +687,10 @@ pub const SH4JIT = struct {
             b.clearRetainingCapacity();
 
             try b.call(_out_of_line_read32);
-            const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
-            self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
-            self.block_cache.cursor += block_size + 1;
+            const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
+            // self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
+            // self.block_cache.cursor += block_size + 1;
+            self.block_cache.cursor += block_size;
             self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
         }
         {
@@ -697,9 +699,10 @@ pub const SH4JIT = struct {
             b.clearRetainingCapacity();
 
             try b.call(_out_of_line_read64);
-            const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
-            self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
-            self.block_cache.cursor += block_size + 1;
+            const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
+            // self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
+            // self.block_cache.cursor += block_size + 1;
+            self.block_cache.cursor += block_size;
             self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
         }
 
@@ -708,10 +711,12 @@ pub const SH4JIT = struct {
             var b = &self._working_block;
             b.clearRetainingCapacity();
 
+            try b.mov(.{ .reg = ReturnRegister }, .{ .imm64 = 0 }); // Zero-out upper bits of the return value. Not sure if this is needed, still debugging :)
             try b.call(_out_of_line_write8);
-            const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
-            self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
-            self.block_cache.cursor += block_size + 1;
+            const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
+            // self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
+            // self.block_cache.cursor += block_size + 1;
+            self.block_cache.cursor += block_size;
             self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
         }
         {
@@ -719,10 +724,12 @@ pub const SH4JIT = struct {
             var b = &self._working_block;
             b.clearRetainingCapacity();
 
+            try b.mov(.{ .reg = ReturnRegister }, .{ .imm64 = 0 });
             try b.call(_out_of_line_write16);
-            const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
-            self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
-            self.block_cache.cursor += block_size + 1;
+            const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
+            // self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
+            // self.block_cache.cursor += block_size + 1;
+            self.block_cache.cursor += block_size;
             self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
         }
         {
@@ -730,10 +737,12 @@ pub const SH4JIT = struct {
             var b = &self._working_block;
             b.clearRetainingCapacity();
 
+            try b.mov(.{ .reg = ReturnRegister }, .{ .imm64 = 0 });
             try b.call(_out_of_line_write32);
-            const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
-            self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
-            self.block_cache.cursor += block_size + 1;
+            const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
+            // self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
+            // self.block_cache.cursor += block_size + 1;
+            self.block_cache.cursor += block_size;
             self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
         }
         {
@@ -742,9 +751,10 @@ pub const SH4JIT = struct {
             b.clearRetainingCapacity();
 
             try b.call(_out_of_line_write64);
-            const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
-            self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
-            self.block_cache.cursor += block_size + 1;
+            const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
+            // self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
+            // self.block_cache.cursor += block_size + 1;
+            self.block_cache.cursor += block_size;
             self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
         }
 

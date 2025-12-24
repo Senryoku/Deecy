@@ -8,7 +8,7 @@
 			"program": "${workspaceFolder}/zig-out/bin/Deecy",
 			"args": [],
 			"cwd": "${workspaceFolder}",
-			"preLaunchTask": "build -Dfast_mem=false",
+			"preLaunchTask": "build",
 			"initCommands": [
 				"process handle SIGSEGV --notify false --pass true --stop false"
 			]

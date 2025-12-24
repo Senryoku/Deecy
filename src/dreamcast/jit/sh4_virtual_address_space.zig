@@ -21,7 +21,8 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
         const start_patch = rip.*;
         var end_patch = start_patch;
         const instructions = @as([*]u8, @ptrFromInt(start_patch));
-        log.debug("    Before: {X}", .{instructions[0..16]});
+        log.debug("    [-16] {X}", .{@as([*]u8, @ptrFromInt(start_patch - 16))[0..16]});
+        log.debug("    [  0] {X}", .{instructions[0..16]});
 
         var size: enum { _8, _16, _32, _64, Unknown } = .Unknown;
 
@@ -50,6 +51,8 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
             0x88, 0x89 => .Write,
             0x8A, 0x8B => .Read,
             0xB6, 0xB7 => .Read, // movzx
+            0x6E => .Read, // movd mm, r/m32
+            0x7E => .Write, // movd r/m32, mm
             else => {
                 log.err("  Invalid Opcode: {X}", .{opcode});
                 log.err("    {X}", .{instructions[0..16]});
@@ -70,6 +73,9 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
             },
             0xB7 => {
                 size = ._16;
+            },
+            0x6E, 0x7E => {
+                if (size != ._64) size = ._32;
             },
             else => {
                 log.err("  Invalid Opcode: {X}", .{opcode});
@@ -122,6 +128,7 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
         if (patch_size > 5)
             Architecture.convert_to_nops(instructions[5..patch_size]);
 
-        log.debug("  Patched: {X}", .{instructions[0..16]});
+        log.debug("  Patched: [-16] {X}", .{@as([*]u8, @ptrFromInt(start_patch - 16))[0..16]});
+        log.debug("           [  0] {X}", .{instructions[0..16]});
     } else return error.InvalidAddress;
 }
