@@ -43,14 +43,12 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
         if (@as(*u8, @ptrFromInt(end_patch)).* == 0x0F)
             end_patch += 1;
 
-        const modrm: Architecture.MODRM = @bitCast(@as(*u8, @ptrFromInt(end_patch + 1)).*);
-
         const opcode = @as(*u8, @ptrFromInt(end_patch)).*;
 
         const direction: enum { Read, Write } = switch (opcode) {
-            0x88, 0x89 => .Write,
-            0x8A, 0x8B => .Read,
-            0xB6, 0xB7 => .Read, // movzx
+            0x88, 0x89 => .Write, // mov reg, r/m
+            0x8A, 0x8B => .Read, // mov r/m, reg
+            0xB6, 0xB7 => .Read, // movzx reg, r/m8 - movzx reg, r/m16
             0x6E => .Read, // movd mm, r/m32
             0x7E => .Write, // movd r/m32, mm
             else => {
@@ -60,20 +58,19 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
             },
         };
         switch (opcode) {
+            // mov r/m8, r8 ; mov r8, r/m8
             0x88, 0x8A => {
                 if (size != .Unknown) return error.InvalidMOV;
                 size = ._8;
             },
+            // mov r/m, r ; mov r, r/m, other than 8bit
             0x89, 0x8B => {
                 if (size == .Unknown) size = ._32;
             },
             // movzx
-            0xB6 => {
-                size = ._8;
-            },
-            0xB7 => {
-                size = ._16;
-            },
+            0xB6 => size = ._8,
+            0xB7 => size = ._16,
+            // movd
             0x6E, 0x7E => {
                 if (size != ._64) size = ._32;
             },
@@ -84,6 +81,7 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
             },
         }
 
+        const modrm: Architecture.MODRM = @bitCast(@as(*u8, @ptrFromInt(end_patch + 1)).*);
         switch (modrm.mod) {
             .indirect => end_patch += 2,
             .disp8 => end_patch += 3,
@@ -95,15 +93,12 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
 
         var patch_size = end_patch - start_patch;
         log.debug("  Detected {t}, {t}, patch_size={d}", .{ direction, size, patch_size });
-        if (patch_size < 5) {
-            log.debug("  Patch too small: {d}", .{patch_size});
-            log.debug("    {X}", .{instructions[0..16]});
-            for (patch_size..5) |i| {
+        const call_size = 5;
+        if (patch_size < call_size) {
+            for (patch_size..call_size) |i|
                 if (instructions[i] != 0x90) return error.MissingNopPadding;
-            }
-            patch_size = 5;
+            patch_size = call_size;
         }
-        @memset(instructions[0..patch_size], 0x90); // FIXME: Should not be necessary, here for debugging.
 
         instructions[0] = 0xE8; // call rel32
         const offset_patch = @as(*align(1) i32, @ptrFromInt(start_patch + 1));
@@ -123,10 +118,10 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
                 .Unknown => return error.InvalidSize,
             },
         });
-        offset_patch.* = @intCast(dest - @as(i64, @intCast(start_patch + 5)));
+        offset_patch.* = @intCast(dest - @as(i64, @intCast(start_patch + call_size)));
 
-        if (patch_size > 5)
-            Architecture.convert_to_nops(instructions[5..patch_size]);
+        if (patch_size > call_size)
+            Architecture.convert_to_nops(instructions[call_size..patch_size]);
 
         log.debug("  Patched: [-16] {X}", .{@as([*]u8, @ptrFromInt(start_patch - 16))[0..16]});
         log.debug("           [  0] {X}", .{instructions[0..16]});

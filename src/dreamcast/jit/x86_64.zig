@@ -369,7 +369,8 @@ pub const Instruction = union(enum) {
     SaveFPRegisters: struct { count: u8 },
     RestoreFPRegisters: struct { count: u8 },
 
-    PadMov: void, // FIXME: TEMP HACK
+    /// Pad the *previous instruction* up to N bytes. Usefull for ensuring an instruction can be patched to a potentially longer one.
+    Padding: u8,
 
     pub fn format(value: @This(), writer: *std.Io.Writer) !void {
         return switch (value) {
@@ -421,7 +422,7 @@ pub const Instruction = union(enum) {
             .SaveFPRegisters => |instr| writer.print("SaveFPRegisters {d}", .{instr.count}),
             .RestoreFPRegisters => |instr| writer.print("RestoreFPRegisters {d}", .{instr.count}),
 
-            .PadMov => writer.print("pad_mov", .{}),
+            .Padding => |p| writer.print("Padding {d}", .{p}),
         };
     }
 };
@@ -708,18 +709,12 @@ pub const Emitter = struct {
 
                 .SaveFPRegisters => |s| try self.save_fp_registers(s.count),
                 .RestoreFPRegisters => |s| try self.restore_fp_registers(s.count),
-                // else => return error.UnsupportedInstruction,
 
-                .PadMov => {
-                    // FIXME: This doesn't count prefixes. But this will just add useless nops, it's fine for now.
-                    var i = self.block_size - 1;
-                    while (idx > 0 and self.block_buffer[i] != 0x88 and self.block_buffer[i] != 0x89 and self.block_buffer[i] != 0x8a and self.block_buffer[i] != 0x8b) {
-                        i -= 1;
-                    }
-                    if (self.block_buffer[i] != 0x88 and self.block_buffer[i] != 0x89 and self.block_buffer[i] != 0x8a and self.block_buffer[i] != 0x8b)
-                        return error.InvalidPadMovInstruction;
-                    if (self.block_size - i < 5) {
-                        for (0..5 - (self.block_size - i)) |_| {
+                .Padding => |p| {
+                    if (idx == 0) return error.InvalidPadding;
+                    const instr_len = self._instruction_offsets[idx] - self._instruction_offsets[idx - 1];
+                    if (instr_len < p) {
+                        for (0..p - instr_len) |_| {
                             try self.emit(u8, 0x90);
                         }
                     }
