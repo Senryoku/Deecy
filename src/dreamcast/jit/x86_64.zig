@@ -1842,7 +1842,8 @@ pub const Emitter = struct {
                 // call rel32
                 // NOTE: In this case I assume we don't need the Windows shadow space.
                 //       This is only true because it is currently always used only within JITed code.
-                try self.emit_slice(u8, &[_]u8{0xE8});
+                // try self.emit_slice(u8, &[_]u8{0xE8});
+                try self.emit_slice(u8, &[_]u8{0x3D}); // Turn in into a cmp eax, imm32
                 try self.emit(u32, @bitCast(@as(i32, @intCast(rel))));
                 return;
             }

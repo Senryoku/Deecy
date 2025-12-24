@@ -33,9 +33,12 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
         // Special case: Skip SIB byte
         if (modrm.r_m == 4) end_patch += 1;
 
+        var direct_call = false;
+
         switch (@as(*u8, @ptrFromInt(end_patch)).*) {
             0xEB => end_patch += 2, // JMP rel8
             0xE9 => end_patch += 5, // JMP rel32 in 64bit mode
+            0x3D => direct_call = true, // cmp eax, imm32 that we'll turn back into a call
             else => |byte| {
                 std.log.scoped(.sh4_jit).err(termcolor.red("Unhandled jump: {X:0>2}"), .{byte});
                 std.log.scoped(.sh4_jit).err("  {X}", .{@as([*]u8, @ptrFromInt(end_patch))[0..16]});
@@ -45,6 +48,10 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
 
         // Patch out the mov and jump, we'll always execute the fallback from now on.
         Architecture.convert_to_nops(@as([*]u8, @ptrFromInt(start_patch))[0..(end_patch - start_patch)]);
+
+        if (direct_call) {
+            @as([*]u8, @ptrFromInt(end_patch))[0] = 0xE8;
+        }
 
         // Skip patched instructions. Not strictly necessary.
         rip.* = end_patch;

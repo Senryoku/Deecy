@@ -1654,21 +1654,36 @@ fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, addressing: A
     if (FastMem) {
         try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = VirtualAddressSpaceBaseRegister, .index = addr, .size = size } });
 
-        var skip_fallback = try block.jmp(.Always);
-        // Address is already loaded into ArgRegisters[1]
-        switch (size) {
-            8 => try call(block, ctx, ctx.read_8_ptr),
-            16 => try call(block, ctx, ctx.read_16_ptr),
-            32 => try call(block, ctx, ctx.read_32_ptr),
-            64 => try call(block, ctx, ctx.read_64_ptr),
-            // 8 => try call(block, ctx, &_out_of_line_read8),
-            // 16 => try call(block, ctx, &_out_of_line_read16),
-            // 32 => try call(block, ctx, &_out_of_line_read32),
-            // 64 => try call(block, ctx, &_out_of_line_read64),
-            else => @compileError("load_mem: Unsupported size."),
+        if (dest == ReturnRegister) {
+            // Address is already loaded into ArgRegisters[1]
+            switch (size) {
+                8 => try call(block, ctx, ctx.read_8_ptr),
+                16 => try call(block, ctx, ctx.read_16_ptr),
+                32 => try call(block, ctx, ctx.read_32_ptr),
+                64 => try call(block, ctx, ctx.read_64_ptr),
+                // 8 => try call(block, ctx, &_out_of_line_read8),
+                // 16 => try call(block, ctx, &_out_of_line_read16),
+                // 32 => try call(block, ctx, &_out_of_line_read32),
+                // 64 => try call(block, ctx, &_out_of_line_read64),
+                else => @compileError("load_mem: Unsupported size."),
+            }
+        } else {
+            var skip_fallback = try block.jmp(.Always);
+            // Address is already loaded into ArgRegisters[1]
+            switch (size) {
+                8 => try call(block, ctx, ctx.read_8_ptr),
+                16 => try call(block, ctx, ctx.read_16_ptr),
+                32 => try call(block, ctx, ctx.read_32_ptr),
+                64 => try call(block, ctx, ctx.read_64_ptr),
+                // 8 => try call(block, ctx, &_out_of_line_read8),
+                // 16 => try call(block, ctx, &_out_of_line_read16),
+                // 32 => try call(block, ctx, &_out_of_line_read32),
+                // 64 => try call(block, ctx, &_out_of_line_read64),
+                else => @compileError("load_mem: Unsupported size."),
+            }
+            if (dest != ReturnRegister) try block.mov(.{ .reg = dest }, .{ .reg = ReturnRegister });
+            skip_fallback.patch();
         }
-        if (dest != ReturnRegister) try block.mov(.{ .reg = dest }, .{ .reg = ReturnRegister });
-        skip_fallback.patch();
     } else { // RAM Fast path
         try block.mov(.{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[1] });
         try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0x1C000000 } } });
