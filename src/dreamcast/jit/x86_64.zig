@@ -1835,6 +1835,18 @@ pub const Emitter = struct {
 
     pub fn native_call(self: *@This(), function: ?*const anyopaque) !void {
         if (function) |fp| {
+            const target: i64 = @intCast(@intFromPtr(function));
+            const rel_call_rip: i64 = @intCast(@intFromPtr(self.block_buffer[self.block_size..].ptr) + 1 + 4);
+            const rel = target - rel_call_rip;
+            if (rel > std.math.minInt(i32) and rel < std.math.maxInt(i32)) {
+                // call rel32
+                // NOTE: In this case I assume we don't need the Windows shadow space.
+                //       This is only true because it is currently always used only within JITed code.
+                try self.emit_slice(u8, &[_]u8{0xE8});
+                try self.emit(u32, @bitCast(@as(i32, @intCast(rel))));
+                return;
+            }
+
             // mov rax, function
             try self.emit_slice(u8, &[_]u8{ 0x48, 0xB8 });
             try self.emit(u64, @intFromPtr(fp));
