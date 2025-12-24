@@ -1389,7 +1389,8 @@ pub noinline fn _out_of_line_read8(_: *const sh4.SH4, virtual_addr: u32) callcon
         //       Since RAM access should be way more frequent, I'd expect the change to still be beneficial on Linux,
         //       but I need to actually measure it.
         //       Should I force the windows ABI for functions called from the JIT to avoid this?
-        @compileError("TODO: Push and pop all the floating point registers use in the JIT FPR Cache here. Or force the Windows ABI?");
+        // const callconv = std.buitin.CallingConvention{ .x86_64_win = .{ .incoming_stack_alignment = null } };
+        @compileError("TODO: Push and pop all the floating point registers used in the JIT FPR Cache here. Or force the Windows ABI?");
     }
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000); // We can't garantee this won't be called with a RAM address in FastMem mode (even if it is highly unlikely)
     return @call(.always_inline, sh4.SH4.read_physical, .{ get_cpu(), u8, virtual_addr });
