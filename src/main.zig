@@ -72,7 +72,7 @@ pub const std_options: std.Options = .{
         .{ .scope = .dc, .level = .info },
         .{ .scope = .sh4, .level = .warn },
         .{ .scope = .mmu, .level = .info },
-        .{ .scope = .sh4_jit, .level = .warn },
+        .{ .scope = .sh4_jit, .level = .debug },
         .{ .scope = .arm_jit, .level = .info },
         .{ .scope = .x86_64_emitter, .level = .info },
         .{ .scope = .syscall, .level = .debug },

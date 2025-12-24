@@ -566,6 +566,10 @@ pub const SH4JIT = struct {
     read_16_offset: usize = 0,
     read_32_offset: usize = 0,
     read_64_offset: usize = 0,
+    write_8_offset: usize = 0,
+    write_16_offset: usize = 0,
+    write_32_offset: usize = 0,
+    write_64_offset: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator, ram_base: ?[*]u8) !@This() {
         var r: @This() = .{
@@ -698,6 +702,60 @@ pub const SH4JIT = struct {
             self.block_cache.cursor += block_size + 1;
             self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
         }
+
+        {
+            self.write_8_offset = self.block_cache.cursor;
+            var b = &self._working_block;
+            b.clearRetainingCapacity();
+
+            try b.call(_out_of_line_write8);
+            const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+            self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
+            self.block_cache.cursor += block_size + 1;
+            self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+        }
+        {
+            self.write_16_offset = self.block_cache.cursor;
+            var b = &self._working_block;
+            b.clearRetainingCapacity();
+
+            try b.call(_out_of_line_write16);
+            const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+            self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
+            self.block_cache.cursor += block_size + 1;
+            self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+        }
+        {
+            self.write_32_offset = self.block_cache.cursor;
+            var b = &self._working_block;
+            b.clearRetainingCapacity();
+
+            try b.call(_out_of_line_write32);
+            const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+            self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
+            self.block_cache.cursor += block_size + 1;
+            self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+        }
+        {
+            self.write_64_offset = self.block_cache.cursor;
+            var b = &self._working_block;
+            b.clearRetainingCapacity();
+
+            try b.call(_out_of_line_write64);
+            const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+            self.block_cache.buffer[self.block_cache.cursor + block_size] = 0xC3; // FIXME Hacked in ret.
+            self.block_cache.cursor += block_size + 1;
+            self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+        }
+
+        VirtualAddressSpace.VAS.read_8_offset = @intFromPtr(self.block_cache.buffer[self.read_8_offset..].ptr);
+        VirtualAddressSpace.VAS.read_16_offset = @intFromPtr(self.block_cache.buffer[self.read_16_offset..].ptr);
+        VirtualAddressSpace.VAS.read_32_offset = @intFromPtr(self.block_cache.buffer[self.read_32_offset..].ptr);
+        VirtualAddressSpace.VAS.read_64_offset = @intFromPtr(self.block_cache.buffer[self.read_64_offset..].ptr);
+        VirtualAddressSpace.VAS.write_8_offset = @intFromPtr(self.block_cache.buffer[self.write_8_offset..].ptr);
+        VirtualAddressSpace.VAS.write_16_offset = @intFromPtr(self.block_cache.buffer[self.write_16_offset..].ptr);
+        VirtualAddressSpace.VAS.write_32_offset = @intFromPtr(self.block_cache.buffer[self.write_32_offset..].ptr);
+        VirtualAddressSpace.VAS.write_64_offset = @intFromPtr(self.block_cache.buffer[self.write_64_offset..].ptr);
     }
 
     /// Resets block offsets without resetting the block cache immediately. Intended to be used from JITed code.
@@ -1653,37 +1711,8 @@ fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, addressing: A
 
     if (FastMem) {
         try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = VirtualAddressSpaceBaseRegister, .index = addr, .size = size } });
-
-        if (dest == ReturnRegister) {
-            // Address is already loaded into ArgRegisters[1]
-            switch (size) {
-                8 => try call(block, ctx, ctx.read_8_ptr),
-                16 => try call(block, ctx, ctx.read_16_ptr),
-                32 => try call(block, ctx, ctx.read_32_ptr),
-                64 => try call(block, ctx, ctx.read_64_ptr),
-                // 8 => try call(block, ctx, &_out_of_line_read8),
-                // 16 => try call(block, ctx, &_out_of_line_read16),
-                // 32 => try call(block, ctx, &_out_of_line_read32),
-                // 64 => try call(block, ctx, &_out_of_line_read64),
-                else => @compileError("load_mem: Unsupported size."),
-            }
-        } else {
-            var skip_fallback = try block.jmp(.Always);
-            // Address is already loaded into ArgRegisters[1]
-            switch (size) {
-                8 => try call(block, ctx, ctx.read_8_ptr),
-                16 => try call(block, ctx, ctx.read_16_ptr),
-                32 => try call(block, ctx, ctx.read_32_ptr),
-                64 => try call(block, ctx, ctx.read_64_ptr),
-                // 8 => try call(block, ctx, &_out_of_line_read8),
-                // 16 => try call(block, ctx, &_out_of_line_read16),
-                // 32 => try call(block, ctx, &_out_of_line_read32),
-                // 64 => try call(block, ctx, &_out_of_line_read64),
-                else => @compileError("load_mem: Unsupported size."),
-            }
-            if (dest != ReturnRegister) try block.mov(.{ .reg = dest }, .{ .reg = ReturnRegister });
-            skip_fallback.patch();
-        }
+        try block.append(.PadMov);
+        std.debug.assert(dest == ReturnRegister);
     } else { // RAM Fast path
         try block.mov(.{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[1] });
         try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0x1C000000 } } });
@@ -1731,20 +1760,10 @@ fn store_mem(block: *IRBlock, ctx: *JITContext, addressing: AddressingMode, disp
     }
 
     if (FastMem) {
-        try block.mov(.{ .mem = .{ .base = VirtualAddressSpaceBaseRegister, .index = addr, .size = size } }, value);
-
-        var skip_fallback = try block.jmp(.Always);
-        // Address is already loaded into ArgRegisters[1]
-        if (value.tag() != .reg or value.reg != ArgRegisters[2])
+        if (value.tag() != .reg or value.reg != ArgRegisters[2]) // FIXME: Ideally we should be able to get rid of this (needed when the FastMem is patched out).
             try block.mov(.{ .reg = ArgRegisters[2] }, value);
-        switch (size) {
-            8 => try call(block, ctx, &_out_of_line_write8),
-            16 => try call(block, ctx, &_out_of_line_write16),
-            32 => try call(block, ctx, &_out_of_line_write32),
-            64 => try call(block, ctx, &_out_of_line_write64),
-            else => @compileError("store_mem: Unsupported size."),
-        }
-        skip_fallback.patch();
+        try block.mov(.{ .mem = .{ .base = VirtualAddressSpaceBaseRegister, .index = addr, .size = size } }, value);
+        try block.append(.PadMov);
     } else {
         // RAM Fast path
         try block.mov(.{ .reg = ArgRegisters[3] }, .{ .reg = addr });
@@ -2605,7 +2624,10 @@ pub fn ldsl_atRnInc_FPSCR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !
 
     try ctx.fpr_cache.commit_and_invalidate_all(block); // We may switch FP register banks
 
-    try load_mem(block, ctx, ArgRegisters[1], .{ .Reg = instr.nmd.n }, 0, 32);
+    // NOTE/FIXME: This was the only place using anything else than ReturnRegister as the destination. This helps me for now :)))
+    // try load_mem(block, ctx, ArgRegisters[1], .{ .Reg = instr.nmd.n }, 0, 32);
+    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.n }, 0, 32);
+    try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = ReturnRegister });
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SH4PtrRegister });
     try call(block, ctx, sh4.SH4.set_fpscr);
 

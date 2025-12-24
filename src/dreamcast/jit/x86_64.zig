@@ -369,6 +369,8 @@ pub const Instruction = union(enum) {
     SaveFPRegisters: struct { count: u8 },
     RestoreFPRegisters: struct { count: u8 },
 
+    PadMov: void, // FIXME: TEMP HACK
+
     pub fn format(value: @This(), writer: *std.Io.Writer) !void {
         return switch (value) {
             .Nop => writer.print("nop", .{}),
@@ -418,6 +420,8 @@ pub const Instruction = union(enum) {
             .Lea => |lea| writer.print("lea {f}, {f}", .{ lea.dst, lea.mem }),
             .SaveFPRegisters => |instr| writer.print("SaveFPRegisters {d}", .{instr.count}),
             .RestoreFPRegisters => |instr| writer.print("RestoreFPRegisters {d}", .{instr.count}),
+
+            .PadMov => writer.print("pad_mov", .{}),
         };
     }
 };
@@ -705,6 +709,21 @@ pub const Emitter = struct {
                 .SaveFPRegisters => |s| try self.save_fp_registers(s.count),
                 .RestoreFPRegisters => |s| try self.restore_fp_registers(s.count),
                 // else => return error.UnsupportedInstruction,
+
+                .PadMov => {
+                    // FIXME: This doesn't count prefixes. But this will just add useless nops, it's fine for now.
+                    var i = self.block_size - 1;
+                    while (idx > 0 and self.block_buffer[i] != 0x88 and self.block_buffer[i] != 0x89 and self.block_buffer[i] != 0x8a and self.block_buffer[i] != 0x8b) {
+                        i -= 1;
+                    }
+                    if (self.block_buffer[i] != 0x88 and self.block_buffer[i] != 0x89 and self.block_buffer[i] != 0x8a and self.block_buffer[i] != 0x8b)
+                        return error.InvalidPadMovInstruction;
+                    if (self.block_size - i < 5) {
+                        for (0..5 - (self.block_size - i)) |_| {
+                            try self.emit(u8, 0x90);
+                        }
+                    }
+                },
             }
         }
         if (self.forward_jumps_to_patch.count() > 0) {

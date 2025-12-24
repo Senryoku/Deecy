@@ -3,7 +3,7 @@ const windows = @import("../host/windows.zig");
 const termcolor = @import("termcolor");
 const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 const Architecture = @import("x86_64.zig");
-const VAS = @import("sh4_virtual_address_space.zig");
+pub const VAS = @import("sh4_virtual_address_space.zig");
 
 const log = std.log.scoped(.sh4_jit);
 
