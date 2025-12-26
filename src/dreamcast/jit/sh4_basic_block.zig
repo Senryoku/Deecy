@@ -1,6 +1,8 @@
 const builtin = @import("builtin");
 const dc_config = @import("dc_config");
 
+const Architecture = @import("x86_64.zig");
+
 pub const EnableInstrumentation = dc_config.jit_instrumentation;
 
 offset: u32,
@@ -13,5 +15,5 @@ len: if (EnableInstrumentation) u32 else void = if (EnableInstrumentation) 0 els
 
 pub inline fn execute(self: *const @This(), buffer: []const u8, user_data: *anyopaque) u32 {
     @setRuntimeSafety(false);
-    return @as(*const fn (*anyopaque) callconv(.c) u32, @ptrCast(&buffer[self.offset]))(user_data);
+    return @as(*const fn (*anyopaque) callconv(Architecture.CallingConvention) u32, @ptrCast(&buffer[self.offset]))(user_data);
 }

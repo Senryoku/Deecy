@@ -20,7 +20,7 @@ const BasicBlock = struct {
     cycles: u32,
 
     pub inline fn execute(self: *const @This(), buffer: []const u8, user_data: *anyopaque) void {
-        @as(*const fn (*anyopaque) callconv(.c) void, @ptrCast(&buffer[self.offset]))(user_data);
+        @as(*const fn (*anyopaque) callconv(Architecture.CallingConvention) void, @ptrCast(&buffer[self.offset]))(user_data);
     }
 
     pub inline fn is_valid(self: *const @This()) bool {
@@ -202,7 +202,7 @@ pub const ARM7JIT = struct {
     }
 
     // Default handler sitting the offset 0 of our executable buffer
-    pub noinline fn compile_and_run(cpu: *arm7.ARM7, self: *@This()) callconv(.c) void {
+    pub noinline fn compile_and_run(cpu: *arm7.ARM7, self: *@This()) callconv(Architecture.CallingConvention) void {
         const pc = (cpu.pc() -% 4) & cpu.memory_address_mask; // Pipelining...
         arm_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
         const instructions: [*]u32 = @ptrCast(@alignCast(&cpu.memory[pc]));
@@ -322,26 +322,26 @@ inline fn get_cpu() *arm7.ARM7 {
 }
 
 // Zero-extended
-noinline fn read8(address: u32) callconv(.c) u32 {
+noinline fn read8(address: u32) callconv(Architecture.CallingConvention) u32 {
     const self = get_cpu();
     return @call(.always_inline, arm7.ARM7.read, .{ self, u8, address });
 }
-noinline fn read32(address: u32) callconv(.c) u32 {
+noinline fn read32(address: u32) callconv(Architecture.CallingConvention) u32 {
     const self = get_cpu();
     return @call(.always_inline, arm7.ARM7.read, .{ self, u32, address });
 }
-noinline fn write8(address: u32, value: u8) callconv(.c) void {
+noinline fn write8(address: u32, value: u8) callconv(Architecture.CallingConvention) void {
     const self = get_cpu();
     std.debug.assert(address & self.external_memory_address_mask != 0);
     @call(.always_inline, arm7.ARM7.write, .{ self, u8, address, value });
 }
-noinline fn write32(address: u32, value: u32) callconv(.c) void {
+noinline fn write32(address: u32, value: u32) callconv(Architecture.CallingConvention) void {
     const self = get_cpu();
     std.debug.assert(address & self.external_memory_address_mask != 0);
     @call(.always_inline, arm7.ARM7.write, .{ self, u32, address, value });
 }
 
-fn reset_pipeline() callconv(.c) void {
+fn reset_pipeline() callconv(Architecture.CallingConvention) void {
     @call(.always_inline, arm7.ARM7.reset_pipeline, .{get_cpu()});
 }
 
@@ -636,7 +636,7 @@ fn handle_branch_and_exchange(b: *IRBlock, ctx: *JITContext, instruction: u32) !
 
 fn comptime_handle_block_data_transfer(comptime l: u1, comptime w: u1, comptime s: u1, comptime u: u1, comptime p: u1) type {
     return struct {
-        fn handler(instruction: u32) callconv(.c) void {
+        fn handler(instruction: u32) callconv(Architecture.CallingConvention) void {
             const cpu = get_cpu();
             const inst: arm7.BlockDataTransferInstruction = @bitCast(instruction);
 
@@ -822,7 +822,7 @@ fn handle_undefined(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
 // a wave_memory_read.
 fn comptime_handle_single_data_transfer(comptime i: u1, comptime u: u1, comptime w: u1, comptime p: u1, comptime l: u1, comptime b: u1) type {
     return struct {
-        fn handler(instruction: u32) callconv(.c) void {
+        fn handler(instruction: u32) callconv(Architecture.CallingConvention) void {
             const cpu = get_cpu();
             const inst: arm7.SingleDataTransferInstruction = @bitCast(instruction);
 
@@ -1052,7 +1052,7 @@ fn handle_msr(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
 
 fn comptime_handle_data_processing(comptime opcode: arm7.Opcode, comptime s: u1, comptime i: u1) type {
     return struct {
-        fn handler(instruction: u32) callconv(.c) void {
+        fn handler(instruction: u32) callconv(Architecture.CallingConvention) void {
             const cpu = get_cpu();
             const inst: arm7.DataProcessingInstruction = @bitCast(instruction);
 
@@ -1409,9 +1409,9 @@ fn handle_invalid(_: *IRBlock, _: *JITContext, _: u32) !bool {
     @panic("Invalid instruction");
 }
 
-fn interpreter_handler(comptime idx: u8) *const fn (instruction: u32) callconv(.c) void {
+fn interpreter_handler(comptime idx: u8) fn (instruction: u32) callconv(Architecture.CallingConvention) void {
     return struct {
-        fn handler(instruction: u32) callconv(.c) void {
+        fn handler(instruction: u32) callconv(Architecture.CallingConvention) void {
             @call(.always_inline, arm7.interpreter.InstructionHandlers[idx], .{ get_cpu(), instruction });
         }
     }.handler;
