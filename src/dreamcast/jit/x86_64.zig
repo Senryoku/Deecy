@@ -21,25 +21,16 @@ pub fn runtime_check_cpu_feature(feature: std.Target.x86.Feature) !bool {
 pub const ReturnRegister = Register.rax;
 pub const ScratchRegisters = [_]Register{ .r10, .r11 };
 
-pub const ABI = enum {
-    SystemV,
-    Win64,
-};
-
-// Tried using builtin.abi, but it returns .gnu on Windows.
-pub const JITABI: ABI = switch (builtin.os.tag) {
-    .windows => .Win64,
-    .linux => .SystemV,
-    else => @compileError("Unsupported OS"),
-};
+pub const CallingConvention = std.builtin.CallingConvention.c;
 
 // ArgRegisters are also used as scratch registers, but have a special meaning for function calls.
-pub const ArgRegisters = switch (JITABI) {
-    .Win64 => [_]Register{ .rcx, .rdx, .r8, .r9 },
-    .SystemV => [_]Register{ .rdi, .rsi, .rdx, .rcx, .r8, .r9 },
+pub const ArgRegisters = switch (CallingConvention) {
+    .x86_64_win => [_]Register{ .rcx, .rdx, .r8, .r9 },
+    .x86_64_sysv => [_]Register{ .rdi, .rsi, .rdx, .rcx, .r8, .r9 },
+    else => @compileError("Unsupported calling convention"),
 };
-pub const SavedRegisters = switch (JITABI) {
-    .Win64 => [_]Register{
+pub const SavedRegisters = switch (CallingConvention) {
+    .x86_64_win => [_]Register{
         .rbx,
         .rsi,
         .r12,
@@ -51,7 +42,7 @@ pub const SavedRegisters = switch (JITABI) {
         // .rbp,
         // .rsp,
     },
-    .SystemV => [_]Register{
+    .x86_64_sysv => [_]Register{
         .rbx,
         .r12,
         .r13,
@@ -60,16 +51,17 @@ pub const SavedRegisters = switch (JITABI) {
         // .rbp,
         // .rsp,
     },
+    else => @compileError("Unsupported calling convention"),
 };
 
-pub const FPArgRegisters = switch (JITABI) {
-    .Win64 => [_]FPRegister{
+pub const FPArgRegisters = switch (CallingConvention) {
+    .x86_64_win => [_]FPRegister{
         .xmm0,
         .xmm1,
         .xmm2,
         .xmm3,
     },
-    .SystemV => [_]FPRegister{
+    .x86_64_sysv => [_]FPRegister{
         .xmm0,
         .xmm1,
         .xmm2,
@@ -79,14 +71,15 @@ pub const FPArgRegisters = switch (JITABI) {
         .xmm6,
         .xmm7,
     },
+    else => @compileError("Unsupported calling convention"),
 };
 
-pub const FPScratchRegisters = switch (JITABI) {
-    .Win64 => [_]FPRegister{
+pub const FPScratchRegisters = switch (CallingConvention) {
+    .x86_64_win => [_]FPRegister{
         .xmm4,
         .xmm5,
     },
-    .SystemV => [_]FPRegister{
+    .x86_64_sysv => [_]FPRegister{
         // NOTE: These are scratch registers for the ABI, but we're using them as saved registers!
         // .xmm8,
         // .xmm9,
@@ -97,10 +90,11 @@ pub const FPScratchRegisters = switch (JITABI) {
         .xmm14,
         .xmm15,
     },
+    else => @compileError("Unsupported calling convention"),
 };
 
-pub const FPSavedRegisters = switch (JITABI) {
-    .Win64 => [_]FPRegister{
+pub const FPSavedRegisters = switch (CallingConvention) {
+    .x86_64_win => [_]FPRegister{
         .xmm6,
         .xmm7,
         .xmm8,
@@ -112,7 +106,8 @@ pub const FPSavedRegisters = switch (JITABI) {
         .xmm14,
         .xmm15,
     },
-    .SystemV => [_]FPRegister{}, // NOTE: SH4 JIT uses xmm8-xmm13 (manually saving them)
+    .x86_64_sysv => [_]FPRegister{}, // NOTE: SH4 JIT uses xmm8-xmm13 (manually saving them)
+    else => @compileError("Unsupported calling convention"),
 };
 
 /// RegOpcodes (ModRM) for 0x81: OP r/m32, imm32 - 0x83: OP r/m32, imm8 (sign extended)

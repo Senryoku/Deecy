@@ -257,7 +257,7 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
             }
 
             // In this case all registers are temporary, we can forget we ever used them.
-            if (Architecture.JITABI == .SystemV and reg_type == JIT.FPRegister) {
+            if (Architecture.CallingConvention == .x86_64_sysv and reg_type == JIT.FPRegister) {
                 self.highest_saved_register_used = null;
             }
         }
@@ -328,9 +328,9 @@ pub const JITContext = struct {
     in_delay_slot: bool = false,
     force_exit: bool = false,
 
-    gpr_cache: RegisterCache(JIT.Register, if (Architecture.JITABI == .Win64) 5 else 4) = .{
+    gpr_cache: RegisterCache(JIT.Register, if (Architecture.CallingConvention == .x86_64_win) 5 else 4) = .{
         .highest_saved_register_used = 0,
-        .entries = if (Architecture.JITABI == .Win64) .{
+        .entries = if (Architecture.CallingConvention == .x86_64_win) .{
             .{ .host = SavedRegisters[1] },
             .{ .host = SavedRegisters[2] },
             .{ .host = SavedRegisters[3] },
@@ -346,7 +346,7 @@ pub const JITContext = struct {
 
     fpr_cache: RegisterCache(JIT.FPRegister, 8) = .{
         .highest_saved_register_used = null,
-        .entries = if (Architecture.JITABI == .Win64) .{
+        .entries = if (Architecture.CallingConvention == .x86_64_win) .{
             .{ .host = FPSavedRegisters[0] },
             .{ .host = FPSavedRegisters[1] },
             .{ .host = FPSavedRegisters[2] },
@@ -607,7 +607,7 @@ pub const SH4JIT = struct {
 
             try e.emit_block_prologue();
 
-            if (Architecture.JITABI == .Win64)
+            if (Architecture.CallingConvention == .x86_64_win)
                 try e.save_fp_registers(10);
             for (0..SavedRegisters.len) |idx|
                 try e.push(.{ .reg = SavedRegisters[idx] });
@@ -632,7 +632,7 @@ pub const SH4JIT = struct {
 
             for (0..SavedRegisters.len) |idx|
                 try e.pop(.{ .reg = SavedRegisters[SavedRegisters.len - idx - 1] });
-            if (Architecture.JITABI == .Win64)
+            if (Architecture.CallingConvention == .x86_64_win)
                 try e.restore_fp_registers(10);
 
             try e.emit_block_epilogue();
@@ -1096,7 +1096,7 @@ pub const SH4JIT = struct {
 };
 
 fn call(block: *IRBlock, ctx: *JITContext, func: *const anyopaque) !void {
-    if (Architecture.JITABI == .SystemV) {
+    if (Architecture.CallingConvention == .x86_64_sysv) {
         if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
             try block.append(.{ .SaveFPRegisters = .{
                 .count = highest_saved_register_used + 1,
@@ -1106,7 +1106,7 @@ fn call(block: *IRBlock, ctx: *JITContext, func: *const anyopaque) !void {
 
     try block.call(func);
 
-    if (Architecture.JITABI == .SystemV) {
+    if (Architecture.CallingConvention == .x86_64_sysv) {
         if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
             try block.append(.{ .RestoreFPRegisters = .{
                 .count = highest_saved_register_used + 1,
@@ -1384,7 +1384,7 @@ fn set_t(block: *IRBlock, _: *JITContext, condition: JIT.Condition) !void {
 }
 
 pub noinline fn _out_of_line_read8(_: *const sh4.SH4, virtual_addr: u32) callconv(.c) u8 {
-    if (Architecture.JITABI == .SystemV) {
+    if (Architecture.CallingConvention == .x86_64_sysv) {
         // NOTE: Sadly on Linux we need to save and restore the complete floating point state unconditionally here.
         //       Since RAM access should be way more frequent, I'd expect the change to still be beneficial on Linux,
         //       but I need to actually measure it.
