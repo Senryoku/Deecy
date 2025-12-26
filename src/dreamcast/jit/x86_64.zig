@@ -402,8 +402,9 @@ pub const Instruction = union(enum) {
             .BitTest => |bit_test| writer.print("bt {f}, {f}", .{ bit_test.src, bit_test.offset }),
             .Test => |t| writer.print("test {f}, {f}", .{ t.lhs, t.rhs }),
             .Jmp => |jmp| switch (jmp.dst) {
-                .rel => writer.print("jmp {f} {d}", .{ jmp.condition, jmp.dst.rel }),
-                .abs_indirect => writer.print("jmp {f} {f}", .{ jmp.condition, jmp.dst.abs_indirect }),
+                .rel => |dst| writer.print("jmp {f} {d}", .{ jmp.condition, dst }),
+                .abs_indirect => |dst| writer.print("jmp {f} {f}", .{ jmp.condition, dst }),
+                .abs => |dst| writer.print("jmp {f} {X}", .{ jmp.condition, dst }),
             },
             .BlockEpilogue => writer.print("block_epilogue", .{}),
             .Rol => |rol| writer.print("rol {f}, {f}", .{ rol.dst, rol.amount }),

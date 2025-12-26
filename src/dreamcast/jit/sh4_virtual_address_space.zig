@@ -16,7 +16,7 @@ pub var write_64_offset: u64 = 0;
 pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *u64) !void {
     if (fault_address >= space_base and fault_address < space_base + space_size) {
         const dc_addr: u32 = @truncate(fault_address - space_base);
-        log.debug("  Patching Access: @ {X} - {X:0>8}", .{ fault_address, dc_addr });
+        log.info("  Patching Access: @ {X} - {X:0>8}", .{ fault_address, dc_addr });
 
         const start_patch = rip.*;
         var end_patch = start_patch;
@@ -49,8 +49,8 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
             0x88, 0x89 => .Write, // mov reg, r/m
             0x8A, 0x8B => .Read, // mov r/m, reg
             0xB6, 0xB7 => .Read, // movzx reg, r/m8 - movzx reg, r/m16
-            0x6E => .Read, // movd mm, r/m32
-            0x7E => .Write, // movd r/m32, mm
+            0x6E => .Read, // movd xmm, r/m32
+            0x7E => .Write, // movd r/m32, xmm
             else => {
                 log.err("  Invalid Opcode: {X}", .{opcode});
                 log.err("    {X}", .{instructions[0..16]});
@@ -92,7 +92,7 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
         if (modrm.r_m == 4) end_patch += 1;
 
         var patch_size = end_patch - start_patch;
-        log.debug("  Detected {t}, {t}, patch_size={d}", .{ direction, size, patch_size });
+        log.debug("  Detected {X}, {t}, {t}, patch_size={d}", .{ opcode, direction, size, patch_size });
         const call_size = 5;
         if (patch_size < call_size) {
             for (patch_size..call_size) |i|
