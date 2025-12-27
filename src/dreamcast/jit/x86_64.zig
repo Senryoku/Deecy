@@ -1863,15 +1863,31 @@ pub const Emitter = struct {
         }
     }
 
+    fn call_prologue(self: *@This()) !void {
+        if (CallingConvention == .x86_64_win) {
+            // Allocate shadow space - We still don't support specifying register sizes, so, hardcoding it.
+            // sub rsp, 0x20
+            try self.emit_slice(u8, &[_]u8{ 0x48, 0x83, 0xEC, 0x20 });
+        }
+    }
+
+    fn call_epilogue(self: *@This()) !void {
+        if (CallingConvention == .x86_64_win) {
+            // add rsp, 0x20
+            try self.emit_slice(u8, &[_]u8{ 0x48, 0x83, 0xC4, 0x20 });
+        }
+    }
+
     pub fn native_call(self: *@This(), function: ?*const anyopaque) !void {
+        try self.call_prologue();
+        defer self.call_epilogue() catch std.debug.panic("call_epilogue failed", .{});
+
         if (function) |fp| {
             const target: i64 = @intCast(@intFromPtr(function));
             const rel_call_rip: i64 = @intCast(@intFromPtr(self.block_buffer[self.block_size..].ptr) + 1 + 4);
             const rel = target - rel_call_rip;
             if (rel > std.math.minInt(i32) and rel < std.math.maxInt(i32)) {
                 // call rel32
-                // NOTE: In this case I assume we don't need the Windows shadow space.
-                //       This is only true because it is currently always used only within JITed code.
                 try self.emit_slice(u8, &[_]u8{0xE8});
                 try self.emit(u32, @bitCast(@as(i32, @intCast(rel))));
                 return;
@@ -1882,19 +1898,8 @@ pub const Emitter = struct {
             try self.emit(u64, @intFromPtr(fp));
         }
 
-        if (builtin.os.tag == .windows) {
-            // Allocate shadow space - We still don't support specifying register sizes, so, hardcoding it.
-            // sub rsp, 0x20
-            try self.emit_slice(u8, &[_]u8{ 0x48, 0x83, 0xEC, 0x20 });
-        }
-
         // call rax
         try self.emit_slice(u8, &[_]u8{ 0xFF, 0xD0 });
-
-        if (builtin.os.tag == .windows) {
-            // add rsp, 0x20
-            try self.emit_slice(u8, &[_]u8{ 0x48, 0x83, 0xC4, 0x20 });
-        }
     }
 
     pub fn ret(self: *@This()) !void {
