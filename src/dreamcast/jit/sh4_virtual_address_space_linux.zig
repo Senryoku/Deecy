@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 const termcolor = @import("termcolor");
 const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 const Architecture = @import("x86_64.zig");
-const VAS = @import("sh4_virtual_address_space.zig");
+pub const VAS = @import("sh4_virtual_address_space.zig");
 
 var GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE: ?[]align(std.heap.page_size_min) u8 = null;
 

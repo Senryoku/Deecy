@@ -53,7 +53,12 @@ pub const IRBlock = struct {
         try self.instructions.append(self._allocator, .Break);
     }
 
-    pub fn call(self: *@This(), func: ?*const anyopaque) !void {
+    pub fn call(self: *@This(), func: anytype) !void {
+        const T = @TypeOf(func);
+        const typeInfo = @typeInfo(T);
+        if (typeInfo != .@"fn") @compileError("Expected function, got: " ++ @typeName(T));
+        if (!(comptime typeInfo.@"fn".calling_convention.eql(Architecture.CallingConvention)))
+            @compileError("Expected " ++ @tagName(Architecture.CallingConvention) ++ " calling convention, got: " ++ @tagName(typeInfo.@"fn".calling_convention));
         try self.instructions.append(self._allocator, .{ .FunctionCall = func });
     }
 

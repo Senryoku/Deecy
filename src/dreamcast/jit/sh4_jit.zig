@@ -257,7 +257,7 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
             }
 
             // In this case all registers are temporary, we can forget we ever used them.
-            if (Architecture.JITABI == .SystemV and reg_type == JIT.FPRegister) {
+            if (Architecture.CallingConvention == .x86_64_sysv and reg_type == JIT.FPRegister) {
                 self.highest_saved_register_used = null;
             }
         }
@@ -328,9 +328,9 @@ pub const JITContext = struct {
     in_delay_slot: bool = false,
     force_exit: bool = false,
 
-    gpr_cache: RegisterCache(JIT.Register, if (Architecture.JITABI == .Win64) 5 else 4) = .{
+    gpr_cache: RegisterCache(JIT.Register, if (Architecture.CallingConvention == .x86_64_win) 5 else 4) = .{
         .highest_saved_register_used = 0,
-        .entries = if (Architecture.JITABI == .Win64) .{
+        .entries = if (Architecture.CallingConvention == .x86_64_win) .{
             .{ .host = SavedRegisters[1] },
             .{ .host = SavedRegisters[2] },
             .{ .host = SavedRegisters[3] },
@@ -346,7 +346,7 @@ pub const JITContext = struct {
 
     fpr_cache: RegisterCache(JIT.FPRegister, 8) = .{
         .highest_saved_register_used = null,
-        .entries = if (Architecture.JITABI == .Win64) .{
+        .entries = if (Architecture.CallingConvention == .x86_64_win) .{
             .{ .host = FPSavedRegisters[0] },
             .{ .host = FPSavedRegisters[1] },
             .{ .host = FPSavedRegisters[2] },
@@ -607,7 +607,7 @@ pub const SH4JIT = struct {
 
             try e.emit_block_prologue();
 
-            if (Architecture.JITABI == .Win64)
+            if (Architecture.CallingConvention == .x86_64_win)
                 try e.save_fp_registers(10);
             for (0..SavedRegisters.len) |idx|
                 try e.push(.{ .reg = SavedRegisters[idx] });
@@ -632,13 +632,36 @@ pub const SH4JIT = struct {
 
             for (0..SavedRegisters.len) |idx|
                 try e.pop(.{ .reg = SavedRegisters[SavedRegisters.len - idx - 1] });
-            if (Architecture.JITABI == .Win64)
+            if (Architecture.CallingConvention == .x86_64_win)
                 try e.restore_fp_registers(10);
 
             try e.emit_block_epilogue();
 
             self.block_cache.cursor += e.block_size;
             self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+        }
+        if (FastMem) {
+            var b = &self._working_block;
+            for ([_]struct { offset: *u64, function: u64 }{
+                .{ .offset = &VirtualAddressSpace.VAS.read_8_offset, .function = @intFromPtr(&_out_of_line_read8) },
+                .{ .offset = &VirtualAddressSpace.VAS.read_16_offset, .function = @intFromPtr(&_out_of_line_read16) },
+                .{ .offset = &VirtualAddressSpace.VAS.read_32_offset, .function = @intFromPtr(&_out_of_line_read32) },
+                .{ .offset = &VirtualAddressSpace.VAS.read_64_offset, .function = @intFromPtr(&_out_of_line_read64) },
+                .{ .offset = &VirtualAddressSpace.VAS.write_8_offset, .function = @intFromPtr(&_out_of_line_write8) },
+                .{ .offset = &VirtualAddressSpace.VAS.write_16_offset, .function = @intFromPtr(&_out_of_line_write16) },
+                .{ .offset = &VirtualAddressSpace.VAS.write_32_offset, .function = @intFromPtr(&_out_of_line_write32) },
+                .{ .offset = &VirtualAddressSpace.VAS.write_64_offset, .function = @intFromPtr(&_out_of_line_write64) },
+            }) |s| {
+                s.offset.* = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
+                b.clearRetainingCapacity();
+
+                try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = s.function } } });
+
+                const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+
+                self.block_cache.cursor += block_size;
+                self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+            }
         }
     }
 
@@ -659,7 +682,7 @@ pub const SH4JIT = struct {
         try self.init_compile_and_run_handler();
     }
 
-    fn block_hash(ram: [*]u8, start: u32, end: u32) callconv(.c) u64 {
+    fn block_hash(ram: [*]u8, start: u32, end: u32) callconv(Architecture.CallingConvention) u64 {
         return std.hash.CityHash64.hash(ram[start..end]);
     }
 
@@ -674,7 +697,7 @@ pub const SH4JIT = struct {
 
             const start = if (BasicBlock.EnableInstrumentation) std.time.nanoTimestamp() else {}; // Make sure this isn't called when instrumentation is disabled.
 
-            @as(*const fn (*sh4.SH4, *anyopaque) callconv(.c) void, @ptrCast(&self.block_cache.buffer[self.enter_block_offset]))(
+            @as(*const fn (*sh4.SH4, *anyopaque) callconv(Architecture.CallingConvention) void, @ptrCast(&self.block_cache.buffer[self.enter_block_offset]))(
                 cpu,
                 self.block_cache.buffer[block.offset..].ptr,
             );
@@ -694,7 +717,7 @@ pub const SH4JIT = struct {
     }
 
     // Default handler sitting the offset 0 of our executable buffer
-    pub noinline fn compile_and_run(self: *@This()) callconv(.c) [*]u8 {
+    pub noinline fn compile_and_run(self: *@This()) callconv(Architecture.CallingConvention) [*]u8 {
         const cpu = get_cpu();
         sh4_jit_log.info("(Cache Miss) Compiling {X:0>8} (SZ={d}, PR={d})...", .{ cpu.pc, cpu.fpscr.sz, cpu.fpscr.pr });
 
@@ -878,7 +901,7 @@ pub const SH4JIT = struct {
                 try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.start_pc >> 10 });
                 const same_page = try b.jmp(.Equal);
                 // Might cross a page boundary: Fallback to MMU translation
-                try call(b, &ctx, &runtime_instruction_mmu_translation);
+                try call(b, &ctx, runtime_instruction_mmu_translation);
                 if (Key.reg != ReturnRegister)
                     try b.mov(Key, .{ .reg = ReturnRegister });
                 // This function returns the updated block key directly.
@@ -922,8 +945,7 @@ pub const SH4JIT = struct {
         }
 
         // Enough cycles have passed, back to JIT entry point to restore host state.
-        try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(&self.block_cache.buffer[self.return_offset]) });
-        try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
+        try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = @intFromPtr(&self.block_cache.buffer[self.return_offset]) } } });
 
         for (b.instructions.items, 0..) |instr, idx|
             sh4_jit_log.debug("[{d: >4}] {f}", .{ idx, instr });
@@ -1073,8 +1095,8 @@ pub const SH4JIT = struct {
     }
 };
 
-fn call(block: *IRBlock, ctx: *JITContext, func: *const anyopaque) !void {
-    if (Architecture.JITABI == .SystemV) {
+fn call(block: *IRBlock, ctx: *JITContext, func: anytype) !void {
+    if (Architecture.CallingConvention == .x86_64_sysv) {
         if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
             try block.append(.{ .SaveFPRegisters = .{
                 .count = highest_saved_register_used + 1,
@@ -1084,7 +1106,7 @@ fn call(block: *IRBlock, ctx: *JITContext, func: *const anyopaque) !void {
 
     try block.call(func);
 
-    if (Architecture.JITABI == .SystemV) {
+    if (Architecture.CallingConvention == .x86_64_sysv) {
         if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
             try block.append(.{ .RestoreFPRegisters = .{
                 .count = highest_saved_register_used + 1,
@@ -1099,7 +1121,7 @@ fn InterpreterFallback(comptime mmu_enabled: bool, comptime instr_index: u8) typ
     const entry = sh4.instructions.Opcodes[instr_index];
     if (mmu_enabled) {
         return struct {
-            pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) callconv(.c) u8 {
+            pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) callconv(Architecture.CallingConvention) u8 {
                 entry.fn_(cpu, instr) catch |err| {
                     sh4_jit_log.debug("Interpreter fallback to {s} generated an exception: {t}", .{ entry.name, err });
                     switch (err) {
@@ -1116,7 +1138,7 @@ fn InterpreterFallback(comptime mmu_enabled: bool, comptime instr_index: u8) typ
         };
     } else {
         return struct {
-            pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) callconv(.c) void {
+            pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) callconv(Architecture.CallingConvention) void {
                 entry.fn_(cpu, instr) catch unreachable;
             }
         };
@@ -1156,14 +1178,13 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
         try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SH4PtrRegister });
         try block.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @as(u16, @bitCast(instr)) });
         switch (instr_index) {
-            inline 0...sh4.instructions.Opcodes.len - 1 => |idx| try call(
-                block,
-                ctx,
-                if (ctx.mmu_enabled)
-                    InterpreterFallback(true, idx).handler
-                else
-                    InterpreterFallback(false, idx).handler,
-            ),
+            inline 0...sh4.instructions.Opcodes.len - 1 => |idx| {
+                if (ctx.mmu_enabled) {
+                    try call(block, ctx, InterpreterFallback(true, idx).handler);
+                } else {
+                    try call(block, ctx, InterpreterFallback(false, idx).handler);
+                }
+            },
             else => std.debug.panic("Invalid instruction: {X:0>4}", .{instr.value}),
         }
 
@@ -1261,9 +1282,9 @@ pub fn nop(_: *IRBlock, _: *JITContext, _: sh4.Instr) !bool {
     return false;
 }
 
-fn jump_to_exception(comptime exception: sh4.Exception) *const fn (*sh4.SH4) callconv(.c) void {
+fn jump_to_exception(comptime exception: sh4.Exception) fn (*sh4.SH4) callconv(Architecture.CallingConvention) void {
     return struct {
-        fn jte(_: *sh4.SH4) callconv(.c) void {
+        fn jte(_: *sh4.SH4) callconv(Architecture.CallingConvention) void {
             const cpu = get_cpu();
             sh4_jit_log.debug("[{X:0>8}] Exception: {t}", .{ cpu.pc, exception });
             cpu.jump_to_exception(exception);
@@ -1275,7 +1296,11 @@ pub fn unknown(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     sh4_jit_log.info("Unknown instruction: {X}", .{@as(u16, @bitCast(instr))});
     if (ctx.mmu_enabled) {
         try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
-        try call(block, ctx, if (ctx.in_delay_slot) jump_to_exception(.SlotIllegalInstruction) else jump_to_exception(.GeneralIllegalInstruction));
+        if (ctx.in_delay_slot) {
+            try call(block, ctx, jump_to_exception(.SlotIllegalInstruction));
+        } else {
+            try call(block, ctx, jump_to_exception(.GeneralIllegalInstruction));
+        }
         return true;
     } else {
         return error.UnknownInstruction;
@@ -1361,41 +1386,90 @@ fn set_t(block: *IRBlock, _: *JITContext, condition: JIT.Condition) !void {
     try block.mov(sh4_mem("sr"), .{ .reg = ReturnRegister });
 }
 
-pub noinline fn _out_of_line_read8(_: *const sh4.SH4, virtual_addr: u32) callconv(.c) u8 {
+// For these generic calls, we don't know which registers are currently in use. Since System V ABI doesn't have any
+// floating point saved registers, we need to save/restore all of them unconditionally here to be safe :(
+inline fn fast_call_prologue() void {
+    if (Architecture.CallingConvention == .x86_64_sysv) {
+        asm volatile (
+            \\ subq    $128, %rsp
+            \\ movaps  %xmm6, 0(%rsp)
+            \\ movaps  %xmm7, 16(%rsp)
+            \\ movaps  %xmm8, 32(%rsp)
+            \\ movaps  %xmm9, 48(%rsp)
+            \\ movaps  %xmm10, 64(%rsp)
+            \\ movaps  %xmm11, 80(%rsp)
+            \\ movaps  %xmm12, 96(%rsp)
+            \\ movaps  %xmm13, 112(%rsp)
+            ::: .{ .rsp = true });
+    }
+}
+inline fn fast_call_epilogue() void {
+    if (Architecture.CallingConvention == .x86_64_sysv) {
+        asm volatile (
+            \\ movaps  0(%rsp), %xmm6
+            \\ movaps  16(%rsp), %xmm7
+            \\ movaps  32(%rsp), %xmm8
+            \\ movaps  48(%rsp), %xmm9
+            \\ movaps  64(%rsp), %xmm10
+            \\ movaps  80(%rsp), %xmm11
+            \\ movaps  96(%rsp), %xmm12
+            \\ movaps  112(%rsp), %xmm13
+            \\ addq    $128, %rsp
+            ::: .{ .rsp = true });
+    }
+}
+
+pub noinline fn _out_of_line_read8(_: *const sh4.SH4, virtual_addr: u32) callconv(Architecture.CallingConvention) u8 {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000); // We can't garantee this won't be called with a RAM address in FastMem mode (even if it is highly unlikely)
+    fast_call_prologue();
+    defer fast_call_epilogue();
     return @call(.always_inline, sh4.SH4.read_physical, .{ get_cpu(), u8, virtual_addr });
 }
-pub noinline fn _out_of_line_read16(_: *const sh4.SH4, virtual_addr: u32) callconv(.c) u16 {
+pub noinline fn _out_of_line_read16(_: *const sh4.SH4, virtual_addr: u32) callconv(Architecture.CallingConvention) u16 {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    fast_call_prologue();
+    defer fast_call_epilogue();
     return @call(.always_inline, sh4.SH4.read_physical, .{ get_cpu(), u16, virtual_addr });
 }
-pub noinline fn _out_of_line_read32(_: *const sh4.SH4, virtual_addr: u32) callconv(.c) u32 {
+pub noinline fn _out_of_line_read32(_: *const sh4.SH4, virtual_addr: u32) callconv(Architecture.CallingConvention) u32 {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    fast_call_prologue();
+    defer fast_call_epilogue();
     return @call(.always_inline, sh4.SH4.read_physical, .{ get_cpu(), u32, virtual_addr });
 }
-pub noinline fn _out_of_line_read64(_: *const sh4.SH4, virtual_addr: u32) callconv(.c) u64 {
+pub noinline fn _out_of_line_read64(_: *const sh4.SH4, virtual_addr: u32) callconv(Architecture.CallingConvention) u64 {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    fast_call_prologue();
+    defer fast_call_epilogue();
     return @call(.always_inline, sh4.SH4.read_physical, .{ get_cpu(), u64, virtual_addr });
 }
-pub noinline fn _out_of_line_write8(_: *sh4.SH4, virtual_addr: u32, value: u8) callconv(.c) void {
+pub noinline fn _out_of_line_write8(_: *sh4.SH4, virtual_addr: u32, value: u8) callconv(Architecture.CallingConvention) void {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    fast_call_prologue();
+    defer fast_call_epilogue();
     return @call(.always_inline, sh4.SH4.write_physical, .{ get_cpu(), u8, virtual_addr, value });
 }
-pub noinline fn _out_of_line_write16(_: *sh4.SH4, virtual_addr: u32, value: u16) callconv(.c) void {
+pub noinline fn _out_of_line_write16(_: *sh4.SH4, virtual_addr: u32, value: u16) callconv(Architecture.CallingConvention) void {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    fast_call_prologue();
+    defer fast_call_epilogue();
     return @call(.always_inline, sh4.SH4.write_physical, .{ get_cpu(), u16, virtual_addr, value });
 }
-pub noinline fn _out_of_line_write32(_: *sh4.SH4, virtual_addr: u32, value: u32) callconv(.c) void {
+pub noinline fn _out_of_line_write32(_: *sh4.SH4, virtual_addr: u32, value: u32) callconv(Architecture.CallingConvention) void {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    fast_call_prologue();
+    defer fast_call_epilogue();
     return @call(.always_inline, sh4.SH4.write_physical, .{ get_cpu(), u32, virtual_addr, value });
 }
-pub noinline fn _out_of_line_write64(_: *sh4.SH4, virtual_addr: u32, value: u64) callconv(.c) void {
+pub noinline fn _out_of_line_write64(_: *sh4.SH4, virtual_addr: u32, value: u64) callconv(Architecture.CallingConvention) void {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    fast_call_prologue();
+    defer fast_call_epilogue();
     return @call(.always_inline, sh4.SH4.write_physical, .{ get_cpu(), u64, virtual_addr, value });
 }
 
 /// Perform MMU instruction address translation, handling exceptions and returns the next block key.
-fn runtime_instruction_mmu_translation() callconv(.c) u32 {
+fn runtime_instruction_mmu_translation() callconv(Architecture.CallingConvention) u32 {
     const cpu = get_cpu();
     std.debug.assert(cpu._mmu_state == .Full);
     const physical_pc = cpu.get_physical_pc();
@@ -1417,7 +1491,7 @@ var MMUCache: MMUCacheType = .{};
 /// A call to the handler will return the physical address in the lower 32bits, and a non-zero value in the upper 32bits if an exception occurred.
 fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_size: u32) type {
     return struct {
-        fn handler(_: *sh4.SH4, virtual_addr: u32) callconv(.c) packed struct(u64) { address: u32, exception: u32 } {
+        fn handler(_: *sh4.SH4, virtual_addr: u32) callconv(Architecture.CallingConvention) packed struct(u64) { address: u32, exception: u32 } {
             const cpu = get_cpu();
             std.debug.assert(cpu._mmu_state == .Full);
 
@@ -1513,7 +1587,7 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
 
     if (addr != ArgRegisters[1])
         try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = addr });
-    try call(block, ctx, &runtime_mmu_translation(access_type, access_size).handler);
+    try call(block, ctx, runtime_mmu_translation(access_type, access_size).handler);
     if (addr != ReturnRegister)
         try block.mov(.{ .reg = addr }, .{ .reg = ReturnRegister });
 
@@ -1572,8 +1646,8 @@ fn compute_address(block: *IRBlock, ctx: *JITContext, addr: JIT.Register, addres
     }
 }
 
-// Load a u<size> from memory into a host register, with a fast path if the address lies in RAM.
-fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, addressing: AddressingMode, displacement: u32, comptime size: u32) !void {
+// Load a u<size> from memory into ReturnRegister, with a fast path if the address lies in RAM.
+fn load_mem(block: *IRBlock, ctx: *JITContext, addressing: AddressingMode, displacement: u32, comptime size: u32) !void {
     const addr = ArgRegisters[1];
 
     try compute_address(block, ctx, addr, addressing, displacement);
@@ -1582,19 +1656,8 @@ fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, addressing: A
         try mmu_translation(.Read, size, block, ctx, addr, null);
 
     if (FastMem) {
-        try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = VirtualAddressSpaceBaseRegister, .index = addr, .size = size } });
-
-        var skip_fallback = try block.jmp(.Always);
-        // Address is already loaded into ArgRegisters[1]
-        switch (size) {
-            8 => try call(block, ctx, &_out_of_line_read8),
-            16 => try call(block, ctx, &_out_of_line_read16),
-            32 => try call(block, ctx, &_out_of_line_read32),
-            64 => try call(block, ctx, &_out_of_line_read64),
-            else => @compileError("load_mem: Unsupported size."),
-        }
-        if (dest != ReturnRegister) try block.mov(.{ .reg = dest }, .{ .reg = ReturnRegister });
-        skip_fallback.patch();
+        try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = VirtualAddressSpaceBaseRegister, .index = addr, .size = size } });
+        try block.append(.{ .Padding = 5 });
     } else { // RAM Fast path
         try block.mov(.{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[1] });
         try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0x1C000000 } } });
@@ -1603,22 +1666,19 @@ fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, addressing: A
         var not_branch = try block.jmp(.NotEqual);
         // We're in RAM!
         try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[1] }, .src = .{ .imm32 = 0x00FFFFFF } } });
-        try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = RAMBaseRegister, .index = ArgRegisters[1], .size = size } });
+        try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = RAMBaseRegister, .index = ArgRegisters[1], .size = size } });
         var to_end = try block.jmp(.Always);
 
         not_branch.patch();
 
         // Address is already loaded into ArgRegisters[1]
         switch (size) {
-            8 => try call(block, ctx, &_out_of_line_read8),
-            16 => try call(block, ctx, &_out_of_line_read16),
-            32 => try call(block, ctx, &_out_of_line_read32),
-            64 => try call(block, ctx, &_out_of_line_read64),
+            8 => try call(block, ctx, _out_of_line_read8),
+            16 => try call(block, ctx, _out_of_line_read16),
+            32 => try call(block, ctx, _out_of_line_read32),
+            64 => try call(block, ctx, _out_of_line_read64),
             else => @compileError("load_mem: Unsupported size."),
         }
-
-        if (dest != ReturnRegister)
-            try block.mov(.{ .reg = dest }, .{ .reg = ReturnRegister });
 
         to_end.patch();
     }
@@ -1642,20 +1702,10 @@ fn store_mem(block: *IRBlock, ctx: *JITContext, addressing: AddressingMode, disp
     }
 
     if (FastMem) {
-        try block.mov(.{ .mem = .{ .base = VirtualAddressSpaceBaseRegister, .index = addr, .size = size } }, value);
-
-        var skip_fallback = try block.jmp(.Always);
-        // Address is already loaded into ArgRegisters[1]
-        if (value.tag() != .reg or value.reg != ArgRegisters[2])
+        if (value.tag() != .reg or value.reg != ArgRegisters[2]) // FIXME: Ideally we should be able to get rid of this (needed when the FastMem is patched out).
             try block.mov(.{ .reg = ArgRegisters[2] }, value);
-        switch (size) {
-            8 => try call(block, ctx, &_out_of_line_write8),
-            16 => try call(block, ctx, &_out_of_line_write16),
-            32 => try call(block, ctx, &_out_of_line_write32),
-            64 => try call(block, ctx, &_out_of_line_write64),
-            else => @compileError("store_mem: Unsupported size."),
-        }
-        skip_fallback.patch();
+        try block.mov(.{ .mem = .{ .base = VirtualAddressSpaceBaseRegister, .index = addr, .size = size } }, value);
+        try block.append(.{ .Padding = 5 });
     } else {
         // RAM Fast path
         try block.mov(.{ .reg = ArgRegisters[3] }, .{ .reg = addr });
@@ -1673,10 +1723,10 @@ fn store_mem(block: *IRBlock, ctx: *JITContext, addressing: AddressingMode, disp
         if (value.tag() != .reg or value.reg != ArgRegisters[2])
             try block.mov(.{ .reg = ArgRegisters[2] }, value);
         switch (size) {
-            8 => try call(block, ctx, &_out_of_line_write8),
-            16 => try call(block, ctx, &_out_of_line_write16),
-            32 => try call(block, ctx, &_out_of_line_write32),
-            64 => try call(block, ctx, &_out_of_line_write64),
+            8 => try call(block, ctx, _out_of_line_write8),
+            16 => try call(block, ctx, _out_of_line_write16),
+            32 => try call(block, ctx, _out_of_line_write32),
+            64 => try call(block, ctx, _out_of_line_write64),
             else => @compileError("store_mem: Unsupported size."),
         }
         to_end.patch();
@@ -1698,7 +1748,7 @@ pub fn mov_imm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 pub fn mov_atRm_Rn(comptime size: u8) *const fn (block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) anyerror!bool {
     return struct {
         pub fn handler(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-            try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, 0, size);
+            try load_mem(block, ctx, .{ .Reg = instr.nmd.m }, 0, size);
             if (size < 32) { // Sign extend
                 try block.movsx(try get_register_for_writing(block, ctx, instr.nmd.n), .Reg(ReturnRegister, size));
             } else {
@@ -1774,21 +1824,21 @@ pub fn mov_Rm_atDecRn(comptime size: u8) *const fn (block: *IRBlock, ctx: *JITCo
 
 pub fn movb_atDispRm_R0(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const d = bit_manip.zero_extend(instr.nmd.d);
-    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, d, 8);
+    try load_mem(block, ctx, .{ .Reg = instr.nmd.m }, d, 8);
     try block.movsx(try get_register_for_writing(block, ctx, 0), .{ .reg8 = ReturnRegister });
     return false;
 }
 
 pub fn movw_atDispRm_R0(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const d = bit_manip.zero_extend(instr.nmd.d) << 1;
-    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, d, 16);
+    try load_mem(block, ctx, .{ .Reg = instr.nmd.m }, d, 16);
     try block.movsx(try get_register_for_writing(block, ctx, 0), .{ .reg16 = ReturnRegister });
     return false;
 }
 
 pub fn movl_atDispRm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const d = bit_manip.zero_extend(instr.nmd.d) << 2;
-    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, d, 32);
+    try load_mem(block, ctx, .{ .Reg = instr.nmd.m }, d, 32);
     try store_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
     return false;
 }
@@ -1815,19 +1865,19 @@ pub fn movl_Rm_atDispRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bo
 }
 
 pub fn movb_atR0Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try load_mem(block, ctx, ReturnRegister, .{ .Reg_R0 = instr.nmd.m }, 0, 8);
+    try load_mem(block, ctx, .{ .Reg_R0 = instr.nmd.m }, 0, 8);
     try block.movsx(try get_register_for_writing(block, ctx, instr.nmd.n), .{ .reg8 = ReturnRegister });
     return false;
 }
 
 pub fn movw_atR0Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try load_mem(block, ctx, ReturnRegister, .{ .Reg_R0 = instr.nmd.m }, 0, 16);
+    try load_mem(block, ctx, .{ .Reg_R0 = instr.nmd.m }, 0, 16);
     try block.movsx(try get_register_for_writing(block, ctx, instr.nmd.n), .{ .reg16 = ReturnRegister });
     return false;
 }
 
 pub fn movl_atR0Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try load_mem(block, ctx, ReturnRegister, .{ .Reg_R0 = instr.nmd.m }, 0, 32);
+    try load_mem(block, ctx, .{ .Reg_R0 = instr.nmd.m }, 0, 32);
     try store_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
     return false;
 }
@@ -1854,7 +1904,7 @@ pub fn mov_atDispGBR_R0(comptime size: u8) fn (*IRBlock, *JITContext, sh4.Instr)
     return struct {
         pub fn handler(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
             const displacement: u32 = bit_manip.zero_extend(instr.nd8.d) * (size / 8);
-            try load_mem(block, ctx, ReturnRegister, .GBR, displacement, size);
+            try load_mem(block, ctx, .GBR, displacement, size);
             if (size < 32) {
                 try block.movsx(try get_register_for_writing(block, ctx, 0), .Reg(ReturnRegister, size));
             } else {
@@ -2040,10 +2090,11 @@ fn check_fd_bit(block: *IRBlock, ctx: *JITContext) !void {
                 try ctx.fpr_cache.commit_all_speculatively(block);
                 if (ctx.in_delay_slot) {
                     try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc - 2 });
+                    try call(block, ctx, jump_to_exception(.SlotFPUDisable));
                 } else {
                     try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
+                    try call(block, ctx, jump_to_exception(.GeneralFPUDisable));
                 }
-                try call(block, ctx, if (ctx.in_delay_slot) jump_to_exception(.SlotFPUDisable) else jump_to_exception(.GeneralFPUDisable));
                 try ctx.add_jump_to_end(try block.jmp(.Always));
 
                 skip.patch();
@@ -2072,11 +2123,11 @@ pub fn fmovs_atRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool
     switch (ctx.fpscr_sz) {
         .Single => {
             // FRn = [Rm]
-            try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, 0, 32);
+            try load_mem(block, ctx, .{ .Reg = instr.nmd.m }, 0, 32);
             try store_fp_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
         },
         .Double => {
-            try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, 0, 64);
+            try load_mem(block, ctx, .{ .Reg = instr.nmd.m }, 0, 64);
             try store_dfp_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
         },
         .Unknown => return interpreter_fallback_cached(block, ctx, instr),
@@ -2155,11 +2206,11 @@ pub fn fmovs_atR0Rm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bo
     switch (ctx.fpscr_sz) {
         .Single => {
             // FRn = [Rm+R0]
-            try load_mem(block, ctx, ReturnRegister, .{ .Reg_R0 = instr.nmd.m }, 0, 32);
+            try load_mem(block, ctx, .{ .Reg_R0 = instr.nmd.m }, 0, 32);
             try store_fp_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
         },
         .Double => {
-            try load_mem(block, ctx, ReturnRegister, .{ .Reg_R0 = instr.nmd.m }, 0, 64);
+            try load_mem(block, ctx, .{ .Reg_R0 = instr.nmd.m }, 0, 64);
             try store_dfp_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
         },
         .Unknown => return interpreter_fallback_cached(block, ctx, instr),
@@ -2516,7 +2567,8 @@ pub fn ldsl_atRnInc_FPSCR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !
 
     try ctx.fpr_cache.commit_and_invalidate_all(block); // We may switch FP register banks
 
-    try load_mem(block, ctx, ArgRegisters[1], .{ .Reg = instr.nmd.n }, 0, 32);
+    try load_mem(block, ctx, .{ .Reg = instr.nmd.n }, 0, 32);
+    try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = ReturnRegister });
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SH4PtrRegister });
     try call(block, ctx, sh4.SH4.set_fpscr);
 
@@ -2560,7 +2612,7 @@ pub fn sts_FPUL_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 pub fn ldsl_atRnInc_FPUL(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try check_fd_bit(block, ctx);
 
-    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.n }, 0, 32);
+    try load_mem(block, ctx, .{ .Reg = instr.nmd.n }, 0, 32);
     try block.mov(sh4_mem("fpul"), .{ .reg = ReturnRegister });
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
@@ -2705,12 +2757,12 @@ pub fn extuw_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 pub fn macl_atRmInc_atRnInc(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // NOTE: SR.S == 1 mode not implemented.
 
-    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.n }, 0, 32);
+    try load_mem(block, ctx, .{ .Reg = instr.nmd.n }, 0, 32);
     try block.movsx(.{ .reg64 = ReturnRegister }, .{ .reg = ReturnRegister }); // Sign extend to 64bits
     try block.push(.{ .reg64 = ReturnRegister }); // load_mem will make some function calls, make sure to save the first fetched operand.
     try block.push(.{ .reg64 = ReturnRegister }); // Twice to stay 16 bytes aligned.
 
-    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, 0, 32);
+    try load_mem(block, ctx, .{ .Reg = instr.nmd.m }, 0, 32);
     try block.movsx(.{ .reg64 = ArgRegisters[0] }, .{ .reg = ReturnRegister });
 
     try block.pop(.{ .reg64 = ReturnRegister });
@@ -2733,12 +2785,12 @@ pub fn macw_atRmInc_atRnInc(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr)
 
     sh4_jit_log.warn("Emitting mac.w @Rm+,@Rn+: This is untested!", .{});
 
-    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.n }, 0, 16);
+    try load_mem(block, ctx, .{ .Reg = instr.nmd.n }, 0, 16);
     try block.movsx(.{ .reg64 = ReturnRegister }, .{ .reg16 = ReturnRegister }); // Sign extend to 64bits
     try block.push(.{ .reg64 = ReturnRegister }); // load_mem will make some function calls, make sure to save the first fetched operand.
     try block.push(.{ .reg64 = ReturnRegister }); // Twice to stay 16 bytes aligned.
 
-    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, 0, 16);
+    try load_mem(block, ctx, .{ .Reg = instr.nmd.m }, 0, 16);
     try block.movsx(.{ .reg64 = ArgRegisters[0] }, .{ .reg16 = ReturnRegister });
 
     try block.pop(.{ .reg64 = ReturnRegister });
@@ -2958,7 +3010,7 @@ pub fn shar_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
-fn shld(n: u32, m: u32) callconv(.c) u32 {
+fn shld(n: u32, m: u32) callconv(Architecture.CallingConvention) u32 {
     const sign = m & 0x80000000;
     if (sign == 0) {
         return n << @intCast(m & 0x1F);
@@ -3403,7 +3455,7 @@ pub fn ldcl_atRnInc_Reg(comptime reg: []const u8) fn (block: *IRBlock, ctx: *JIT
     std.debug.assert(!std.mem.eql(u8, reg, "sr"));
     const T = struct {
         fn ldcl(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-            try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.n }, 0, 32);
+            try load_mem(block, ctx, .{ .Reg = instr.nmd.n }, 0, 32);
             try block.mov(sh4_mem(reg), .{ .reg = ReturnRegister });
 
             const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
@@ -3415,7 +3467,7 @@ pub fn ldcl_atRnInc_Reg(comptime reg: []const u8) fn (block: *IRBlock, ctx: *JIT
 }
 
 pub fn ldcl_atRnInc_SR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.n }, 0, 32);
+    try load_mem(block, ctx, .{ .Reg = instr.nmd.n }, 0, 32);
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
     try set_sr(block, ctx, .{ .reg = ReturnRegister });

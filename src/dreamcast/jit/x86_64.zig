@@ -21,25 +21,16 @@ pub fn runtime_check_cpu_feature(feature: std.Target.x86.Feature) !bool {
 pub const ReturnRegister = Register.rax;
 pub const ScratchRegisters = [_]Register{ .r10, .r11 };
 
-pub const ABI = enum {
-    SystemV,
-    Win64,
-};
-
-// Tried using builtin.abi, but it returns .gnu on Windows.
-pub const JITABI: ABI = switch (builtin.os.tag) {
-    .windows => .Win64,
-    .linux => .SystemV,
-    else => @compileError("Unsupported OS"),
-};
+pub const CallingConvention = std.builtin.CallingConvention.c;
 
 // ArgRegisters are also used as scratch registers, but have a special meaning for function calls.
-pub const ArgRegisters = switch (JITABI) {
-    .Win64 => [_]Register{ .rcx, .rdx, .r8, .r9 },
-    .SystemV => [_]Register{ .rdi, .rsi, .rdx, .rcx, .r8, .r9 },
+pub const ArgRegisters = switch (CallingConvention) {
+    .x86_64_win => [_]Register{ .rcx, .rdx, .r8, .r9 },
+    .x86_64_sysv => [_]Register{ .rdi, .rsi, .rdx, .rcx, .r8, .r9 },
+    else => @compileError("Unsupported calling convention"),
 };
-pub const SavedRegisters = switch (JITABI) {
-    .Win64 => [_]Register{
+pub const SavedRegisters = switch (CallingConvention) {
+    .x86_64_win => [_]Register{
         .rbx,
         .rsi,
         .r12,
@@ -51,7 +42,7 @@ pub const SavedRegisters = switch (JITABI) {
         // .rbp,
         // .rsp,
     },
-    .SystemV => [_]Register{
+    .x86_64_sysv => [_]Register{
         .rbx,
         .r12,
         .r13,
@@ -60,16 +51,17 @@ pub const SavedRegisters = switch (JITABI) {
         // .rbp,
         // .rsp,
     },
+    else => @compileError("Unsupported calling convention"),
 };
 
-pub const FPArgRegisters = switch (JITABI) {
-    .Win64 => [_]FPRegister{
+pub const FPArgRegisters = switch (CallingConvention) {
+    .x86_64_win => [_]FPRegister{
         .xmm0,
         .xmm1,
         .xmm2,
         .xmm3,
     },
-    .SystemV => [_]FPRegister{
+    .x86_64_sysv => [_]FPRegister{
         .xmm0,
         .xmm1,
         .xmm2,
@@ -79,14 +71,15 @@ pub const FPArgRegisters = switch (JITABI) {
         .xmm6,
         .xmm7,
     },
+    else => @compileError("Unsupported calling convention"),
 };
 
-pub const FPScratchRegisters = switch (JITABI) {
-    .Win64 => [_]FPRegister{
+pub const FPScratchRegisters = switch (CallingConvention) {
+    .x86_64_win => [_]FPRegister{
         .xmm4,
         .xmm5,
     },
-    .SystemV => [_]FPRegister{
+    .x86_64_sysv => [_]FPRegister{
         // NOTE: These are scratch registers for the ABI, but we're using them as saved registers!
         // .xmm8,
         // .xmm9,
@@ -97,10 +90,11 @@ pub const FPScratchRegisters = switch (JITABI) {
         .xmm14,
         .xmm15,
     },
+    else => @compileError("Unsupported calling convention"),
 };
 
-pub const FPSavedRegisters = switch (JITABI) {
-    .Win64 => [_]FPRegister{
+pub const FPSavedRegisters = switch (CallingConvention) {
+    .x86_64_win => [_]FPRegister{
         .xmm6,
         .xmm7,
         .xmm8,
@@ -112,7 +106,8 @@ pub const FPSavedRegisters = switch (JITABI) {
         .xmm14,
         .xmm15,
     },
-    .SystemV => [_]FPRegister{}, // NOTE: SH4 JIT uses xmm8-xmm13 (manually saving them)
+    .x86_64_sysv => [_]FPRegister{}, // NOTE: SH4 JIT uses xmm6-xmm13 (manually saving them)
+    else => @compileError("Unsupported calling convention"),
 };
 
 /// RegOpcodes (ModRM) for 0x81: OP r/m32, imm32 - 0x83: OP r/m32, imm8 (sign extended)
@@ -359,7 +354,7 @@ pub const Instruction = union(enum) {
     Sarx: struct { dst: Register, src: Operand, amount: Register },
     Shlx: struct { dst: Register, src: Operand, amount: Register },
     Shrx: struct { dst: Register, src: Operand, amount: Register },
-    Jmp: struct { condition: Condition, dst: union(enum) { rel: i32, abs_indirect: Operand } },
+    Jmp: struct { condition: Condition, dst: union(enum) { rel: i32, abs_indirect: Operand, abs: u64 } },
     BlockEpilogue: void,
     Convert: struct { dst: Operand, src: Operand },
     // FIXME: This only exists because I haven't added a way to specify the size the GPRs.
@@ -368,6 +363,9 @@ pub const Instruction = union(enum) {
 
     SaveFPRegisters: struct { count: u8 },
     RestoreFPRegisters: struct { count: u8 },
+
+    /// Pad the *previous instruction* up to N bytes. Usefull for ensuring an instruction can be patched to a potentially longer one.
+    Padding: u8,
 
     pub fn format(value: @This(), writer: *std.Io.Writer) !void {
         return switch (value) {
@@ -399,8 +397,9 @@ pub const Instruction = union(enum) {
             .BitTest => |bit_test| writer.print("bt {f}, {f}", .{ bit_test.src, bit_test.offset }),
             .Test => |t| writer.print("test {f}, {f}", .{ t.lhs, t.rhs }),
             .Jmp => |jmp| switch (jmp.dst) {
-                .rel => writer.print("jmp {f} {d}", .{ jmp.condition, jmp.dst.rel }),
-                .abs_indirect => writer.print("jmp {f} {f}", .{ jmp.condition, jmp.dst.abs_indirect }),
+                .rel => |dst| writer.print("jmp {f} {d}", .{ jmp.condition, dst }),
+                .abs_indirect => |dst| writer.print("jmp {f} {f}", .{ jmp.condition, dst }),
+                .abs => |dst| writer.print("jmp {f} {X}", .{ jmp.condition, dst }),
             },
             .BlockEpilogue => writer.print("block_epilogue", .{}),
             .Rol => |rol| writer.print("rol {f}, {f}", .{ rol.dst, rol.amount }),
@@ -418,6 +417,8 @@ pub const Instruction = union(enum) {
             .Lea => |lea| writer.print("lea {f}, {f}", .{ lea.dst, lea.mem }),
             .SaveFPRegisters => |instr| writer.print("SaveFPRegisters {d}", .{instr.count}),
             .RestoreFPRegisters => |instr| writer.print("RestoreFPRegisters {d}", .{instr.count}),
+
+            .Padding => |p| writer.print("Padding {d}", .{p}),
         };
     }
 };
@@ -704,7 +705,16 @@ pub const Emitter = struct {
 
                 .SaveFPRegisters => |s| try self.save_fp_registers(s.count),
                 .RestoreFPRegisters => |s| try self.restore_fp_registers(s.count),
-                // else => return error.UnsupportedInstruction,
+
+                .Padding => |p| {
+                    if (idx == 0) return error.InvalidPadding;
+                    const instr_len = self._instruction_offsets[idx] - self._instruction_offsets[idx - 1];
+                    if (instr_len < p) {
+                        for (0..p - instr_len) |_| {
+                            try self.emit(u8, 0x90);
+                        }
+                    }
+                },
             }
         }
         if (self.forward_jumps_to_patch.count() > 0) {
@@ -1830,29 +1840,66 @@ pub const Emitter = struct {
                     else => std.debug.panic("Unsupported indirect jump destination: {f}", .{op}),
                 }
             },
+            .abs => |op| {
+                if (condition != .Always) return error.UnsupportedAbsoluteJumpCondition;
+                const rip: i64 = @intCast(@intFromPtr(self.block_buffer.ptr) + self.block_size);
+                const rel_8 = @as(i64, @intCast(op)) - (rip + 1 + 1);
+                const rel_32 = @as(i64, @intCast(op)) - (rip + 1 + 4);
+                if (rel_8 >= std.math.minInt(i8) and rel_8 <= std.math.maxInt(i8)) {
+                    try self.emit(u8, 0xEB);
+                    try self.emit(u8, @bitCast(@as(i8, @intCast(rel_8))));
+                } else if (rel_32 >= std.math.minInt(i32) and rel_32 <= std.math.maxInt(i32)) {
+                    try self.emit(u8, 0xE9);
+                    try self.emit(u32, @bitCast(@as(i32, @intCast(rel_32))));
+                } else {
+                    // Turn into
+                    //   mov rax, op
+                    //   jmp rax
+                    try self.mov(.{ .reg64 = .rax }, .{ .imm64 = op }, true);
+                    try self.emit(u8, 0xFF);
+                    try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 4, .r_m = encode(Register.rax) });
+                }
+            },
+        }
+    }
+
+    fn call_prologue(self: *@This()) !void {
+        if (CallingConvention == .x86_64_win) {
+            // Allocate shadow space - We still don't support specifying register sizes, so, hardcoding it.
+            // sub rsp, 0x20
+            try self.emit_slice(u8, &[_]u8{ 0x48, 0x83, 0xEC, 0x20 });
+        }
+    }
+
+    fn call_epilogue(self: *@This()) !void {
+        if (CallingConvention == .x86_64_win) {
+            // add rsp, 0x20
+            try self.emit_slice(u8, &[_]u8{ 0x48, 0x83, 0xC4, 0x20 });
         }
     }
 
     pub fn native_call(self: *@This(), function: ?*const anyopaque) !void {
+        try self.call_prologue();
+        defer self.call_epilogue() catch std.debug.panic("call_epilogue failed", .{});
+
         if (function) |fp| {
+            const target: i64 = @intCast(@intFromPtr(function));
+            const rel_call_rip: i64 = @intCast(@intFromPtr(self.block_buffer[self.block_size..].ptr) + 1 + 4);
+            const rel = target - rel_call_rip;
+            if (rel > std.math.minInt(i32) and rel < std.math.maxInt(i32)) {
+                // call rel32
+                try self.emit_slice(u8, &[_]u8{0xE8});
+                try self.emit(u32, @bitCast(@as(i32, @intCast(rel))));
+                return;
+            }
+
             // mov rax, function
             try self.emit_slice(u8, &[_]u8{ 0x48, 0xB8 });
             try self.emit(u64, @intFromPtr(fp));
         }
 
-        if (builtin.os.tag == .windows) {
-            // Allocate shadow space - We still don't support specifying register sizes, so, hardcoding it.
-            // sub rsp, 0x20
-            try self.emit_slice(u8, &[_]u8{ 0x48, 0x83, 0xEC, 0x20 });
-        }
-
         // call rax
         try self.emit_slice(u8, &[_]u8{ 0xFF, 0xD0 });
-
-        if (builtin.os.tag == .windows) {
-            // add rsp, 0x20
-            try self.emit_slice(u8, &[_]u8{ 0x48, 0x83, 0xC4, 0x20 });
-        }
     }
 
     pub fn ret(self: *@This()) !void {

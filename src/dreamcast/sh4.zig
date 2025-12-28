@@ -25,6 +25,7 @@ pub const Exception = @import("sh4_exceptions.zig").Exception;
 
 pub const instructions = @import("sh4_instructions.zig");
 pub const disassembly = @import("sh4_disassembly.zig");
+const JITCallingConvention = @import("jit/x86_64.zig").CallingConvention;
 
 pub const DataProtectedCheck = false; // Check for access to protected memory (>= 0x80000000) in user mode.
 pub const DataAlignmentCheck = false; // Check for unaligned memory access.
@@ -474,7 +475,7 @@ pub const SH4 = struct {
         self.execution_state = .Running;
     }
 
-    pub fn set_sr(self: *@This(), value: SR) callconv(.c) void {
+    pub fn set_sr(self: *@This(), value: SR) callconv(JITCallingConvention) void {
         const prev_rb = if (self.sr.md == 1) self.sr.rb else 0;
         const new_rb = if (value.md == 1) value.rb else 0;
         if (new_rb != prev_rb) {
@@ -501,7 +502,7 @@ pub const SH4 = struct {
             : .{ .rax = true });
     }
 
-    pub fn set_fpscr(self: *@This(), value: u32) callconv(.c) void {
+    pub fn set_fpscr(self: *@This(), value: u32) callconv(JITCallingConvention) void {
         const new_value: FPSCR = @bitCast(value & 0x003FFFFF);
         if (new_value.fr != self.fpscr.fr) {
             std.mem.swap(@TypeOf(self.fp_banks[0]), &self.fp_banks[0], &self.fp_banks[1]);
