@@ -63,8 +63,8 @@
             .hash = "nfdzig-0.1.0-11fxvN6IBgD5rvvfjrw1wPqibMsbUJ-h2ZcGR6FOEvrm",
         },
         .zglfw = .{
-            .url = "git+https://github.com/zig-gamedev/zglfw#feeeff9386dd44ba2c18488113023865c41b80a4",
-            .hash = "zglfw-0.10.0-dev-zgVDNLyhIQCZR_rbIf7hnCKuifzcmPOLOQhd_hrqq8cl",
+            .url = "git+https://github.com/Senryoku/zglfw.git#5e2210141840ea35171dc90dc503ed085efcc655",
+            .hash = "zglfw-0.10.0-dev-zgVDNDbQIQCV4wt38DKoANX6W1mc0MFA97LI9d6vot9y",
         },
     },
 }

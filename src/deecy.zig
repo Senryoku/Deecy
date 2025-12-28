@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const comptime_config = @import("config");
+const Self = @This();
 
 const zglfw = @import("zglfw");
 const zgpu = @import("zgpu");
@@ -206,8 +207,8 @@ pub const DefaultVMUPaths = default_vmu_paths: {
 
 const ControllerSettings = struct {
     enabled: bool,
-    subcapabilities: DreamcastModule.Maple.InputCapabilities = DreamcastModule.Maple.StandardControllerCapabilities,
-    subperipherals: [2]union(enum) { None, VMU: struct { filename: []const u8 } } = .{ .None, .None },
+    subcapabilities: DreamcastModule.Maple.Controller.InputCapabilities = DreamcastModule.Maple.Controller.StandardControllerCapabilities,
+    subperipherals: [2]union(enum) { None, VMU: struct { filename: []const u8 }, VibrationPack } = .{ .None, .None },
 };
 
 const Configuration = struct {
@@ -292,7 +293,36 @@ _dc_thread: ?std.Thread = null, // Used for unlimited frame rate, i.e. when real
 enable_jit: bool = true,
 breakpoints: std.ArrayList(u32),
 
-controllers: [4]?struct { id: zglfw.Joystick, deadzone: f32 = 0.1 } = @splat(null),
+controllers: [4]?struct {
+    id: zglfw.Joystick,
+    rumble: struct {
+        active: bool = false,
+        power: f32 = 0,
+        change: f32 = 0,
+    } = .{},
+    // FIXME: Move to config?
+    deadzone: f32 = 0.1,
+
+    pub fn set_rumble(self: *@This(), power: f32, change: f32) bool {
+        self.rumble = .{
+            .active = power != 0 or change != 0,
+            .power = std.math.clamp(power, 0.0, 1.0),
+            .change = change,
+        };
+        return self.id.setRumble(self.rumble.power, self.rumble.power);
+    }
+
+    pub fn update(self: *@This(), dt: f32) void {
+        if (self.rumble.active) {
+            self.rumble.power += self.rumble.change * dt;
+            if (self.rumble.power <= 0)
+                self.rumble = .{};
+            if (self.rumble.change >= 0 and self.rumble.power > 1)
+                self.rumble = .{};
+            _ = self.id.setRumble(self.rumble.power, self.rumble.power);
+        }
+    }
+} = @splat(null),
 
 display_ui: bool = true,
 ui: *UI = undefined,
@@ -679,14 +709,32 @@ pub fn deinit_peripheral(self: *@This(), controller_idx: u8, slot: u8) void {
     self.dc.maple.ports[controller_idx].subperipherals[slot] = null;
 }
 
-pub fn init_peripheral(self: *@This(), idx: u8, slot: u8) !void {
-    self.deinit_peripheral(idx, slot);
-    switch (self.config.controllers[idx].subperipherals[slot]) {
+fn VibrationCallback(comptime port: u8) *const fn (*Self, f32, f32) void {
+    return struct {
+        fn handler(self: *Self, power: f32, change: f32) void {
+            deecy_log.debug("VibrationCallback({d}) Power={d}, Change={d}", .{ port, power, change });
+            if (self.controllers[port]) |*j| {
+                if (j.id.isPresent()) {
+                    if (!j.set_rumble(power, change))
+                        deecy_log.err("Failed to set gamepad rumble", .{});
+                }
+            }
+        }
+    }.handler;
+}
+const VibrationCallbacks = [4]@TypeOf(VibrationCallback(0)){ VibrationCallback(0), VibrationCallback(1), VibrationCallback(2), VibrationCallback(3) };
+
+pub fn init_peripheral(self: *@This(), port: u8, slot: u8) !void {
+    self.deinit_peripheral(port, slot);
+    switch (self.config.controllers[port].subperipherals[slot]) {
         .None => {},
         .VMU => |vmu| {
             const vmu_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), vmu.filename });
             defer self._allocator.free(vmu_path);
-            try self.load_vmu(idx, slot, vmu_path);
+            try self.load_vmu(port, slot, vmu_path);
+        },
+        .VibrationPack => {
+            self.dc.maple.ports[port].subperipherals[slot] = .{ .VibrationPack = .init(.{ .function = @ptrCast(VibrationCallbacks[port]), .context = self }) };
         },
     }
 }
@@ -702,32 +750,32 @@ pub fn load_per_game_vmu(self: *@This()) !void {
     }
 }
 
-pub fn load_vmu(self: *@This(), controller_idx: u8, slot: u8, vmu_path: []const u8) !void {
-    std.debug.assert(controller_idx < 4);
+pub fn load_vmu(self: *@This(), port: u8, slot: u8, vmu_path: []const u8) !void {
+    std.debug.assert(port < 4);
     std.debug.assert(slot < 2);
 
-    self.deinit_peripheral(controller_idx, slot);
+    self.deinit_peripheral(port, slot);
 
-    self.dc.maple.ports[controller_idx].subperipherals[slot] = .{ .VMU = try .init(self._allocator, vmu_path) };
+    self.dc.maple.ports[port].subperipherals[slot] = .{ .VMU = try .init(self._allocator, vmu_path) };
     if (slot == 0) {
-        self.dc.maple.ports[controller_idx].subperipherals[slot].?.VMU.on_screen_update = .{ .function = @ptrCast(&switch (controller_idx) {
+        self.dc.maple.ports[port].subperipherals[slot].?.VMU.on_screen_update = .{ .function = @ptrCast(&switch (port) {
             inline 0, 1, 2, 3 => |pidx| UI.vmu_screen_callback(pidx).callback,
             else => unreachable,
         }), .userdata = self.ui };
-        self.ui.vmu_displays[controller_idx].valid = true;
+        self.ui.vmu_displays[port].valid = true;
     }
 }
 
-pub fn enable_controller(self: *@This(), idx: u8, value: bool) !void {
-    const config = &self.config.controllers[idx];
+pub fn enable_controller(self: *@This(), port: u8, value: bool) !void {
+    const config = &self.config.controllers[port];
     if (value) {
-        self.dc.maple.ports[idx].main = .{ .Controller = .{ .subcapabilities = .{ @bitCast(config.subcapabilities), 0, 0 } } };
+        self.dc.maple.ports[port].main = .{ .Controller = .{ .subcapabilities = .{ @bitCast(config.subcapabilities), 0, 0 } } };
         inline for (0..config.subperipherals.len) |slot| {
-            try self.init_peripheral(idx, slot);
+            try self.init_peripheral(port, slot);
         }
     } else {
-        self.ui.vmu_displays[idx].valid = false;
-        self.dc.maple.ports[idx].deinit(self._allocator);
+        self.ui.vmu_displays[port].valid = false;
+        self.dc.maple.ports[port].deinit(self._allocator);
     }
     config.enabled = value;
 }
@@ -753,12 +801,28 @@ pub fn stop(self: *@This()) !void {
     self.dc.gdrom.disc = null;
 }
 
-pub fn update(self: *@This()) void {
+pub fn update(self: *@This(), delta_time: f32) void {
+    self.update_rumble(delta_time);
     self.poll_controllers();
     self.dc.maple.flush_vmus();
     if (self._stop_request) {
         self.pause();
         self._stop_request = false;
+    }
+}
+
+fn update_rumble(self: *@This(), dt: f32) void {
+    for (&self.controllers) |*maybe| {
+        if (maybe.*) |*controller|
+            controller.update(dt);
+    }
+}
+
+pub fn stop_rumble(self: *@This()) void {
+    for (&self.controllers) |*maybe| {
+        if (maybe.*) |*controller| {
+            _ = controller.set_rumble(0, 0);
+        }
     }
 }
 
@@ -779,7 +843,7 @@ pub fn poll_controllers(self: *@This()) void {
                     inline for ([_][]const u8{ "start", "up", "down", "left", "right", "a", "b", "x", "y" }) |button_name| {
                         if (@field(keyboard_bindings, button_name)) |key| {
                             const key_status = self.window.getKey(key);
-                            var button: DreamcastModule.Maple.ControllerButtons = .{};
+                            var button: DreamcastModule.Maple.Controller.Buttons = .{};
                             @field(button, button_name) = 0;
                             if (key_status == .press) {
                                 any_keyboard_key_pressed = true;
@@ -826,7 +890,7 @@ pub fn poll_controllers(self: *@This()) void {
                             if (host_controller.id.isPresent()) {
                                 if (host_controller.id.asGamepad()) |gamepad| {
                                     const gamepad_state = gamepad.getState() catch continue;
-                                    const gamepad_binds: [9]struct { zglfw.Gamepad.Button, DreamcastModule.Maple.ControllerButtons } = .{
+                                    const gamepad_binds: [9]struct { zglfw.Gamepad.Button, DreamcastModule.Maple.Controller.Buttons } = .{
                                         .{ .start, .{ .start = 0 } },
                                         .{ .dpad_up, .{ .up = 0 } },
                                         .{ .dpad_down, .{ .down = 0 } },
@@ -848,7 +912,7 @@ pub fn poll_controllers(self: *@This()) void {
                                     c.axis[0] = @as(u8, @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.right_trigger)], 0.0, 1.0) * 255));
                                     c.axis[1] = @as(u8, @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_trigger)], 0.0, 1.0) * 255));
 
-                                    const capabilities: DreamcastModule.Maple.InputCapabilities = @bitCast(c.subcapabilities[0]);
+                                    const capabilities: DreamcastModule.Maple.Controller.InputCapabilities = @bitCast(c.subcapabilities[0]);
                                     inline for ([_]struct { host: zglfw.Gamepad.Axis, guest: u8 }{
                                         .{ .host = .left_x, .guest = 2 },
                                         .{ .host = .left_y, .guest = 3 },
@@ -1068,6 +1132,7 @@ pub fn pause(self: *@This()) void {
         }
         self.dc.maple.flush_vmus();
     }
+    self.stop_rumble();
 }
 
 pub fn set_realtime(self: *@This(), realtime: bool) void {
