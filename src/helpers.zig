@@ -55,3 +55,10 @@ pub fn toComplete(comptime T: type, partial: Partial(T)) T {
     }
     return result;
 }
+
+pub fn use_wayland(allocator: std.mem.Allocator) bool {
+    if (@import("builtin").os.tag == .windows) return false;
+    var env_var = std.process.getEnvMap(allocator) catch return false;
+    defer env_var.deinit();
+    return std.mem.eql(u8, env_var.get("XDG_SESSION_TYPE") orelse "", "wayland");
+}

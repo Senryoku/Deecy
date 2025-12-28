@@ -356,15 +356,10 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
             // IDK, prevents device lost crash on Linux. See https://github.com/zig-gamedev/zig-gamedev/commit/9bd4cf860c8e295f4f0db9ec4357905e090b5b98
             zglfw.windowHint(.client_api, .no_api);
 
-            const useWayland = if (builtin.os.tag == .windows) false else wayland_env: {
-                var env_var = try std.process.getEnvMap(allocator);
-                defer env_var.deinit();
-                break :wayland_env std.mem.eql(u8, env_var.get("XDG_SESSION_TYPE") orelse "", "wayland");
-            };
             // Hide window until the first frame is drawn to avoid a white flash. Don't forget to .show() it eventually!
             // NOTE: Crashes on Kubuntu 25.04. From what I could gather, Wayland forbid using a window before making it visible.
             //       Not sure if this is the correct fix, or the correct way to detect Wayland either.
-            if (!useWayland)
+            if (!helpers.use_wayland(self._allocator))
                 zglfw.windowHint(.visible, false);
 
             self.window = try zglfw.Window.create(@intCast(config.window_size.width), @intCast(config.window_size.height), "Deecy", null);
@@ -1012,21 +1007,21 @@ pub fn toggle_fullscreen(self: *@This()) void {
         // Search the monitor with largest overlap with our current window.
         const monitors = zglfw.Monitor.getAll();
         var monitor = zglfw.Monitor.getPrimary() orelse monitors[0];
-        var current_overlap: i32 = 0;
-        for (monitors) |candidate| {
-            const mode = candidate.getVideoMode() catch continue;
-            const monitor_pos = candidate.getPos();
-            const overlap: i32 = (@min(self.previous_window_position.x + self.previous_window_position.w, monitor_pos[0] + mode.width) - @max(self.previous_window_position.x, monitor_pos[0])) *
-                (@min(self.previous_window_position.y + self.previous_window_position.h, monitor_pos[1] + mode.height) - @max(self.previous_window_position.y, monitor_pos[1]));
-            if (overlap > current_overlap) {
-                current_overlap = overlap;
-                monitor = candidate;
+        // FIXME: getPos always returns 0,0 on Wayland, by design. Just use the primary monitor for now.
+        if (!helpers.use_wayland(self._allocator)) {
+            var current_overlap: i32 = 0;
+            for (monitors) |candidate| {
+                const mode = candidate.getVideoMode() catch continue;
+                const monitor_pos = candidate.getPos();
+                const overlap: i32 = (@min(self.previous_window_position.x + self.previous_window_position.w, monitor_pos[0] + mode.width) - @max(self.previous_window_position.x, monitor_pos[0])) *
+                    (@min(self.previous_window_position.y + self.previous_window_position.h, monitor_pos[1] + mode.height) - @max(self.previous_window_position.y, monitor_pos[1]));
+                if (overlap > current_overlap) {
+                    current_overlap = overlap;
+                    monitor = candidate;
+                }
             }
         }
-        const mode = monitor.getVideoMode() catch |err| {
-            deecy_log.err(termcolor.red("Failed to get video mode: {}"), .{err});
-            return;
-        };
+        const mode = monitor.getVideoMode() catch |err| return deecy_log.err(termcolor.red("Failed to get video mode: {}"), .{err});
         self.window.setMonitor(monitor, 0, 0, mode.width, mode.height, mode.refresh_rate);
         self.config.fullscreen = true;
     }
