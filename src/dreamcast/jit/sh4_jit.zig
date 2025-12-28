@@ -1389,7 +1389,7 @@ fn set_t(block: *IRBlock, _: *JITContext, condition: JIT.Condition) !void {
 // For these generic calls, we don't know which registers are currently in use. Since System V ABI doesn't have any
 // floating point saved registers, we need to save/restore all of them unconditionally here to be safe :(
 inline fn fast_call_prologue() void {
-    if (Architecture.CallingConvention == .x86_64_sysv) {
+    if (FastMem and Architecture.CallingConvention == .x86_64_sysv) {
         asm volatile (
             \\ subq    $128, %rsp
             \\ movaps  %xmm6, 0(%rsp)
@@ -1404,7 +1404,7 @@ inline fn fast_call_prologue() void {
     }
 }
 inline fn fast_call_epilogue() void {
-    if (Architecture.CallingConvention == .x86_64_sysv) {
+    if (FastMem and Architecture.CallingConvention == .x86_64_sysv) {
         asm volatile (
             \\ movaps  0(%rsp), %xmm6
             \\ movaps  16(%rsp), %xmm7
