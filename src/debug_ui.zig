@@ -1290,6 +1290,13 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         var oit_horizontal_slices: enum(u32) { @"1" = 1, @"2" = 2, @"3" = 3, @"4" = 4, @"5" = 5, @"6" = 6, @"7" = 7, @"8" = 8, @"9" = 9, @"10" = 10 } = @enumFromInt(d.renderer.oit_horizontal_slices);
         if (zgui.comboFromEnum("OIT Slices", &oit_horizontal_slices)) {
             d.renderer.oit_horizontal_slices = @intFromEnum(oit_horizontal_slices);
+            // Makes sure oit_horizontal_slices is a divisor of the vertical resolution
+            while (d.renderer.oit_horizontal_slices > 1 and d.renderer.resolution.height % (8 * d.renderer.oit_horizontal_slices) != 0) {
+                d.renderer.oit_horizontal_slices -= 1;
+            }
+            // FIXME: Stupid workaround, on_inner_resolution_change locks the mutex internally
+            d.gctx_queue_mutex.unlock();
+            defer d.gctx_queue_mutex.lock();
             d.renderer.on_inner_resolution_change(d.config.renderer.display_mode, d.config.renderer.scaling_filter);
         }
         zgui.separator();
