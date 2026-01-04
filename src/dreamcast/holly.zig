@@ -2101,19 +2101,14 @@ pub const Holly = struct {
                         }
                     },
                     else => {
-                        // NOTE: "Four bits in the ISP/TSP Instruction Word are overwritten with the corresponding bit values from the Parameter Control Word."
-                        const global_parameter: *GenericGlobalParameter = @ptrCast(&self._ta_command_buffer);
-                        global_parameter.isp_tsp_instruction.texture = global_parameter.parameter_control_word.obj_control.texture;
-                        global_parameter.isp_tsp_instruction.offset = global_parameter.parameter_control_word.obj_control.offset;
-                        global_parameter.isp_tsp_instruction.gouraud = global_parameter.parameter_control_word.obj_control.gouraud;
-                        global_parameter.isp_tsp_instruction.uv_16bit = global_parameter.parameter_control_word.obj_control.uv_16bit;
-
                         const polygon_type = obj_control_to_polygon_type(parameter_control_word.obj_control);
                         if (self._ta_command_buffer_index < Polygon.size(polygon_type)) return;
                         std.debug.assert(self._ta_command_buffer_index == Polygon.size(polygon_type));
 
+                        self.copy_isp_tsp_parameters();
+
                         self._ta_current_polygon = switch (polygon_type) {
-                            .Sprite => std.debug.panic("Invalid polygon format: {}", .{polygon_type}),
+                            .Sprite => std.debug.panic("Invalid polygon format: {t}", .{polygon_type}),
                             inline else => |pt| @unionInit(Polygon, @tagName(pt), @as(*std.meta.TagPayload(Polygon, pt), @ptrCast(&self._ta_command_buffer)).*),
                         };
 
@@ -2140,6 +2135,8 @@ pub const Holly = struct {
                 if (self._ta_list_type == null)
                     self.start_list(parameter_control_word.list_type);
                 self.update_clip_usage(parameter_control_word.group_control);
+
+                self.copy_isp_tsp_parameters();
 
                 self._ta_current_polygon = .{ .Sprite = @as(*Sprite, @ptrCast(&self._ta_command_buffer)).* };
 
@@ -2257,6 +2254,15 @@ pub const Holly = struct {
                 }
             }
         }
+    }
+
+    fn copy_isp_tsp_parameters(self: *@This()) void {
+        // "Four bits in the ISP/TSP Instruction Word are overwritten with the corresponding bit values from the Parameter Control Word."
+        const global_parameter: *GenericGlobalParameter = @ptrCast(&self._ta_command_buffer);
+        global_parameter.isp_tsp_instruction.texture = global_parameter.parameter_control_word.obj_control.texture;
+        global_parameter.isp_tsp_instruction.offset = global_parameter.parameter_control_word.obj_control.offset;
+        global_parameter.isp_tsp_instruction.gouraud = global_parameter.parameter_control_word.obj_control.gouraud;
+        global_parameter.isp_tsp_instruction.uv_16bit = global_parameter.parameter_control_word.obj_control.uv_16bit;
     }
 
     pub inline fn read_register(self: *const @This(), comptime T: type, r: HollyRegister) T {

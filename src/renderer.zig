@@ -2310,7 +2310,7 @@ pub const Renderer = struct {
 
                     const textured = parameter_control_word.obj_control.texture == 1;
                     const use_alpha = tsp_instruction.use_alpha == 1;
-                    const use_offset = isp_tsp_instruction.offset == 1; // FIXME: I did not find a way to validate what I'm doing with the offset color yet.
+                    const use_offset = isp_tsp_instruction.offset == 1;
 
                     const first_vertex = display_list.vertex_strips.items[idx].vertex_parameter_index;
                     const last_vertex = display_list.vertex_strips.items[idx].vertex_parameter_index + display_list.vertex_strips.items[idx].vertex_parameter_count;
