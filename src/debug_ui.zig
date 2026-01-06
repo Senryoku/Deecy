@@ -1297,7 +1297,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             // FIXME: Stupid workaround, on_inner_resolution_change locks the mutex internally
             d.gctx_queue_mutex.unlock();
             defer d.gctx_queue_mutex.lock();
-            d.renderer.on_inner_resolution_change(d.config.renderer.display_mode, d.config.renderer.scaling_filter);
+            const fb_size = d.window.getFramebufferSize();
+            d.renderer.on_inner_resolution_change(@intCast(fb_size[0]), @intCast(fb_size[1]), d.config.renderer.display_mode, d.config.renderer.scaling_filter);
         }
         zgui.separator();
         zgui.text("Min Depth: {d: >4.2}", .{d.renderer.min_depth});
@@ -1357,8 +1358,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.image(fb_tex_id, .{ .w = 640, .h = 480 });
         }
         if (zgui.collapsingHeader("Resized Framebuffer Texture", .{})) {
+            const fb_size = d.window.getFramebufferSize();
             const fb_tex_id = d.gctx.lookupResource(d.renderer.resized_framebuffer.view).?;
-            zgui.image(fb_tex_id, .{ .w = @floatFromInt(d.gctx.swapchain_descriptor.width), .h = @floatFromInt(d.gctx.swapchain_descriptor.height) });
+            zgui.image(fb_tex_id, .{ .w = @floatFromInt(fb_size[0]), .h = @floatFromInt(fb_size[1]) });
         }
     }
     zgui.end();
@@ -1443,7 +1445,8 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
 
     const native_resolution = [2]f32{ 640.0, 480.0 };
     const aspect_ratio = native_resolution[0] / native_resolution[1];
-    const window_size = [2]f32{ @floatFromInt(self._gctx.swapchain_descriptor.width), @floatFromInt(self._gctx.swapchain_descriptor.height) };
+    const fb_size = d.window.getFramebufferSize();
+    const window_size = [2]f32{ @floatFromInt(fb_size[0]), @floatFromInt(fb_size[1]) };
     const resolution = [2]f32{ @floatFromInt(d.renderer.resolution.width), @floatFromInt(d.renderer.resolution.height) };
 
     const size = switch (d.config.renderer.display_mode) {

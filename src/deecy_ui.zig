@@ -714,13 +714,15 @@ pub fn draw(self: *@This()) !void {
                     d.config.renderer.internal_resolution_factor = @intFromEnum(resolution);
                     // NOTE: This might not be the best idea to do this here without explicit synchronization but... This has worked flawlessly so far.
                     d.renderer.resolution = .{ .width = Deecy.Renderer.NativeResolution.width * @intFromEnum(resolution), .height = Deecy.Renderer.NativeResolution.height * @intFromEnum(resolution) };
-                    d.renderer.on_inner_resolution_change(d.config.renderer.display_mode, d.config.renderer.scaling_filter);
+                    const fb_size = d.window.getFramebufferSize();
+                    d.renderer.on_inner_resolution_change(@intCast(fb_size[0]), @intCast(fb_size[1]), d.config.renderer.display_mode, d.config.renderer.scaling_filter);
                     // Force a re-render if we're paused
                     if (!d.running)
                         try d.renderer.render(&d.dc.gpu, false);
                 }
                 if (zgui.comboFromEnum("Display Mode", &d.config.renderer.display_mode)) {
-                    d.renderer.update_blit_to_screen_vertex_buffer(d.config.renderer.display_mode);
+                    const fb_size = d.window.getFramebufferSize();
+                    d.renderer.update_blit_to_screen_vertex_buffer(@intCast(fb_size[0]), @intCast(fb_size[1]), d.config.renderer.display_mode);
                 }
                 if (zgui.comboFromEnum("Scaling Filter", &d.config.renderer.scaling_filter)) {
                     d.renderer.set_scaling_filter(d.config.renderer.scaling_filter);
@@ -971,8 +973,11 @@ pub fn draw(self: *@This()) !void {
 pub fn draw_game_library(self: *@This()) !void {
     const d = self.deecy;
     const target_width = 4 * 256 + 64;
-    zgui.setNextWindowPos(.{ .x = @floatFromInt((@max(target_width, d.gctx.swapchain_descriptor.width) - target_width) / 2), .y = 32, .cond = .always });
-    zgui.setNextWindowSize(.{ .w = target_width, .h = @floatFromInt(@max(48, d.gctx.swapchain_descriptor.height) - 64), .cond = .always });
+    // FIXME
+    const window_width = 1920;
+    const window_height = 1080;
+    zgui.setNextWindowPos(.{ .x = @floatFromInt((@max(target_width, window_width) - target_width) / 2), .y = 32, .cond = .always });
+    zgui.setNextWindowSize(.{ .w = target_width, .h = @floatFromInt(@max(48, window_height) - 64), .cond = .always });
 
     defer zgui.end();
     if (zgui.begin("Library", .{ .flags = .{ .no_resize = true, .no_move = true, .no_title_bar = true, .no_docking = true, .no_bring_to_front_on_focus = true } })) {

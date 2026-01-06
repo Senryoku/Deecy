@@ -7,6 +7,8 @@ var initialized = false;
 var pipeline_handle: zgpu.ComputePipelineHandle = .{};
 var bind_group_layout_handle: zgpu.BindGroupLayoutHandle = .{};
 
+var _pipeline_creation_future: ?zgpu.wgpu.Future = null;
+
 pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) void {
     if (!initialized) {
         initialized = true;
@@ -16,19 +18,20 @@ pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) void {
             zgpu.storageTextureEntry(1, .{ .compute = true }, .write_only, .bgra8_unorm, .tvdim_2d),
             zgpu.storageTextureEntry(2, .{ .compute = true }, .write_only, .bgra8_unorm, .tvdim_2d),
             zgpu.storageTextureEntry(3, .{ .compute = true }, .write_only, .bgra8_unorm, .tvdim_2d),
-        });
+        }, .{ .label = "GenerateMipmapsBindGroupLayout" });
         const pipeline_layout = gctx.createPipelineLayout(&.{bind_group_layout_handle});
         defer gctx.releaseResource(pipeline_layout);
 
         const cs_module = zgpu.createWgslShaderModule(gctx.device, ShaderSource, "generate_mipmaps");
         defer cs_module.release();
 
-        gctx.createComputePipelineAsync(allocator, pipeline_layout, .{
+        // FIXME
+        _pipeline_creation_future = gctx.createComputePipelineAsync(allocator, pipeline_layout, .{
             .compute = .{
                 .module = cs_module,
-                .entry_point = "main",
+                .entry_point = zgpu.wgpu.StringView.cFromZig("main"),
             },
-        }, &pipeline_handle);
+        }, &pipeline_handle) catch null;
     }
 }
 
@@ -42,11 +45,16 @@ pub fn generate_mipmaps(gctx: *zgpu.GraphicsContext, texture: zgpu.TextureHandle
     std.debug.assert(std.math.isPowerOfTwo(texture_info.size.width));
 
     // Wait for async pipeline creation to finish
-    var pipeline = gctx.lookupResource(pipeline_handle);
-    while (pipeline == null) {
-        gctx.device.tick();
-        pipeline = gctx.lookupResource(pipeline_handle);
+    var wait_infos = [_]zgpu.wgpu.FutureWaitInfo{.{ .future = _pipeline_creation_future.? }};
+    if (gctx.instance.waitAny(&wait_infos, 0) != .success) {
+        std.log.err("Failed to wait for async pipeline creation to finish.", .{});
+        return;
     }
+    const pipeline = gctx.lookupResource(pipeline_handle);
+    // while (pipeline == null) {
+    //     gctx.device.tick();
+    //     pipeline = gctx.lookupResource(pipeline_handle);
+    // }
 
     const commands = commands: {
         const encoder = gctx.device.createCommandEncoder(null);
