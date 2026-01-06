@@ -197,7 +197,7 @@ pub fn draw_vmus(self: *@This(), editable: bool) void {
                 if (tex.display) {
                     if (tex.dirty)
                         self.upload_vmu_texture(@intCast(idx));
-                    zgui.image(self.deecy.gctx.lookupResource(tex.view).?, .{ .w = win_width, .h = win_width * 32.0 / 48.0 });
+                    zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr((self.deecy.gctx.lookupResource(tex.view).?))) }, .{ .w = win_width, .h = win_width * 32.0 / 48.0 });
                 }
                 if (editable) {
                     _ = zgui.checkbox("Display #" ++ std.fmt.comptimePrint("{d}", .{idx}), .{ .v = &tex.display });
@@ -1063,7 +1063,7 @@ pub fn draw_game_library(self: *@This()) !void {
                         zgui.pushStrId("image");
                         defer zgui.popId();
                         if (entry.view) |view| {
-                            launch = zgui.imageButton(entry.name, self.deecy.gctx.lookupResource(view).?, .{ .w = 256, .h = 256 }) or launch;
+                            launch = zgui.imageButton(entry.name, .{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(((self.deecy.gctx.lookupResource(view).?)))) }, .{ .w = 256, .h = 256 }) or launch;
                         } else {
                             launch = zgui.button(entry.name, .{ .w = 256, .h = 256 }) or launch;
                         }

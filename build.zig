@@ -124,7 +124,20 @@ pub fn build(b: *std.Build) void {
         deecy_module.addImport("zpool", zpool.module("root"));
 
         const zgpu = b.dependency("zgpu", .{ .max_num_bindings_per_group = 12 });
-        deecy_module.addImport("zgpu", zgpu.module("root"));
+        const zgpu_module = zgpu.module("root");
+        if (target.result.os.tag == .windows) {
+            zgpu_module.linkSystemLibrary("dxguid", .{});
+            zgpu_module.linkSystemLibrary("d3d12", .{});
+            zgpu_module.linkSystemLibrary("dxgi", .{});
+            zgpu_module.linkSystemLibrary("ole32", .{});
+        }
+        if (target.result.os.tag == .windows) {
+            deecy_module.linkSystemLibrary("dxguid", .{});
+            deecy_module.linkSystemLibrary("d3d12", .{});
+            deecy_module.linkSystemLibrary("dxgi", .{});
+            deecy_module.linkSystemLibrary("ole32", .{});
+        }
+        deecy_module.addImport("zgpu", zgpu_module);
         deecy_module.linkLibrary(zgpu.artifact("zdawn"));
 
         const zaudio = b.dependency("zaudio", .{});
