@@ -110,7 +110,9 @@ pub fn build(b: *std.Build) void {
             .with_implot = true,
             .backend = .glfw_wgpu,
         });
-        deecy_module.addImport("zgui", zgui.module("root"));
+        const zgui_mod = zgui.module("root");
+        // zgui_mod.linkLibrary(b.dependency("webgpu_dawn", .{}).artifact("dawn"));
+        deecy_module.addImport("zgui", zgui_mod);
         deecy_module.linkLibrary(zgui.artifact("imgui"));
 
         const zglfw = b.dependency("zglfw", .{});
@@ -121,15 +123,18 @@ pub fn build(b: *std.Build) void {
         deecy_module.addImport("zpool", zpool.module("root"));
 
         const zgpu = @import("zgpu");
-        zgpu.addLibraryPathsTo(exe);
-        zgpu.addLibraryPathsTo(exe_check);
         if (target.result.os.tag == .windows) {
             zgpu.installDxcFrom(exe, "zgpu");
         }
         const zgpu_dep = b.dependency("zgpu", .{ .max_num_bindings_per_group = 12 });
         const zgpu_module = zgpu_dep.module("root");
         deecy_module.addImport("zgpu", zgpu_module);
-        deecy_module.linkLibrary(zgpu_dep.artifact("zdawn"));
+        // deecy_module.linkLibrary(zgpu_dep.artifact("zdawn"));
+
+        try @import("webgpu_dawn").link(b, "webgpu_dawn", deecy_module);
+        // const dawn = b.dependency("webgpu_dawn", .{});
+        // deecy_module.addLibraryPath(dawn.path("./build/src/dawn/native"));
+        // deecy_module.linkSystemLibrary("webgpu_dawn", .{});
 
         const zaudio = b.dependency("zaudio", .{});
         deecy_module.addImport("zaudio", zaudio.module("root"));
