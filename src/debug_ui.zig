@@ -1280,7 +1280,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             );
             const tex_id = d.gctx.lookupResource(self.vram_texture_view).?;
 
-            zgui.image(tex_id, .{ .w = vram_width, .h = vram_height });
+            zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(tex_id)) }, .{ .w = vram_width, .h = vram_height });
         }
     }
     zgui.end();
@@ -1337,7 +1337,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             }
             const tex_id = d.gctx.lookupResource(self.renderer_texture_views[@intCast(self.selected_texture.size)][@intCast(self.selected_texture.index)]).?;
             const tex_size = self.selected_texture.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(self.selected_texture.size)));
-            zgui.image(tex_id, .{ .w = tex_size, .h = tex_size });
+            zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(tex_id)) }, .{ .w = tex_size, .h = tex_size });
 
             const metadata = d.renderer.texture_metadata[@intCast(self.selected_texture.size)][@intCast(self.selected_texture.index)];
             zgui.text("Status: {t: <8}  Age: {d: >3}  Hash: {X:0>16}", .{ metadata.status, metadata.age, metadata.hash });
@@ -1355,12 +1355,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         }
         if (zgui.collapsingHeader("Framebuffer Texture", .{})) {
             const fb_tex_id = d.gctx.lookupResource(d.renderer.framebuffer.view).?;
-            zgui.image(fb_tex_id, .{ .w = 640, .h = 480 });
+            zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(fb_tex_id)) }, .{ .w = 640, .h = 480 });
         }
         if (zgui.collapsingHeader("Resized Framebuffer Texture", .{})) {
             const fb_size = d.window.getFramebufferSize();
             const fb_tex_id = d.gctx.lookupResource(d.renderer.resized_framebuffer.view).?;
-            zgui.image(fb_tex_id, .{ .w = @floatFromInt(fb_size[0]), .h = @floatFromInt(fb_size[1]) });
+            zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(fb_tex_id)) }, .{ .w = @floatFromInt(fb_size[0]), .h = @floatFromInt(fb_size[1]) });
         }
     }
     zgui.end();
@@ -1547,7 +1547,7 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
             display_texture_control_word(texture_control_word);
             if (renderer.get_texture_view(texture_control_word, tsp)) |texture| {
                 const view = renderer._gctx.lookupResource(self.renderer_texture_views[texture.size_index][texture.index]).?;
-                zgui.image(view, .{
+                zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(view)) }, .{
                     .w = @floatFromInt(tsp.get_u_size()),
                     .h = @floatFromInt(tsp.get_v_size()),
                 });
@@ -1567,7 +1567,7 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
             display_texture_control_word(area1_texture_control);
             if (renderer.get_texture_view(area1_texture_control, tsp)) |texture| {
                 const view = renderer._gctx.lookupResource(self.renderer_texture_views[texture.size_index][texture.index]).?;
-                zgui.image(view, .{
+                zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(view)) }, .{
                     .w = @floatFromInt(tsp.get_u_size()),
                     .h = @floatFromInt(tsp.get_v_size()),
                 });

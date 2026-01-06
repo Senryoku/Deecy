@@ -611,7 +611,8 @@ fn ui_init(self: *@This()) !void {
     style.grab_rounding = 3.0;
     style.tab_rounding = 4.0;
     style.tab_border_size = 1.0;
-    style.tab_min_width_for_close_button = 0.0;
+    style.tab_close_button_min_width_selected = 0.0;
+    style.tab_close_button_min_width_unselected = 0.0;
     style.color_button_position = .right;
     style.button_text_align = .{ 0.5, 0.5 };
     style.selectable_text_align = .{ 0.0, 0.0 };
@@ -669,7 +670,7 @@ fn ui_init(self: *@This()) !void {
     style.setColor(.table_row_bg_alt, .{ 1.0, 1.0, 1.0, 0.05999999865889549 });
     style.setColor(.text_selected_bg, .{ 0.2000000029802322, 0.2196078449487686, 0.2274509817361832, 1.0 });
     style.setColor(.drag_drop_target, .{ 0.3294117748737335, 0.6666666865348816, 0.8588235378265381, 1.0 });
-    style.setColor(.nav_highlight, EULogoColor);
+    style.setColor(.nav_cursor, EULogoColor);
     style.setColor(.nav_windowing_highlight, .{ EULogoColor[0], EULogoColor[1], EULogoColor[2], 0.7 });
     style.setColor(.nav_windowing_dim_bg, .{ EULogoColor[0], EULogoColor[1], EULogoColor[2], 0.2 });
     style.setColor(.modal_window_dim_bg, .{ 0, 0, 0, 0.6 });
