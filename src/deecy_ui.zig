@@ -973,11 +973,9 @@ pub fn draw(self: *@This()) !void {
 pub fn draw_game_library(self: *@This()) !void {
     const d = self.deecy;
     const target_width = 4 * 256 + 64;
-    // FIXME
-    const window_width = 1920;
-    const window_height = 1080;
-    zgui.setNextWindowPos(.{ .x = @floatFromInt((@max(target_width, window_width) - target_width) / 2), .y = 32, .cond = .always });
-    zgui.setNextWindowSize(.{ .w = target_width, .h = @floatFromInt(@max(48, window_height) - 64), .cond = .always });
+    const fb_size = d.window.getFramebufferSize();
+    zgui.setNextWindowPos(.{ .x = @floatFromInt((@max(target_width, fb_size[0]) - target_width) / 2), .y = 32, .cond = .always });
+    zgui.setNextWindowSize(.{ .w = target_width, .h = @floatFromInt(@max(48, fb_size[1]) - 64), .cond = .always });
 
     defer zgui.end();
     if (zgui.begin("Library", .{ .flags = .{ .no_resize = true, .no_move = true, .no_title_bar = true, .no_docking = true, .no_bring_to_front_on_focus = true } })) {

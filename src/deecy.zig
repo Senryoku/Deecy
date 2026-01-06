@@ -1306,8 +1306,8 @@ fn display_unrecoverable_error(self: *@This(), comptime fmt: []const u8, args: a
     while (!self.window.shouldClose()) {
         zglfw.pollEvents();
 
-        // FIXME
-        zgui.backend.newFrame(1920, 1080);
+        const fb_size = self.window.getFramebufferSize();
+        zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
 
         if (!zgui.isPopupOpen("Error##Modal", .{})) {
             zgui.openPopup("Error##Modal", .{});
