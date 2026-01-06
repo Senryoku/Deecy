@@ -37,13 +37,7 @@ const lz4 = @import("lz4");
 
 const deecy_log = std.log.scoped(.deecy);
 
-fn glfw_key_callback(
-    window: *zglfw.Window,
-    key: zglfw.Key,
-    scancode: i32,
-    action: zglfw.Action,
-    mods: zglfw.Mods,
-) callconv(.c) void {
+fn glfw_key_callback(window: *zglfw.Window, key: zglfw.Key, scancode: i32, action: zglfw.Action, mods: zglfw.Mods) callconv(.c) void {
     _ = scancode;
 
     const maybe_app = window.getUserPointer(@This());
@@ -115,11 +109,7 @@ fn glfw_key_callback(
     }
 }
 
-fn glfw_drop_callback(
-    window: *zglfw.Window,
-    count: i32,
-    paths: [*][*:0]const u8,
-) callconv(.c) void {
+fn glfw_drop_callback(window: *zglfw.Window, count: i32, paths: [*][*:0]const u8) callconv(.c) void {
     const maybe_app = window.getUserPointer(@This());
     if (maybe_app) |app| {
         if (count > 0) {
@@ -130,6 +120,21 @@ fn glfw_drop_callback(
         if (count > 1) {
             deecy_log.warn("Drop only supports 1 file at a time :)", .{});
         }
+    }
+}
+
+fn glfw_resize_callback(window: *zglfw.Window, width: i32, height: i32) callconv(.c) void {
+    const maybe_app = window.getUserPointer(@This());
+    if (maybe_app) |app| {
+        app.gctx.surface.configure(.{
+            .device = app.gctx.device,
+            .format = zgpu.GraphicsContext.surface_texture_format,
+            .usage = .{ .render_attachment = true },
+            .width = @intCast(width),
+            .height = @intCast(height),
+            .present_mode = app.gctx.present_mode,
+        });
+        app.on_resize();
     }
 }
 
@@ -403,6 +408,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
 
             self.window.setUserPointer(self);
             _ = self.window.setKeyCallback(glfw_key_callback);
+            _ = self.window.setFramebufferSizeCallback(glfw_resize_callback);
             _ = zglfw.setDropCallback(self.window, glfw_drop_callback);
 
             const scale = self.window.getContentScale();
