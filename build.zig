@@ -113,9 +113,6 @@ pub fn build(b: *std.Build) void {
         deecy_module.addImport("zgui", zgui.module("root"));
         deecy_module.linkLibrary(zgui.artifact("imgui"));
 
-        @import("zgpu").addLibraryPathsTo(exe);
-        @import("zgpu").addLibraryPathsTo(exe_check);
-
         const zglfw = b.dependency("zglfw", .{});
         deecy_module.addImport("zglfw", zglfw.module("root"));
         deecy_module.linkLibrary(zglfw.artifact("glfw"));
@@ -123,22 +120,16 @@ pub fn build(b: *std.Build) void {
         const zpool = b.dependency("zpool", .{});
         deecy_module.addImport("zpool", zpool.module("root"));
 
-        const zgpu = b.dependency("zgpu", .{ .max_num_bindings_per_group = 12 });
-        const zgpu_module = zgpu.module("root");
+        const zgpu = @import("zgpu");
+        zgpu.addLibraryPathsTo(exe);
+        zgpu.addLibraryPathsTo(exe_check);
         if (target.result.os.tag == .windows) {
-            zgpu_module.linkSystemLibrary("dxguid", .{});
-            zgpu_module.linkSystemLibrary("d3d12", .{});
-            zgpu_module.linkSystemLibrary("dxgi", .{});
-            zgpu_module.linkSystemLibrary("ole32", .{});
+            zgpu.installDxcFrom(exe, "zgpu");
         }
-        if (target.result.os.tag == .windows) {
-            deecy_module.linkSystemLibrary("dxguid", .{});
-            deecy_module.linkSystemLibrary("d3d12", .{});
-            deecy_module.linkSystemLibrary("dxgi", .{});
-            deecy_module.linkSystemLibrary("ole32", .{});
-        }
+        const zgpu_dep = b.dependency("zgpu", .{ .max_num_bindings_per_group = 12 });
+        const zgpu_module = zgpu_dep.module("root");
         deecy_module.addImport("zgpu", zgpu_module);
-        deecy_module.linkLibrary(zgpu.artifact("zdawn"));
+        deecy_module.linkLibrary(zgpu_dep.artifact("zdawn"));
 
         const zaudio = b.dependency("zaudio", .{});
         deecy_module.addImport("zaudio", zaudio.module("root"));
