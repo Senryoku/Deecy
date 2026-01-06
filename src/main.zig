@@ -376,7 +376,7 @@ pub fn main() !void {
         const resized = resized: {
             d.gctx_queue_mutex.lock();
             defer d.gctx_queue_mutex.unlock();
-            break :resized d.gctx.present() == .swap_chain_resized;
+            break :resized d.gctx.present() == .surface_reconfigured;
         };
         if (resized)
             d.on_resize();

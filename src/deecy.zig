@@ -428,7 +428,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
                 // Increasing max_texture_array_layers is required: The renderer uses a single texture array for each size.
                 // 2048 is a big jump from the WebGPU default of 256, but it seems to be widely supported, especially on desktop.
                 // (support for Vulkan: https://vulkan.gpuinfo.org/displaydevicelimit.php?name=maxImageArrayLayers)
-                .required_limits = &.{ .limits = .{ .max_texture_array_layers = 2048 } },
+                .required_limits = &.{ .max_texture_array_layers = 2048 },
             });
         }
 
@@ -436,8 +436,8 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         // We could wait until the first frame is actually drawn, but this give an earlier feedback...
         // Not sure what's best here.
         {
-            const back_buffer_view = self.gctx.swapchain.getCurrentTextureView();
-            defer back_buffer_view.release();
+            var surface: zgpu.wgpu.SurfaceTexture = undefined;
+            self.gctx.surface.getCurrentTexture(&surface);
             _ = self.gctx.present();
             self.window.show();
         }
@@ -485,7 +485,8 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         self.dc.cable_type = config.video_cable.to_dreamcast();
     }
 
-    self.renderer = try .create(self._allocator, self.gctx, &self.gctx_queue_mutex, config.renderer);
+    const fb_size = self.window.getFramebufferSize();
+    self.renderer = try .create(self._allocator, self.gctx, &self.gctx_queue_mutex, @intCast(fb_size[0]), @intCast(fb_size[1]), config.renderer);
     self.dc.on_render_start = .{
         .function = @ptrCast(&Renderer.on_render_start),
         .context = self.renderer,
@@ -676,8 +677,8 @@ fn ui_init(self: *@This()) !void {
     zgui.backend.init(
         self.window,
         self.gctx.device,
-        @intFromEnum(zgpu.GraphicsContext.swapchain_format),
-        @intFromEnum(zgpu.wgpu.TextureFormat.undef),
+        @intFromEnum(zgpu.GraphicsContext.surface_texture_format),
+        @intFromEnum(zgpu.wgpu.TextureFormat.undefined),
     );
 
     zgui.plot.init();
@@ -1162,13 +1163,12 @@ pub fn dc_thread_loop_realtime(self: *@This()) void {
 
 /// Locks gctx_queue_mutex (via Renderer.update_blit_to_screen_vertex_buffer).
 pub fn on_resize(self: *@This()) void {
+    const fb_size = self.window.getFramebufferSize();
     if (!self.config.fullscreen) {
-        const ww = self.gctx.swapchain_descriptor.width;
-        const wh = self.gctx.swapchain_descriptor.height;
-        self.config.window_size.width = ww;
-        self.config.window_size.height = wh;
+        self.config.window_size.width = @intCast(fb_size[0]);
+        self.config.window_size.height = @intCast(fb_size[1]);
     }
-    self.renderer.update_blit_to_screen_vertex_buffer(self.config.renderer.display_mode);
+    self.renderer.update_blit_to_screen_vertex_buffer(@intCast(fb_size[0]), @intCast(fb_size[1]), self.config.renderer.display_mode);
 }
 
 /// Locks gctx_queue_mutex.
@@ -1178,10 +1178,8 @@ pub fn draw_ui(self: *@This()) !void {
         //        Either newFrame creates some GPU resources on startup, or this just hides another issue by pure luck.
         self.gctx_queue_mutex.lock();
         defer self.gctx_queue_mutex.unlock();
-        zgui.backend.newFrame(
-            self.gctx.swapchain_descriptor.width,
-            self.gctx.swapchain_descriptor.height,
-        );
+        const fb_size = self.window.getFramebufferSize();
+        zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
     }
     _ = zgui.DockSpaceOverViewport(0, zgui.getMainViewport(), .{ .passthru_central_node = true });
 
@@ -1279,15 +1277,19 @@ pub fn submit_ui(self: *@This()) void {
     self.gctx_queue_mutex.lock();
     defer self.gctx_queue_mutex.unlock();
 
-    const swapchain_texv = self.gctx.swapchain.getCurrentTextureView();
-    defer swapchain_texv.release();
+    var surface: zgpu.wgpu.SurfaceTexture = undefined;
+    self.gctx.surface.getCurrentTexture(&surface);
+    defer surface.texture.?.release();
+
+    const surface_view = surface.texture.?.createView(.{});
+    defer surface_view.release();
 
     const commands = commands: {
         const encoder = self.gctx.device.createCommandEncoder(null);
         defer encoder.release();
         // GUI pass
         {
-            const pass = zgpu.beginRenderPassSimple(encoder, .load, swapchain_texv, null, null, null);
+            const pass = zgpu.beginRenderPassSimple(encoder, .load, surface_view, null, null, null);
             defer zgpu.endReleasePass(pass);
             zgui.backend.draw(pass);
         }
@@ -1303,7 +1305,8 @@ fn display_unrecoverable_error(self: *@This(), comptime fmt: []const u8, args: a
     while (!self.window.shouldClose()) {
         zglfw.pollEvents();
 
-        zgui.backend.newFrame(self.gctx.swapchain_descriptor.width, self.gctx.swapchain_descriptor.height);
+        // FIXME
+        zgui.backend.newFrame(1920, 1080);
 
         if (!zgui.isPopupOpen("Error##Modal", .{})) {
             zgui.openPopup("Error##Modal", .{});
