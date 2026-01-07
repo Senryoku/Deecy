@@ -129,13 +129,8 @@ pub fn build(b: *std.Build) !void {
         const zgpu_dep = b.dependency("zgpu", .{ .max_num_bindings_per_group = 12 });
         const zgpu_module = zgpu_dep.module("root");
         deecy_module.addImport("zgpu", zgpu_module);
-        // deecy_module.linkLibrary(zgpu_dep.artifact("zdawn"));
 
         try zgpu.linkDawn(b, "zgpu", exe);
-        // try @import("webgpu_dawn").link(b, "webgpu_dawn", exe);
-        // const dawn = b.dependency("webgpu_dawn", .{});
-        // deecy_module.addLibraryPath(dawn.path("./build/src/dawn/native"));
-        // deecy_module.linkSystemLibrary("webgpu_dawn", .{});
 
         const zaudio = b.dependency("zaudio", .{});
         deecy_module.addImport("zaudio", zaudio.module("root"));
