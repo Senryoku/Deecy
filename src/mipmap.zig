@@ -29,7 +29,7 @@ pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) void {
         _pipeline_creation_future = gctx.createComputePipelineAsync(allocator, pipeline_layout, .{
             .compute = .{
                 .module = cs_module,
-                .entry_point = zgpu.wgpu.StringView.cFromZig("main"),
+                .entry_point = .init("main"),
             },
         }, &pipeline_handle) catch null;
     }

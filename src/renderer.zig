@@ -1067,7 +1067,7 @@ pub const Renderer = struct {
         const translucent_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
             .vertex = .{
                 .module = opaque_vertex_shader_module,
-                .entry_point = wgpu.StringView.cFromZig("main"),
+                .entry_point = .init("main"),
                 .buffer_count = VertexBufferLayout.len,
                 .buffers = &VertexBufferLayout,
             },
@@ -1080,7 +1080,7 @@ pub const Renderer = struct {
             .depth_stencil = null, // FIXME: Use opaque depth here rather than sampling it manually in the shader?
             .fragment = &.{
                 .module = translucent_fragment_shader_module,
-                .entry_point = wgpu.StringView.cFromZig("main"),
+                .entry_point = .init("main"),
                 .target_count = color_targets.len,
                 .targets = &color_targets,
             },
@@ -1105,7 +1105,7 @@ pub const Renderer = struct {
         const blend_pipeline_descriptor = wgpu.ComputePipelineDescriptor{
             .compute = .{
                 .module = blend_compute_module,
-                .entry_point = wgpu.StringView.cFromZig("main"),
+                .entry_point = .init("main"),
             },
         };
 
@@ -1121,7 +1121,7 @@ pub const Renderer = struct {
         const closed_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
             .vertex = .{
                 .module = modifier_volume_vertex_shader_module,
-                .entry_point = wgpu.StringView.cFromZig("main"),
+                .entry_point = .init("main"),
                 .buffer_count = ModifierVolumeVertexBufferLayout.len,
                 .buffers = &ModifierVolumeVertexBufferLayout,
             },
@@ -1151,7 +1151,7 @@ pub const Renderer = struct {
             },
             .fragment = &.{
                 .module = modifier_volume_fragment_shader_module,
-                .entry_point = wgpu.StringView.cFromZig("main"),
+                .entry_point = .init("main"),
                 .target_count = 0,
                 .targets = null,
             },
@@ -1160,7 +1160,7 @@ pub const Renderer = struct {
         const shift_stencil_buffer_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
             .vertex = .{
                 .module = modifier_volume_vertex_shader_module,
-                .entry_point = wgpu.StringView.cFromZig("main"),
+                .entry_point = .init("main"),
                 .buffer_count = ModifierVolumeVertexBufferLayout.len,
                 .buffers = &ModifierVolumeVertexBufferLayout,
             },
@@ -1190,7 +1190,7 @@ pub const Renderer = struct {
             },
             .fragment = &.{
                 .module = modifier_volume_fragment_shader_module,
-                .entry_point = wgpu.StringView.cFromZig("main"),
+                .entry_point = .init("main"),
                 .target_count = 0,
                 .targets = null,
             },
@@ -1199,7 +1199,7 @@ pub const Renderer = struct {
         const open_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
             .vertex = .{
                 .module = modifier_volume_vertex_shader_module,
-                .entry_point = wgpu.StringView.cFromZig("main"),
+                .entry_point = .init("main"),
                 .buffer_count = ModifierVolumeVertexBufferLayout.len,
                 .buffers = &ModifierVolumeVertexBufferLayout,
             },
@@ -1229,7 +1229,7 @@ pub const Renderer = struct {
             },
             .fragment = &.{
                 .module = modifier_volume_fragment_shader_module,
-                .entry_point = wgpu.StringView.cFromZig("main"),
+                .entry_point = .init("main"),
                 .target_count = 0,
                 .targets = null,
             },
@@ -1311,7 +1311,7 @@ pub const Renderer = struct {
             const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
                 .vertex = .{
                     .module = blit_vs_module,
-                    .entry_point = wgpu.StringView.cFromZig("main"),
+                    .entry_point = .init("main"),
                     .buffer_count = blit_vertex_buffers.len,
                     .buffers = &blit_vertex_buffers,
                 },
@@ -1324,7 +1324,7 @@ pub const Renderer = struct {
                 .depth_stencil = null,
                 .fragment = &.{
                     .module = blit_fs_module,
-                    .entry_point = wgpu.StringView.cFromZig("main"),
+                    .entry_point = .init("main"),
                     .target_count = blit_color_targets.len,
                     .targets = &blit_color_targets,
                 },
@@ -1358,7 +1358,7 @@ pub const Renderer = struct {
             const mv_apply_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
                 .vertex = .{
                     .module = blit_vs_module,
-                    .entry_point = wgpu.StringView.cFromZig("main"),
+                    .entry_point = .init("main"),
                     .buffer_count = blit_vertex_buffers.len,
                     .buffers = &blit_vertex_buffers,
                 },
@@ -1388,7 +1388,7 @@ pub const Renderer = struct {
                 },
                 .fragment = &.{
                     .module = mv_apply_fragment_shader_module,
-                    .entry_point = wgpu.StringView.cFromZig("main"),
+                    .entry_point = .init("main"),
                     .target_count = mv_apply_color_targets.len,
                     .targets = &mv_apply_color_targets,
                 },
@@ -1408,7 +1408,7 @@ pub const Renderer = struct {
             const translucent_modvol_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
                 .vertex = .{
                     .module = modifier_volume_vertex_shader_module,
-                    .entry_point = wgpu.StringView.cFromZig("main"),
+                    .entry_point = .init("main"),
                     .buffer_count = ModifierVolumeVertexBufferLayout.len,
                     .buffers = &ModifierVolumeVertexBufferLayout,
                 },
@@ -1438,7 +1438,7 @@ pub const Renderer = struct {
                 },
                 .fragment = &.{
                     .module = translucent_modvol_fs_module,
-                    .entry_point = wgpu.StringView.cFromZig("main"),
+                    .entry_point = .init("main"),
                     .target_count = 0,
                     .targets = null,
                 },
@@ -1453,7 +1453,7 @@ pub const Renderer = struct {
             const translucent_modvol_merge_pipeline_descriptor = wgpu.ComputePipelineDescriptor{
                 .compute = .{
                     .module = translucent_modvol_merge_compute_module,
-                    .entry_point = wgpu.StringView.cFromZig("main"),
+                    .entry_point = .init("main"),
                 },
             };
             _ = try gctx.createComputePipelineAsync(allocator, translucent_modvol_merge_pipeline_layout, translucent_modvol_merge_pipeline_descriptor, &renderer.translucent_modvol_merge_pipeline);
@@ -2892,7 +2892,7 @@ pub const Renderer = struct {
                         .store_op = .store,
                     }};
                     const pass = encoder.beginRenderPass(.{
-                        .label = zgpu.wgpu.StringView.cFromZig("Blit Framebuffer"),
+                        .label = .init("Blit Framebuffer"),
                         .color_attachment_count = color_attachments.len,
                         .color_attachments = &color_attachments,
                     });
@@ -2980,7 +2980,7 @@ pub const Renderer = struct {
                     },
                 };
                 const pass = encoder.beginRenderPass(.{
-                    .label = zgpu.wgpu.StringView.cFromZig("Background"),
+                    .label = .init("Background"),
                     .color_attachment_count = color_attachments.len,
                     .color_attachments = &color_attachments,
                     .depth_stencil_attachment = &.{
@@ -2991,7 +2991,7 @@ pub const Renderer = struct {
                         .stencil_load_op = .clear,
                         .stencil_store_op = .discard,
                         .stencil_clear_value = 0,
-                        .stencil_read_only = @intFromEnum(wgpu.False),
+                        .stencil_read_only = .false,
                     },
                 });
                 defer {
@@ -3028,7 +3028,7 @@ pub const Renderer = struct {
                             },
                         };
                         const pass = encoder.beginRenderPass(.{
-                            .label = zgpu.wgpu.StringView.cFromZig("Opaque pass"),
+                            .label = .init("Opaque pass"),
                             .color_attachment_count = color_attachments.len,
                             .color_attachments = &color_attachments,
                             .depth_stencil_attachment = &.{
@@ -3039,7 +3039,7 @@ pub const Renderer = struct {
                                 .stencil_load_op = .clear,
                                 .stencil_store_op = .discard,
                                 .stencil_clear_value = 0,
-                                .stencil_read_only = @intFromEnum(wgpu.False),
+                                .stencil_read_only = .false,
                             },
                         });
                         defer {
@@ -3103,7 +3103,7 @@ pub const Renderer = struct {
                             };
 
                             const pass = encoder.beginRenderPass(.{
-                                .label = zgpu.wgpu.StringView.cFromZig("Modifier Volume Stencil"),
+                                .label = .init("Modifier Volume Stencil"),
                                 .color_attachment_count = 0,
                                 .color_attachments = null,
                                 .depth_stencil_attachment = &.{
@@ -3111,11 +3111,11 @@ pub const Renderer = struct {
                                     .depth_load_op = .load,
                                     .depth_store_op = .store,
                                     .depth_clear_value = DepthClearValue,
-                                    .depth_read_only = @intFromEnum(wgpu.False),
+                                    .depth_read_only = .false,
                                     .stencil_load_op = .clear,
                                     .stencil_store_op = .store,
                                     .stencil_clear_value = 0,
-                                    .stencil_read_only = @intFromEnum(wgpu.False),
+                                    .stencil_read_only = .false,
                                 },
                             });
                             defer {
@@ -3163,7 +3163,7 @@ pub const Renderer = struct {
                                 .store_op = .store,
                             }};
                             const pass = encoder.beginRenderPass(.{
-                                .label = zgpu.wgpu.StringView.cFromZig("Modifier Volume Apply"),
+                                .label = .init("Modifier Volume Apply"),
                                 .color_attachment_count = color_attachments.len,
                                 .color_attachments = &color_attachments,
                                 .depth_stencil_attachment = &.{
@@ -3171,11 +3171,11 @@ pub const Renderer = struct {
                                     .depth_load_op = .undefined,
                                     .depth_store_op = .undefined,
                                     .depth_clear_value = DepthClearValue,
-                                    .depth_read_only = @intFromEnum(wgpu.True),
+                                    .depth_read_only = .true,
                                     .stencil_load_op = .undefined,
                                     .stencil_store_op = .undefined,
                                     .stencil_clear_value = 0,
-                                    .stencil_read_only = @intFromEnum(wgpu.True),
+                                    .stencil_read_only = .true,
                                 },
                             });
                             defer {
@@ -3221,7 +3221,7 @@ pub const Renderer = struct {
                             },
                         };
                         const pass = encoder.beginRenderPass(.{
-                            .label = zgpu.wgpu.StringView.cFromZig("Presorted Translucent pass"),
+                            .label = .init("Presorted Translucent pass"),
                             .color_attachment_count = color_attachments.len,
                             .color_attachments = &color_attachments,
                             .depth_stencil_attachment = &.{
@@ -3231,7 +3231,7 @@ pub const Renderer = struct {
                                 .stencil_load_op = .clear,
                                 .stencil_store_op = .discard,
                                 .stencil_clear_value = 0,
-                                .stencil_read_only = @intFromEnum(wgpu.False),
+                                .stencil_read_only = .false,
                             },
                         });
                         defer {
@@ -3305,13 +3305,13 @@ pub const Renderer = struct {
 
                                 {
                                     const pass = encoder.beginRenderPass(.{
-                                        .label = zgpu.wgpu.StringView.cFromZig("Translucent Modifier Volumes"),
+                                        .label = .init("Translucent Modifier Volumes"),
                                         .color_attachment_count = 0,
                                         .color_attachments = null,
                                         .depth_stencil_attachment = &.{
                                             .view = depth_view,
-                                            .depth_read_only = @intFromEnum(wgpu.True),
-                                            .stencil_read_only = @intFromEnum(wgpu.True),
+                                            .depth_read_only = .true,
+                                            .stencil_read_only = .true,
                                         },
                                     });
                                     defer {
@@ -3343,7 +3343,7 @@ pub const Renderer = struct {
                                 }
 
                                 {
-                                    const pass = encoder.beginComputePass(.{ .label = zgpu.wgpu.StringView.cFromZig("Merge Modifier Volumes"), .timestamp_writes = null });
+                                    const pass = encoder.beginComputePass(.{ .label = .init("Merge Modifier Volumes"), .timestamp_writes = null });
                                     defer {
                                         pass.end();
                                         pass.release();
@@ -3370,7 +3370,7 @@ pub const Renderer = struct {
                                     .store_op = .store,
                                 }};
                                 const pass = encoder.beginRenderPass(.{
-                                    .label = zgpu.wgpu.StringView.cFromZig("Translucent Pass"),
+                                    .label = .init("Translucent Pass"),
                                     .color_attachment_count = oit_color_attachments.len,
                                     .color_attachments = &oit_color_attachments,
                                     .depth_stencil_attachment = null, // TODO: Use the depth buffer rather than discarding the fragments manually?
@@ -3440,7 +3440,7 @@ pub const Renderer = struct {
                     .store_op = .store,
                 }};
                 const pass = encoder.beginRenderPass(.{
-                    .label = zgpu.wgpu.StringView.cFromZig("Framebuffer Blit"),
+                    .label = .init("Framebuffer Blit"),
                     .color_attachment_count = color_attachments.len,
                     .color_attachments = &color_attachments,
                 });
@@ -3664,7 +3664,7 @@ pub const Renderer = struct {
                         .store_op = .store,
                     }};
                     const pass = encoder.beginRenderPass(.{
-                        .label = zgpu.wgpu.StringView.cFromZig("Final Blit"),
+                        .label = .init("Final Blit"),
                         .color_attachment_count = color_attachments.len,
                         .color_attachments = &color_attachments,
                     });
@@ -3721,7 +3721,7 @@ pub const Renderer = struct {
         const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
             .vertex = .{
                 .module = self.opaque_vertex_shader_module,
-                .entry_point = zgpu.wgpu.StringView.cFromZig("main"),
+                .entry_point = .init("main"),
                 .buffer_count = VertexBufferLayout.len,
                 .buffers = &VertexBufferLayout,
             },
@@ -3743,7 +3743,7 @@ pub const Renderer = struct {
             },
             .fragment = &.{
                 .module = if (key.translucent) self.pre_sort_fragment_shader_module else self.opaque_fragment_shader_module,
-                .entry_point = zgpu.wgpu.StringView.cFromZig("main"),
+                .entry_point = .init("main"),
                 .target_count = color_targets.len,
                 .targets = &color_targets,
             },
@@ -4041,7 +4041,7 @@ pub const Renderer = struct {
             self.list_heads_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .storage = true },
                 .size = self.get_linked_list_heads_size(),
-                .mapped_at_creation = @intFromEnum(wgpu.True),
+                .mapped_at_creation = .true,
             });
             self._gctx.lookupResource(self.list_heads_buffer).?.setLabel("OIT List Heads Buffer");
             const init_buffer = self._gctx.lookupResourceInfo(self.list_heads_buffer).?.gpuobj.?;
@@ -4062,7 +4062,7 @@ pub const Renderer = struct {
             self.translucent_modvol_fragment_counts_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .storage = true },
                 .size = self.translucent_modvol_dimensions().fragment_counts_buffer_size,
-                .mapped_at_creation = @intFromEnum(wgpu.True),
+                .mapped_at_creation = .true,
             });
             self._gctx.lookupResource(self.translucent_modvol_fragment_counts_buffer).?.setLabel("Translucent ModVol Fragment Counts Buffer");
             {
@@ -4081,7 +4081,7 @@ pub const Renderer = struct {
             self.translucent_modvol_volumes_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .copy_dst = true, .storage = true },
                 .size = self.translucent_modvol_dimensions().volumes_buffer_size,
-                .mapped_at_creation = @intFromEnum(wgpu.True),
+                .mapped_at_creation = .true,
             });
             self._gctx.lookupResource(self.translucent_modvol_volumes_buffer).?.setLabel("Translucent ModVol Volumes Buffer");
             {
