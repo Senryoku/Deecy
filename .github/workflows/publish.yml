@@ -76,4 +76,14 @@ jobs:
           with: 
             name: Deecy-x86_64-linux
             path: Deecy/
+        - name: Compile Deecy for x86_64_v2
+          run: zig build --release=fast -Dcpu=x86_64_v2
+        - name: Prepare artifact for x86_64_v2
+          run: |
+            rm Deecy/Deecy
+            cp zig-out/bin/Deecy Deecy/
+        - uses: actions/upload-artifact@v4
+          with: 
+            name: Deecy-x86_64_v2-linux
+            path: Deecy/
 
