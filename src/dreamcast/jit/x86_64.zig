@@ -1548,29 +1548,38 @@ pub const Emitter = struct {
     }
 
     fn shift_instruction_x(self: *@This(), reg_opcode: ShiftRegOpcode, dst: Register, src: Operand, amount: Register) !void {
-        if (!try runtime_check_cpu_feature(.bmi2))
-            return error.BMI2NotSupported;
-        switch (src) {
-            .reg => |src_reg| {
-                try self.emit(VEX3, .{
-                    .not_r = !need_rex(dst),
-                    .not_x = true,
-                    .not_b = !need_rex(src_reg),
-                    .m = .x0F38,
-                    .w = false,
-                    .not_v = ~@intFromEnum(amount),
-                    .l = 0,
-                    .p = switch (reg_opcode) {
-                        .Sar => .xF3,
-                        .Shl => .x66,
-                        .Shr => .xF2,
-                        else => return error.InvalidShiftRegOpcode,
-                    },
-                });
-                try self.emit(u8, 0xF7);
-                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src_reg) });
-            },
-            else => return error.UnsupportedShiftXSource,
+        if (try runtime_check_cpu_feature(.bmi2)) {
+            switch (src) {
+                .reg => |src_reg| {
+                    try self.emit(VEX3, .{
+                        .not_r = !need_rex(dst),
+                        .not_x = true,
+                        .not_b = !need_rex(src_reg),
+                        .m = .x0F38,
+                        .w = false,
+                        .not_v = ~@intFromEnum(amount),
+                        .l = 0,
+                        .p = switch (reg_opcode) {
+                            .Sar => .xF3,
+                            .Shl => .x66,
+                            .Shr => .xF2,
+                            else => return error.InvalidShiftRegOpcode,
+                        },
+                    });
+                    try self.emit(u8, 0xF7);
+                    try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src_reg) });
+                },
+                else => return error.UnsupportedShiftXSource,
+            }
+        } else {
+            // NOTE: SARX/SHLX/SHRX are not currently emitted when the CPU does not supports BMI2 (the JIT checks for this).
+            //       Still provide a fallback for future proofing. Because this requires some register shuffling, print warnings to avoid future confusion :)
+            //       This assumes 32bit registers.
+            x86_64_emitter_log.warn(termcolor.yellow("BMI2 fallback: {f} = {f} {t} {f}"), .{ dst, src, reg_opcode, amount });
+            try self.mov(.{ .reg = dst }, src, false);
+            if (amount != .rcx)
+                try self.mov(.{ .reg = .rcx }, .{ .reg = amount }, false);
+            try self.shift_instruction(reg_opcode, .{ .reg = dst }, .{ .reg = .rcx });
         }
     }
 
