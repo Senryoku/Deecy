@@ -1459,23 +1459,30 @@ pub const Emitter = struct {
 
     pub fn fma(self: *@This(), dst: FPRegister, src1: FPRegister, src2: Operand) !void {
         // Assumes dst and src1 are f32
-        // vfmadd231ss xmm1, xmm2, xmm3/m32 - Multiply scalar single precision floating-point value from xmm2 and xmm3/m32, add to xmm1 and put result in xmm1.
-        switch (src2) {
-            .freg32 => |src2_reg| {
-                try self.emit(VEX3, .{
-                    .not_r = !need_rex(dst),
-                    .not_x = true,
-                    .not_b = !need_rex(src2_reg),
-                    .m = .x0F38,
-                    .w = false,
-                    .not_v = ~@intFromEnum(src1),
-                    .l = 0,
-                    .p = .x66,
-                });
-                try self.emit(u8, 0xB9); // Opcode
-                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src2_reg) });
-            },
-            else => return error.UnsupportedFmaSource,
+        if (try runtime_check_cpu_feature(.fma)) {
+            switch (src2) {
+                .freg32 => |src2_reg| {
+                    // vfmadd231ss xmm1, xmm2, xmm3/m32 - Multiply scalar single precision floating-point value from xmm2 and xmm3/m32, add to xmm1 and put result in xmm1.
+                    try self.emit(VEX3, .{
+                        .not_r = !need_rex(dst),
+                        .not_x = true,
+                        .not_b = !need_rex(src2_reg),
+                        .m = .x0F38,
+                        .w = false,
+                        .not_v = ~@intFromEnum(src1),
+                        .l = 0,
+                        .p = .x66,
+                    });
+                    try self.emit(u8, 0xB9); // Opcode
+                    try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src2_reg) });
+                },
+                else => return error.UnsupportedFmaSource,
+            }
+        } else {
+            const tmp = Operand{ .freg32 = .xmm0 };
+            try self.mov(tmp, .{ .freg32 = src1 }, false);
+            try self.mul(tmp, src2);
+            try self.add(.{ .freg32 = dst }, tmp);
         }
     }
 
