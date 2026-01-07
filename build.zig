@@ -131,7 +131,7 @@ pub fn build(b: *std.Build) void {
         deecy_module.addImport("zgpu", zgpu_module);
         // deecy_module.linkLibrary(zgpu_dep.artifact("zdawn"));
 
-        try @import("webgpu_dawn").link(b, "webgpu_dawn", deecy_module);
+        try @import("webgpu_dawn").link(b, "webgpu_dawn", exe);
         // const dawn = b.dependency("webgpu_dawn", .{});
         // deecy_module.addLibraryPath(dawn.path("./build/src/dawn/native"));
         // deecy_module.linkSystemLibrary("webgpu_dawn", .{});
