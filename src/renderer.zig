@@ -3597,36 +3597,28 @@ pub const Renderer = struct {
         // Read the result and copy it to guest VRAM
         if ((self.ExperimentalFramebufferEmulation or render_to_texture) and self.ExperimentalRenderToVRAM) {
             const static = struct {
-                var fb_mapping_available: bool = false;
+                var result: zgpu.wgpu.MapAsyncStatus = .@"error";
                 fn signal_fb_mapped(status: zgpu.wgpu.MapAsyncStatus, message: zgpu.wgpu.StringView.C, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
-                    switch (status) {
-                        .success => {
-                            fb_mapping_available = true;
-                        },
-                        else => log.err(termcolor.red("Failed to map buffer: {t} ({s})"), .{ status, message.data[0..message.length] }),
-                    }
+                    result = status;
+                    if (status != .success)
+                        log.err(termcolor.red("Failed to map framebuffer: {t} ({s})"), .{ status, message.data[0..message.length] });
                 }
             };
 
             const copy_buffer = gctx.lookupResource(self.framebuffer_copy_buffer).?;
-            // FIXME
-            const future = copy_buffer.mapAsync(.{ .read = true }, 0, 4 * NativeResolution.width * NativeResolution.height, .{ .callback = &static.signal_fb_mapped });
+            const future = copy_buffer.mapAsync(.{ .read = true }, 0, 4 * NativeResolution.width * NativeResolution.height, .{ .callback = &static.signal_fb_mapped, .mode = .wait_any_only });
             // Wait for mapping to be available. There's no synchronous way to do that AFAIK.
             // It needs to be unmapped before the next frame.
             var wait_info = [_]wgpu.FutureWaitInfo{.{ .future = future }};
-            if (gctx.instance.waitAny(&wait_info, 0) != .success) {
-                std.log.err("Failed to wait for framebuffer mapping to be available.", .{});
-                return;
-            }
-            // while (!static.fb_mapping_available)
-            //     gctx.device.tick();
-            static.fb_mapping_available = false;
-
-            defer copy_buffer.unmap();
-            const mapped_pixels = copy_buffer.getConstMappedRange(u8, 0, 4 * NativeResolution.width * NativeResolution.height);
-            if (mapped_pixels) |pixels| {
-                holly.write_framebuffer(self.write_back_parameters, pixels);
-            } else log.err(termcolor.red("Failed to map framebuffer"), .{});
+            if (gctx.instance.waitAny(&wait_info, std.math.maxInt(u64)) == .success) {
+                if (static.result == .success) {
+                    defer copy_buffer.unmap();
+                    const mapped_pixels = copy_buffer.getConstMappedRange(u8, 0, 4 * NativeResolution.width * NativeResolution.height);
+                    if (mapped_pixels) |pixels| {
+                        holly.write_framebuffer(self.write_back_parameters, pixels);
+                    } else log.err(termcolor.red("Failed to map framebuffer"), .{});
+                } // Error logged in the callback
+            } else log.err("Failed to wait for framebuffer mapping to be available.", .{});
         }
 
         if (!render_to_texture) {
@@ -3854,18 +3846,11 @@ pub const Renderer = struct {
         defer self._gctx_queue_mutex.unlock();
 
         const static = struct {
-            var mapping_available: bool = false;
+            var result: zgpu.wgpu.MapAsyncStatus = .@"error";
             fn signal_mapped(status: zgpu.wgpu.MapAsyncStatus, message: zgpu.wgpu.StringView.C, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
-                switch (status) {
-                    .success => {},
-                    else => log.err(termcolor.red("Failed to map buffer: {t} ({s})"), .{ status, message.data[0..message.length] }),
-                }
-                mapping_available = true;
-            }
-            fn wait(gctx: *zgpu.GraphicsContext) void {
-                while (!mapping_available)
-                    gctx.device.tick();
-                mapping_available = false;
+                result = status;
+                if (status != .success)
+                    log.err(termcolor.red("Failed to map buffer: {t} ({s})"), .{ status, message.data[0..message.length] });
             }
         };
 
@@ -3906,20 +3891,21 @@ pub const Renderer = struct {
         defer commands.release();
         self._gctx.submit(&.{commands});
 
-        const future = tmp_buffer.mapAsync(.{ .read = true }, 0, 4 * self.resolution.width * self.resolution.height, .{ .callback = &static.signal_mapped });
-        defer tmp_buffer.unmap();
+        const future = tmp_buffer.mapAsync(.{ .read = true }, 0, 4 * self.resolution.width * self.resolution.height, .{ .callback = &static.signal_mapped, .mode = .wait_any_only });
         var wait_info = [_]zgpu.wgpu.FutureWaitInfo{.{ .future = future }};
-        if (self._gctx.instance.waitAny(&wait_info, 0) != .success)
-            return error.WaitFailed;
-
-        const mapped_pixels = tmp_buffer.getConstMappedRange(u8, 0, 4 * self.resolution.width * self.resolution.height);
-        if (mapped_pixels) |pixels| {
-            return .{
-                .width = self.resolution.width,
-                .height = self.resolution.height,
-                .bgra = try allocator.dupe(u8, pixels),
-            };
-        } else return error.MapFailed;
+        if (self._gctx.instance.waitAny(&wait_info, std.math.maxInt(u64)) == .success) {
+            if (static.result == .success) {
+                defer tmp_buffer.unmap();
+                const mapped_pixels = tmp_buffer.getConstMappedRange(u8, 0, 4 * self.resolution.width * self.resolution.height);
+                if (mapped_pixels) |pixels| {
+                    return .{
+                        .width = self.resolution.width,
+                        .height = self.resolution.height,
+                        .bgra = try allocator.dupe(u8, pixels),
+                    };
+                } else return error.MapFailed;
+            } else return error.MapFailed;
+        } else return error.WaitFailed;
     }
 
     // Locks gctx_queue_mutex.
