@@ -1629,30 +1629,15 @@ pub const Emitter = struct {
                     else => return error.InvalidConvertSource,
                 }
             },
-            .freg32 => |dst_reg| {
+            .freg32, .freg64 => |dst_reg| {
                 switch (src) {
                     .mem => |src_mem| {
                         std.debug.assert(src_mem.size == 32);
-                        // CVTSI2SS
-                        try self.emit_byte(0xF3);
-                        try self.emit_rex_if_needed(.{
-                            .w = false,
-                            .r = need_rex(dst_reg),
-                            .x = if (src_mem.index) |i| need_rex(i) else false,
-                            .b = need_rex(src_mem.base),
+                        try self.emit_byte(switch (dst) {
+                            .freg32 => 0xF3, // CVTSI2SS
+                            .freg64 => 0xF2, // CVTSI2SD
+                            else => unreachable,
                         });
-                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0x2A });
-                        try self.emit_mem_addressing(encode(dst_reg), src_mem);
-                    },
-                    else => return error.InvalidConvertSource,
-                }
-            },
-            .freg64 => |dst_reg| {
-                switch (src) {
-                    .mem => |src_mem| {
-                        std.debug.assert(src_mem.size == 32);
-                        // CVTSI2SD
-                        try self.emit_byte(0xF2);
                         try self.emit_rex_if_needed(.{
                             .w = false,
                             .r = need_rex(dst_reg),
