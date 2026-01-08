@@ -244,6 +244,16 @@ pub const SB_ISTNRM = packed struct(u32) {
             try writer.print("{X}", .{as_u32});
         }
     }
+
+    pub fn c_str(self: @This()) [:0]const u8 {
+        const as_u32: u32 = @bitCast(self);
+        if (@popCount(as_u32) == 1) {
+            inline for (@typeInfo(@This()).@"struct".fields) |field| {
+                if (@field(self, field.name) == 1) return field.name;
+            }
+        }
+        return "Unknown";
+    }
 };
 
 pub const SB_ISTEXT = packed struct(u32) {
@@ -262,6 +272,16 @@ pub const SB_ISTEXT = packed struct(u32) {
         } else {
             try writer.print("{X}", .{as_u32});
         }
+    }
+
+    pub fn c_str(self: @This()) [:0]const u8 {
+        const as_u32: u32 = @bitCast(self);
+        if (@popCount(as_u32) == 1) {
+            inline for (@typeInfo(@This()).@"struct".fields) |field| {
+                if (@field(self, field.name) == 1) return field.name;
+            }
+        }
+        return "Unknown";
     }
 };
 

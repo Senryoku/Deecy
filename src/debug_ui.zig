@@ -329,6 +329,51 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
     if (zgui.begin("Scheduler", .{})) {
         zgui.text("Global Cycle: {d}", .{dc._global_cycles});
+
+        // Debug manual interrupts
+        {
+            const static = struct {
+                var istnrm: HardwareRegisters.SB_ISTNRM = .{ .RenderDoneVideo = 1 };
+                var istext: HardwareRegisters.SB_ISTEXT = .{ .GDRom = 1 };
+            };
+
+            zgui.separator();
+
+            if (zgui.beginCombo("##SB_ISTNRM", .{ .preview_value = static.istnrm.c_str() })) {
+                inline for (@typeInfo(HardwareRegisters.SB_ISTNRM).@"struct".fields) |field| {
+                    if (!std.mem.startsWith(u8, field.name, "_")) {
+                        if (zgui.selectable(field.name, .{ .selected = @field(static.istnrm, field.name) != 0 })) {
+                            comptime var val: HardwareRegisters.SB_ISTNRM = .{};
+                            @field(val, field.name) = 1;
+                            static.istnrm = val;
+                        }
+                    }
+                }
+                zgui.endCombo();
+            }
+            zgui.sameLine(.{});
+            if (zgui.button("Trigger##SB_ISTNRM", .{}))
+                dc.raise_normal_interrupt(static.istnrm);
+
+            if (zgui.beginCombo("##SB_ISTEXT", .{ .preview_value = static.istext.c_str() })) {
+                inline for (@typeInfo(HardwareRegisters.SB_ISTEXT).@"struct".fields) |field| {
+                    if (!std.mem.startsWith(u8, field.name, "_")) {
+                        if (zgui.selectable(field.name, .{ .selected = @field(static.istext, field.name) != 0 })) {
+                            comptime var val: HardwareRegisters.SB_ISTEXT = .{};
+                            @field(val, field.name) = 1;
+                            static.istext = val;
+                        }
+                    }
+                }
+                zgui.endCombo();
+            }
+            zgui.sameLine(.{});
+            if (zgui.button("Trigger##SB_ISTEXT", .{}))
+                dc.raise_external_interrupt(static.istext);
+        }
+
+        zgui.separator();
+
         for (d.dc.scheduled_events.items) |event| {
             zgui.text("[{d: >11}] {f} {?f}", .{ event.trigger_cycle -| dc._global_cycles, event.event, event.interrupt });
         }
@@ -1359,31 +1404,6 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         if (zgui.collapsingHeader("Resized Framebuffer Texture", .{})) {
             const fb_tex_id = d.gctx.lookupResource(d.renderer.resized_framebuffer.view).?;
             zgui.image(fb_tex_id, .{ .w = @floatFromInt(d.gctx.swapchain_descriptor.width), .h = @floatFromInt(d.gctx.swapchain_descriptor.height) });
-        }
-    }
-    zgui.end();
-
-    if (zgui.begin("Interrupts", .{})) {
-        inline for (@typeInfo(HardwareRegisters.SB_ISTNRM).@"struct".fields) |field| {
-            if (!std.mem.startsWith(u8, field.name, "_")) {
-                if (zgui.button("Trigger " ++ field.name ++ " Interrupt", .{})) {
-                    comptime var val: HardwareRegisters.SB_ISTNRM = .{};
-                    @field(val, field.name) = 1;
-                    dc.raise_normal_interrupt(val);
-                }
-            }
-        }
-
-        zgui.separator();
-
-        inline for (@typeInfo(HardwareRegisters.SB_ISTEXT).@"struct".fields) |field| {
-            if (!std.mem.startsWith(u8, field.name, "_")) {
-                if (zgui.button("Trigger " ++ field.name ++ " Ext Interrupt", .{})) {
-                    comptime var val: HardwareRegisters.SB_ISTEXT = .{};
-                    @field(val, field.name) = 1;
-                    dc.raise_external_interrupt(val);
-                }
-            }
         }
     }
     zgui.end();
