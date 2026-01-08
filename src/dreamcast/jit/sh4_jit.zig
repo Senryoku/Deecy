@@ -3485,5 +3485,9 @@ pub fn movcal_R0_atRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool
 pub fn sleep(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     _ = try interpreter_fallback_cached(block, ctx, instr);
     ctx.force_exit = true;
+
+    try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc + 2 });
+    ctx.outdated_pc = false;
+
     return true;
 }
