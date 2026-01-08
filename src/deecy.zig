@@ -37,13 +37,7 @@ const lz4 = @import("lz4");
 
 const deecy_log = std.log.scoped(.deecy);
 
-fn glfw_key_callback(
-    window: *zglfw.Window,
-    key: zglfw.Key,
-    scancode: i32,
-    action: zglfw.Action,
-    mods: zglfw.Mods,
-) callconv(.c) void {
+fn glfw_key_callback(window: *zglfw.Window, key: zglfw.Key, scancode: i32, action: zglfw.Action, mods: zglfw.Mods) callconv(.c) void {
     _ = scancode;
 
     const maybe_app = window.getUserPointer(@This());
@@ -115,11 +109,7 @@ fn glfw_key_callback(
     }
 }
 
-fn glfw_drop_callback(
-    window: *zglfw.Window,
-    count: i32,
-    paths: [*][*:0]const u8,
-) callconv(.c) void {
+fn glfw_drop_callback(window: *zglfw.Window, count: i32, paths: [*][*:0]const u8) callconv(.c) void {
     const maybe_app = window.getUserPointer(@This());
     if (maybe_app) |app| {
         if (count > 0) {
@@ -130,6 +120,21 @@ fn glfw_drop_callback(
         if (count > 1) {
             deecy_log.warn("Drop only supports 1 file at a time :)", .{});
         }
+    }
+}
+
+fn glfw_resize_callback(window: *zglfw.Window, width: i32, height: i32) callconv(.c) void {
+    const maybe_app = window.getUserPointer(@This());
+    if (maybe_app) |app| {
+        app.gctx.surface.configure(.{
+            .device = app.gctx.device,
+            .format = zgpu.GraphicsContext.surface_texture_format,
+            .usage = .{ .render_attachment = true },
+            .width = @intCast(width),
+            .height = @intCast(height),
+            .present_mode = app.gctx.present_mode,
+        });
+        app.on_resize();
     }
 }
 
@@ -211,6 +216,21 @@ const ControllerSettings = struct {
     subperipherals: [2]union(enum) { None, VMU: struct { filename: []const u8 }, VibrationPack } = .{ .None, .None },
 };
 
+pub const PresentMode = enum(u32) {
+    Fifo = @intFromEnum(zgpu.wgpu.PresentMode.fifo),
+    FifoRelaxed = @intFromEnum(zgpu.wgpu.PresentMode.fifo_relaxed),
+    Immediate = @intFromEnum(zgpu.wgpu.PresentMode.immediate),
+    Mailbox = @intFromEnum(zgpu.wgpu.PresentMode.mailbox),
+
+    pub fn toWGPU(self: PresentMode) zgpu.wgpu.PresentMode {
+        return @enumFromInt(@intFromEnum(self));
+    }
+
+    pub fn fromWGPU(self: zgpu.wgpu.PresentMode) PresentMode {
+        return @enumFromInt(@intFromEnum(self));
+    }
+};
+
 const Configuration = struct {
     per_game_vmu: bool = true,
     performance_overlay: enum { Off, Simple, Detailed } = .Simple,
@@ -219,7 +239,7 @@ const Configuration = struct {
     display_debug_ui: bool = false,
 
     window_size: struct { width: u32 = 2 * @ceil((16.0 / 9.0 * @as(f32, @floatFromInt(Renderer.NativeResolution.height)))), height: u32 = 2 * Renderer.NativeResolution.height } = .{},
-    present_mode: zgpu.wgpu.PresentMode = .fifo,
+    present_mode: PresentMode = .Fifo,
     fullscreen: bool = false,
     frame_limiter: enum { Off, Auto, @"120Hz", @"100Hz", @"60Hz", @"50Hz" } = .Off,
 
@@ -403,6 +423,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
 
             self.window.setUserPointer(self);
             _ = self.window.setKeyCallback(glfw_key_callback);
+            _ = self.window.setFramebufferSizeCallback(glfw_resize_callback);
             _ = zglfw.setDropCallback(self.window, glfw_drop_callback);
 
             const scale = self.window.getContentScale();
@@ -423,12 +444,12 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
                 .fn_getWaylandSurface = @ptrCast(&zglfw.getWaylandWindow),
                 .fn_getCocoaWindow = @ptrCast(&zglfw.getCocoaWindow),
             }, .{
-                .present_mode = config.present_mode,
+                .present_mode = config.present_mode.toWGPU(),
                 .required_features = &[_]zgpu.wgpu.FeatureName{ .bgra8_unorm_storage, .depth32_float_stencil8 },
                 // Increasing max_texture_array_layers is required: The renderer uses a single texture array for each size.
                 // 2048 is a big jump from the WebGPU default of 256, but it seems to be widely supported, especially on desktop.
                 // (support for Vulkan: https://vulkan.gpuinfo.org/displaydevicelimit.php?name=maxImageArrayLayers)
-                .required_limits = &.{ .limits = .{ .max_texture_array_layers = 2048 } },
+                .required_limits = &.{ .max_texture_array_layers = 2048 },
             });
         }
 
@@ -436,8 +457,8 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         // We could wait until the first frame is actually drawn, but this give an earlier feedback...
         // Not sure what's best here.
         {
-            const back_buffer_view = self.gctx.swapchain.getCurrentTextureView();
-            defer back_buffer_view.release();
+            var surface: zgpu.wgpu.SurfaceTexture = undefined;
+            self.gctx.surface.getCurrentTexture(&surface);
             _ = self.gctx.present();
             self.window.show();
         }
@@ -485,7 +506,8 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         self.dc.cable_type = config.video_cable.to_dreamcast();
     }
 
-    self.renderer = try .create(self._allocator, self.gctx, &self.gctx_queue_mutex, config.renderer);
+    const fb_size = self.window.getFramebufferSize();
+    self.renderer = try .create(self._allocator, self.gctx, &self.gctx_queue_mutex, @intCast(fb_size[0]), @intCast(fb_size[1]), config.renderer);
     self.dc.on_render_start = .{
         .function = @ptrCast(&Renderer.on_render_start),
         .context = self.renderer,
@@ -610,7 +632,8 @@ fn ui_init(self: *@This()) !void {
     style.grab_rounding = 3.0;
     style.tab_rounding = 4.0;
     style.tab_border_size = 1.0;
-    style.tab_min_width_for_close_button = 0.0;
+    style.tab_close_button_min_width_selected = 0.0;
+    style.tab_close_button_min_width_unselected = 0.0;
     style.color_button_position = .right;
     style.button_text_align = .{ 0.5, 0.5 };
     style.selectable_text_align = .{ 0.0, 0.0 };
@@ -668,7 +691,7 @@ fn ui_init(self: *@This()) !void {
     style.setColor(.table_row_bg_alt, .{ 1.0, 1.0, 1.0, 0.05999999865889549 });
     style.setColor(.text_selected_bg, .{ 0.2000000029802322, 0.2196078449487686, 0.2274509817361832, 1.0 });
     style.setColor(.drag_drop_target, .{ 0.3294117748737335, 0.6666666865348816, 0.8588235378265381, 1.0 });
-    style.setColor(.nav_highlight, EULogoColor);
+    style.setColor(.nav_cursor, EULogoColor);
     style.setColor(.nav_windowing_highlight, .{ EULogoColor[0], EULogoColor[1], EULogoColor[2], 0.7 });
     style.setColor(.nav_windowing_dim_bg, .{ EULogoColor[0], EULogoColor[1], EULogoColor[2], 0.2 });
     style.setColor(.modal_window_dim_bg, .{ 0, 0, 0, 0.6 });
@@ -676,8 +699,8 @@ fn ui_init(self: *@This()) !void {
     zgui.backend.init(
         self.window,
         self.gctx.device,
-        @intFromEnum(zgpu.GraphicsContext.swapchain_format),
-        @intFromEnum(zgpu.wgpu.TextureFormat.undef),
+        @intFromEnum(zgpu.GraphicsContext.surface_texture_format),
+        @intFromEnum(zgpu.wgpu.TextureFormat.undefined),
     );
 
     zgui.plot.init();
@@ -1162,13 +1185,12 @@ pub fn dc_thread_loop_realtime(self: *@This()) void {
 
 /// Locks gctx_queue_mutex (via Renderer.update_blit_to_screen_vertex_buffer).
 pub fn on_resize(self: *@This()) void {
+    const fb_size = self.window.getFramebufferSize();
     if (!self.config.fullscreen) {
-        const ww = self.gctx.swapchain_descriptor.width;
-        const wh = self.gctx.swapchain_descriptor.height;
-        self.config.window_size.width = ww;
-        self.config.window_size.height = wh;
+        self.config.window_size.width = @intCast(fb_size[0]);
+        self.config.window_size.height = @intCast(fb_size[1]);
     }
-    self.renderer.update_blit_to_screen_vertex_buffer(self.config.renderer.display_mode);
+    self.renderer.update_blit_to_screen_vertex_buffer(@intCast(fb_size[0]), @intCast(fb_size[1]), self.config.renderer.display_mode);
 }
 
 /// Locks gctx_queue_mutex.
@@ -1178,10 +1200,8 @@ pub fn draw_ui(self: *@This()) !void {
         //        Either newFrame creates some GPU resources on startup, or this just hides another issue by pure luck.
         self.gctx_queue_mutex.lock();
         defer self.gctx_queue_mutex.unlock();
-        zgui.backend.newFrame(
-            self.gctx.swapchain_descriptor.width,
-            self.gctx.swapchain_descriptor.height,
-        );
+        const fb_size = self.window.getFramebufferSize();
+        zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
     }
     _ = zgui.DockSpaceOverViewport(0, zgui.getMainViewport(), .{ .passthru_central_node = true });
 
@@ -1279,15 +1299,19 @@ pub fn submit_ui(self: *@This()) void {
     self.gctx_queue_mutex.lock();
     defer self.gctx_queue_mutex.unlock();
 
-    const swapchain_texv = self.gctx.swapchain.getCurrentTextureView();
-    defer swapchain_texv.release();
+    var surface: zgpu.wgpu.SurfaceTexture = undefined;
+    self.gctx.surface.getCurrentTexture(&surface);
+    defer surface.texture.?.release();
+
+    const surface_view = surface.texture.?.createView(.{});
+    defer surface_view.release();
 
     const commands = commands: {
         const encoder = self.gctx.device.createCommandEncoder(null);
         defer encoder.release();
         // GUI pass
         {
-            const pass = zgpu.beginRenderPassSimple(encoder, .load, swapchain_texv, null, null, null);
+            const pass = zgpu.beginRenderPassSimple(encoder, .load, surface_view, null, null, null);
             defer zgpu.endReleasePass(pass);
             zgui.backend.draw(pass);
         }
@@ -1303,7 +1327,8 @@ fn display_unrecoverable_error(self: *@This(), comptime fmt: []const u8, args: a
     while (!self.window.shouldClose()) {
         zglfw.pollEvents();
 
-        zgui.backend.newFrame(self.gctx.swapchain_descriptor.width, self.gctx.swapchain_descriptor.height);
+        const fb_size = self.window.getFramebufferSize();
+        zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
 
         if (!zgui.isPopupOpen("Error##Modal", .{})) {
             zgui.openPopup("Error##Modal", .{});

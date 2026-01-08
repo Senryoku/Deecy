@@ -851,7 +851,7 @@ pub const Renderer = struct {
             zgpu.textureEntry(8, .{ .fragment = true }, .float, .tvdim_2d_array, false),
             zgpu.bufferEntry(9, .{ .vertex = true }, .read_only_storage, false, 0),
             zgpu.bufferEntry(10, .{ .fragment = true }, .read_only_storage, false, 0),
-        });
+        }, .{ .label = "TexturesBindGroupLayout" });
     }
 
     fn create_textures_bind_group(self: *@This()) void {
@@ -878,12 +878,12 @@ pub const Renderer = struct {
         });
     }
 
-    pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, gctx_queue_mutex: *std.Thread.Mutex, config: Configuration) !*Renderer {
+    pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, gctx_queue_mutex: *std.Thread.Mutex, window_width: u32, window_height: u32, config: Configuration) !*Renderer {
         const start = std.time.milliTimestamp();
         defer log.info("Renderer initialized in {d}ms", .{std.time.milliTimestamp() - start});
 
         // Writes to texture all rely on that.
-        std.debug.assert(zgpu.GraphicsContext.swapchain_format == .bgra8_unorm);
+        std.debug.assert(zgpu.GraphicsContext.surface_texture_format == .bgra8_unorm);
 
         const framebuffer_texture = gctx.createTexture(.{
             .usage = .{ .render_attachment = true, .texture_binding = true, .copy_dst = true, .copy_src = true },
@@ -892,7 +892,7 @@ pub const Renderer = struct {
                 .height = NativeResolution.height,
                 .depth_or_array_layers = 1,
             },
-            .format = zgpu.GraphicsContext.swapchain_format,
+            .format = zgpu.GraphicsContext.surface_texture_format,
             .mip_level_count = 1,
         });
         const framebuffer_texture_view = gctx.createTextureView(framebuffer_texture, .{});
@@ -904,7 +904,7 @@ pub const Renderer = struct {
                 .height = NativeResolution.height,
                 .depth_or_array_layers = 1,
             },
-            .format = zgpu.GraphicsContext.swapchain_format,
+            .format = zgpu.GraphicsContext.surface_texture_format,
             .mip_level_count = 1,
         });
 
@@ -917,10 +917,10 @@ pub const Renderer = struct {
         defer gctx.releaseResource(textures_bind_group_layout);
         const sampler_bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.samplerEntry(0, .{ .fragment = true }, .filtering),
-        });
+        }, .{ .label = "SamplerBindGroupLayout" });
         defer gctx.releaseResource(sampler_bind_group_layout);
 
-        const blit_bind_group_layout = gctx.createBindGroupLayout(&BlitBindGroupLayout);
+        const blit_bind_group_layout = gctx.createBindGroupLayout(&BlitBindGroupLayout, .{ .label = "BlitBindGroupLayout" });
         defer gctx.releaseResource(blit_bind_group_layout);
 
         const blit_vs_module = zgpu.createWgslShaderModule(gctx.device, blit_vs, "blit_vs");
@@ -1029,7 +1029,7 @@ pub const Renderer = struct {
             zgpu.bufferEntry(1, .{ .fragment = true }, .storage, false, 0),
             zgpu.bufferEntry(2, .{ .fragment = true }, .storage, false, 0),
             zgpu.textureEntry(3, .{ .fragment = true }, .depth, .tvdim_2d, false),
-        });
+        }, .{ .label = "TranslucentBindGroupLayout" });
 
         const translucent_modvol_bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.bufferEntry(0, .{ .fragment = true }, .uniform, true, 0),
@@ -1037,13 +1037,13 @@ pub const Renderer = struct {
             zgpu.bufferEntry(2, .{ .fragment = true }, .storage, false, 0),
             zgpu.bufferEntry(3, .{ .fragment = true }, .uniform, true, 0),
             zgpu.textureEntry(4, .{ .fragment = true }, .depth, .tvdim_2d, false),
-        });
+        }, .{ .label = "TranslucentModVolBindGroupLayout" });
 
         const modifier_volume_vertex_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_modifier_volume_vs, "modvol_vs");
         defer modifier_volume_vertex_shader_module.release();
         const modifier_volume_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.bufferEntry(0, .{ .vertex = true }, .uniform, true, 0),
-        });
+        }, .{ .label = "ModifierVolumeBindGroupLayout" });
         defer gctx.releaseResource(modifier_volume_group_layout);
 
         const translucent_modvol_merge_bind_group_layout = gctx.createBindGroupLayout(&.{
@@ -1051,10 +1051,10 @@ pub const Renderer = struct {
             zgpu.bufferEntry(1, .{ .compute = true }, .storage, false, 0),
             zgpu.bufferEntry(2, .{ .compute = true }, .storage, false, 0),
             zgpu.bufferEntry(3, .{ .compute = true }, .storage, false, 0),
-        });
+        }, .{ .label = "TranslucentModVolMergeBindGroupLayout" });
 
         const color_targets = [_]wgpu.ColorTargetState{.{
-            .format = zgpu.GraphicsContext.swapchain_format,
+            .format = zgpu.GraphicsContext.surface_texture_format,
             .write_mask = .{}, // We won't write to the color attachment
         }};
 
@@ -1067,7 +1067,7 @@ pub const Renderer = struct {
         const translucent_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
             .vertex = .{
                 .module = opaque_vertex_shader_module,
-                .entry_point = "main",
+                .entry_point = .init("main"),
                 .buffer_count = VertexBufferLayout.len,
                 .buffers = &VertexBufferLayout,
             },
@@ -1080,7 +1080,7 @@ pub const Renderer = struct {
             .depth_stencil = null, // FIXME: Use opaque depth here rather than sampling it manually in the shader?
             .fragment = &.{
                 .module = translucent_fragment_shader_module,
-                .entry_point = "main",
+                .entry_point = .init("main"),
                 .target_count = color_targets.len,
                 .targets = &color_targets,
             },
@@ -1098,14 +1098,14 @@ pub const Renderer = struct {
             zgpu.textureEntry(3, .{ .compute = true }, .float, .tvdim_2d, false),
             zgpu.storageTextureEntry(4, .{ .compute = true }, .write_only, .bgra8_unorm, .tvdim_2d),
             zgpu.bufferEntry(5, .{ .compute = true }, .storage, false, 0),
-        });
+        }, .{ .label = "BlendBindGroupLayout" });
 
         const blend_pipeline_layout = gctx.createPipelineLayout(&.{blend_bind_group_layout});
         defer gctx.releaseResource(blend_pipeline_layout);
         const blend_pipeline_descriptor = wgpu.ComputePipelineDescriptor{
             .compute = .{
                 .module = blend_compute_module,
-                .entry_point = "main",
+                .entry_point = .init("main"),
             },
         };
 
@@ -1121,7 +1121,7 @@ pub const Renderer = struct {
         const closed_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
             .vertex = .{
                 .module = modifier_volume_vertex_shader_module,
-                .entry_point = "main",
+                .entry_point = .init("main"),
                 .buffer_count = ModifierVolumeVertexBufferLayout.len,
                 .buffers = &ModifierVolumeVertexBufferLayout,
             },
@@ -1132,7 +1132,7 @@ pub const Renderer = struct {
             },
             .depth_stencil = &.{
                 .format = .depth32_float_stencil8,
-                .depth_write_enabled = false,
+                .depth_write_enabled = .false,
                 .depth_compare = DepthCompareFunction,
                 .stencil_read_mask = 0x01,
                 .stencil_write_mask = 0x01,
@@ -1151,7 +1151,7 @@ pub const Renderer = struct {
             },
             .fragment = &.{
                 .module = modifier_volume_fragment_shader_module,
-                .entry_point = "main",
+                .entry_point = .init("main"),
                 .target_count = 0,
                 .targets = null,
             },
@@ -1160,7 +1160,7 @@ pub const Renderer = struct {
         const shift_stencil_buffer_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
             .vertex = .{
                 .module = modifier_volume_vertex_shader_module,
-                .entry_point = "main",
+                .entry_point = .init("main"),
                 .buffer_count = ModifierVolumeVertexBufferLayout.len,
                 .buffers = &ModifierVolumeVertexBufferLayout,
             },
@@ -1171,7 +1171,7 @@ pub const Renderer = struct {
             },
             .depth_stencil = &.{
                 .format = .depth32_float_stencil8,
-                .depth_write_enabled = false,
+                .depth_write_enabled = .false,
                 .depth_compare = .always,
                 .stencil_read_mask = 0x03,
                 .stencil_write_mask = 0x03,
@@ -1190,7 +1190,7 @@ pub const Renderer = struct {
             },
             .fragment = &.{
                 .module = modifier_volume_fragment_shader_module,
-                .entry_point = "main",
+                .entry_point = .init("main"),
                 .target_count = 0,
                 .targets = null,
             },
@@ -1199,7 +1199,7 @@ pub const Renderer = struct {
         const open_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
             .vertex = .{
                 .module = modifier_volume_vertex_shader_module,
-                .entry_point = "main",
+                .entry_point = .init("main"),
                 .buffer_count = ModifierVolumeVertexBufferLayout.len,
                 .buffers = &ModifierVolumeVertexBufferLayout,
             },
@@ -1210,7 +1210,7 @@ pub const Renderer = struct {
             },
             .depth_stencil = &.{
                 .format = .depth32_float_stencil8,
-                .depth_write_enabled = false,
+                .depth_write_enabled = .false,
                 .depth_compare = DepthCompareFunction,
                 .stencil_read_mask = 0x02,
                 .stencil_write_mask = 0x03,
@@ -1229,7 +1229,7 @@ pub const Renderer = struct {
             },
             .fragment = &.{
                 .module = modifier_volume_fragment_shader_module,
-                .entry_point = "main",
+                .entry_point = .init("main"),
                 .target_count = 0,
                 .targets = null,
             },
@@ -1305,13 +1305,13 @@ pub const Renderer = struct {
             defer gctx.releaseResource(blit_pipeline_layout);
 
             const blit_color_targets = [_]wgpu.ColorTargetState{.{
-                .format = zgpu.GraphicsContext.swapchain_format,
+                .format = zgpu.GraphicsContext.surface_texture_format,
             }};
 
             const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
                 .vertex = .{
                     .module = blit_vs_module,
-                    .entry_point = "main",
+                    .entry_point = .init("main"),
                     .buffer_count = blit_vertex_buffers.len,
                     .buffers = &blit_vertex_buffers,
                 },
@@ -1324,20 +1324,20 @@ pub const Renderer = struct {
                 .depth_stencil = null,
                 .fragment = &.{
                     .module = blit_fs_module,
-                    .entry_point = "main",
+                    .entry_point = .init("main"),
                     .target_count = blit_color_targets.len,
                     .targets = &blit_color_targets,
                 },
             };
-            gctx.createRenderPipelineAsync(allocator, blit_pipeline_layout, pipeline_descriptor, &renderer.blit_pipeline);
+            _ = try gctx.createRenderPipelineAsync(allocator, blit_pipeline_layout, pipeline_descriptor, &renderer.blit_pipeline);
         }
 
-        gctx.createComputePipelineAsync(allocator, blend_pipeline_layout, blend_pipeline_descriptor, &renderer.blend_pipeline);
-        gctx.createRenderPipelineAsync(allocator, translucent_pipeline_layout, translucent_pipeline_descriptor, &renderer.translucent_pipeline);
+        _ = try gctx.createComputePipelineAsync(allocator, blend_pipeline_layout, blend_pipeline_descriptor, &renderer.blend_pipeline);
+        _ = try gctx.createRenderPipelineAsync(allocator, translucent_pipeline_layout, translucent_pipeline_descriptor, &renderer.translucent_pipeline);
 
-        gctx.createRenderPipelineAsync(allocator, modifier_volume_pipeline_layout, closed_modifier_volume_pipeline_descriptor, &renderer.closed_modifier_volume_pipeline);
-        gctx.createRenderPipelineAsync(allocator, modifier_volume_pipeline_layout, shift_stencil_buffer_modifier_volume_pipeline_descriptor, &renderer.shift_stencil_buffer_modifier_volume_pipeline);
-        gctx.createRenderPipelineAsync(allocator, modifier_volume_pipeline_layout, open_modifier_volume_pipeline_descriptor, &renderer.open_modifier_volume_pipeline);
+        _ = try gctx.createRenderPipelineAsync(allocator, modifier_volume_pipeline_layout, closed_modifier_volume_pipeline_descriptor, &renderer.closed_modifier_volume_pipeline);
+        _ = try gctx.createRenderPipelineAsync(allocator, modifier_volume_pipeline_layout, shift_stencil_buffer_modifier_volume_pipeline_descriptor, &renderer.shift_stencil_buffer_modifier_volume_pipeline);
+        _ = try gctx.createRenderPipelineAsync(allocator, modifier_volume_pipeline_layout, open_modifier_volume_pipeline_descriptor, &renderer.open_modifier_volume_pipeline);
 
         // Modifier Volume Apply pipeline - Use the stencil from the previous pass to apply modifier volume effects.
         {
@@ -1346,19 +1346,19 @@ pub const Renderer = struct {
 
             const mv_apply_bind_group_layout = gctx.createBindGroupLayout(&.{
                 zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
-            });
+            }, .{ .label = "ModifierVolumeApplyBindGroupLayout" });
             const mv_apply_pipeline_layout = gctx.createPipelineLayout(&.{
                 mv_apply_bind_group_layout,
             });
 
             const mv_apply_color_targets = [_]wgpu.ColorTargetState{.{
-                .format = zgpu.GraphicsContext.swapchain_format,
+                .format = zgpu.GraphicsContext.surface_texture_format,
             }};
 
             const mv_apply_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
                 .vertex = .{
                     .module = blit_vs_module,
-                    .entry_point = "main",
+                    .entry_point = .init("main"),
                     .buffer_count = blit_vertex_buffers.len,
                     .buffers = &blit_vertex_buffers,
                 },
@@ -1370,7 +1370,7 @@ pub const Renderer = struct {
                 },
                 .depth_stencil = &.{
                     .format = .depth32_float_stencil8,
-                    .depth_write_enabled = false,
+                    .depth_write_enabled = .false,
                     .depth_compare = .always,
                     .stencil_read_mask = 0x2,
                     .stencil_front = .{
@@ -1388,12 +1388,12 @@ pub const Renderer = struct {
                 },
                 .fragment = &.{
                     .module = mv_apply_fragment_shader_module,
-                    .entry_point = "main",
+                    .entry_point = .init("main"),
                     .target_count = mv_apply_color_targets.len,
                     .targets = &mv_apply_color_targets,
                 },
             };
-            gctx.createRenderPipelineAsync(allocator, mv_apply_pipeline_layout, mv_apply_pipeline_descriptor, &renderer.modifier_volume_apply_pipeline);
+            _ = try gctx.createRenderPipelineAsync(allocator, mv_apply_pipeline_layout, mv_apply_pipeline_descriptor, &renderer.modifier_volume_apply_pipeline);
         }
         // Translucent modifier volume pipeline
         {
@@ -1408,7 +1408,7 @@ pub const Renderer = struct {
             const translucent_modvol_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
                 .vertex = .{
                     .module = modifier_volume_vertex_shader_module,
-                    .entry_point = "main",
+                    .entry_point = .init("main"),
                     .buffer_count = ModifierVolumeVertexBufferLayout.len,
                     .buffers = &ModifierVolumeVertexBufferLayout,
                 },
@@ -1419,7 +1419,7 @@ pub const Renderer = struct {
                 },
                 .depth_stencil = &.{
                     .format = .depth32_float_stencil8,
-                    .depth_write_enabled = false,
+                    .depth_write_enabled = .false,
                     .depth_compare = DepthCompareFunction,
                     .stencil_read_mask = 0x00,
                     .stencil_write_mask = 0x00,
@@ -1438,12 +1438,12 @@ pub const Renderer = struct {
                 },
                 .fragment = &.{
                     .module = translucent_modvol_fs_module,
-                    .entry_point = "main",
+                    .entry_point = .init("main"),
                     .target_count = 0,
                     .targets = null,
                 },
             };
-            gctx.createRenderPipelineAsync(allocator, translucent_modvol_pipeline_layout, translucent_modvol_pipeline_descriptor, &renderer.translucent_modvol_pipeline);
+            _ = try gctx.createRenderPipelineAsync(allocator, translucent_modvol_pipeline_layout, translucent_modvol_pipeline_descriptor, &renderer.translucent_modvol_pipeline);
         }
         // Translucent modifier volume merge pipeline
         {
@@ -1453,10 +1453,10 @@ pub const Renderer = struct {
             const translucent_modvol_merge_pipeline_descriptor = wgpu.ComputePipelineDescriptor{
                 .compute = .{
                     .module = translucent_modvol_merge_compute_module,
-                    .entry_point = "main",
+                    .entry_point = .init("main"),
                 },
             };
-            gctx.createComputePipelineAsync(allocator, translucent_modvol_merge_pipeline_layout, translucent_modvol_merge_pipeline_descriptor, &renderer.translucent_modvol_merge_pipeline);
+            _ = try gctx.createComputePipelineAsync(allocator, translucent_modvol_merge_pipeline_layout, translucent_modvol_merge_pipeline_descriptor, &renderer.translucent_modvol_merge_pipeline);
         }
 
         // Ensure capacity for pipelines: Async creation needs pointer stability.
@@ -1472,7 +1472,7 @@ pub const Renderer = struct {
             for (renderer.texture_metadata[i]) |*tm| tm.* = .{};
         }
 
-        renderer.on_inner_resolution_change(config.display_mode, config.scaling_filter);
+        renderer.on_inner_resolution_change(window_width, window_height, config.display_mode, config.scaling_filter);
 
         return renderer;
     }
@@ -1484,21 +1484,22 @@ pub const Renderer = struct {
         self.render_passes.deinit(self._allocator);
 
         // Wait for async pipeline creation to finish (prevents crashing on exit).
-        while (self._gctx.lookupResource(self.closed_modifier_volume_pipeline) == null or
-            self._gctx.lookupResource(self.shift_stencil_buffer_modifier_volume_pipeline) == null or
-            self._gctx.lookupResource(self.open_modifier_volume_pipeline) == null or
-            self._gctx.lookupResource(self.modifier_volume_apply_pipeline) == null or
-            self._gctx.lookupResource(self.translucent_pipeline) == null or
-            self._gctx.lookupResource(self.translucent_modvol_pipeline) == null or
-            self._gctx.lookupResource(self.translucent_modvol_merge_pipeline) == null or
-            self._gctx.lookupResource(self.blend_pipeline) == null)
-        {
-            self._gctx.device.tick();
-        }
+        // FIXME: Update
+        // while (self._gctx.lookupResource(self.closed_modifier_volume_pipeline) == null or
+        //     self._gctx.lookupResource(self.shift_stencil_buffer_modifier_volume_pipeline) == null or
+        //     self._gctx.lookupResource(self.open_modifier_volume_pipeline) == null or
+        //     self._gctx.lookupResource(self.modifier_volume_apply_pipeline) == null or
+        //     self._gctx.lookupResource(self.translucent_pipeline) == null or
+        //     self._gctx.lookupResource(self.translucent_modvol_pipeline) == null or
+        //     self._gctx.lookupResource(self.translucent_modvol_merge_pipeline) == null or
+        //     self._gctx.lookupResource(self.blend_pipeline) == null)
+        // {
+        //     self._gctx.device.tick();
+        // }
         var async_pipeline_creation = true;
         while (async_pipeline_creation) {
             async_pipeline_creation = false;
-            self._gctx.device.tick();
+            // self._gctx.device.tick();
             var it = self.opaque_pipelines.iterator();
             while (it.next()) |pipeline| {
                 if (self._gctx.lookupResource(pipeline.value_ptr.*) == null) {
@@ -2893,7 +2894,7 @@ pub const Renderer = struct {
                         .store_op = .store,
                     }};
                     const pass = encoder.beginRenderPass(.{
-                        .label = "Blit Framebuffer",
+                        .label = .init("Blit Framebuffer"),
                         .color_attachment_count = color_attachments.len,
                         .color_attachments = &color_attachments,
                     });
@@ -2981,7 +2982,7 @@ pub const Renderer = struct {
                     },
                 };
                 const pass = encoder.beginRenderPass(.{
-                    .label = "Background",
+                    .label = .init("Background"),
                     .color_attachment_count = color_attachments.len,
                     .color_attachments = &color_attachments,
                     .depth_stencil_attachment = &.{
@@ -3029,7 +3030,7 @@ pub const Renderer = struct {
                             },
                         };
                         const pass = encoder.beginRenderPass(.{
-                            .label = "Opaque pass",
+                            .label = .init("Opaque pass"),
                             .color_attachment_count = color_attachments.len,
                             .color_attachments = &color_attachments,
                             .depth_stencil_attachment = &.{
@@ -3104,7 +3105,7 @@ pub const Renderer = struct {
                             };
 
                             const pass = encoder.beginRenderPass(.{
-                                .label = "Modifier Volume Stencil",
+                                .label = .init("Modifier Volume Stencil"),
                                 .color_attachment_count = 0,
                                 .color_attachments = null,
                                 .depth_stencil_attachment = &.{
@@ -3164,17 +3165,17 @@ pub const Renderer = struct {
                                 .store_op = .store,
                             }};
                             const pass = encoder.beginRenderPass(.{
-                                .label = "Modifier Volume Apply",
+                                .label = .init("Modifier Volume Apply"),
                                 .color_attachment_count = color_attachments.len,
                                 .color_attachments = &color_attachments,
                                 .depth_stencil_attachment = &.{
                                     .view = depth_view,
-                                    .depth_load_op = .undef,
-                                    .depth_store_op = .undef,
+                                    .depth_load_op = .undefined,
+                                    .depth_store_op = .undefined,
                                     .depth_clear_value = DepthClearValue,
                                     .depth_read_only = .true,
-                                    .stencil_load_op = .undef,
-                                    .stencil_store_op = .undef,
+                                    .stencil_load_op = .undefined,
+                                    .stencil_store_op = .undefined,
                                     .stencil_clear_value = 0,
                                     .stencil_read_only = .true,
                                 },
@@ -3222,7 +3223,7 @@ pub const Renderer = struct {
                             },
                         };
                         const pass = encoder.beginRenderPass(.{
-                            .label = "Presorted Translucent pass",
+                            .label = .init("Presorted Translucent pass"),
                             .color_attachment_count = color_attachments.len,
                             .color_attachments = &color_attachments,
                             .depth_stencil_attachment = &.{
@@ -3306,7 +3307,7 @@ pub const Renderer = struct {
 
                                 {
                                     const pass = encoder.beginRenderPass(.{
-                                        .label = "Translucent Modifier Volumes",
+                                        .label = .init("Translucent Modifier Volumes"),
                                         .color_attachment_count = 0,
                                         .color_attachments = null,
                                         .depth_stencil_attachment = &.{
@@ -3344,7 +3345,7 @@ pub const Renderer = struct {
                                 }
 
                                 {
-                                    const pass = encoder.beginComputePass(.{ .label = "Merge Modifier Volumes", .timestamp_write_count = 0, .timestamp_writes = null });
+                                    const pass = encoder.beginComputePass(.{ .label = .init("Merge Modifier Volumes"), .timestamp_writes = null });
                                     defer {
                                         pass.end();
                                         pass.release();
@@ -3371,7 +3372,7 @@ pub const Renderer = struct {
                                     .store_op = .store,
                                 }};
                                 const pass = encoder.beginRenderPass(.{
-                                    .label = "Translucent Pass",
+                                    .label = .init("Translucent Pass"),
                                     .color_attachment_count = oit_color_attachments.len,
                                     .color_attachments = &oit_color_attachments,
                                     .depth_stencil_attachment = null, // TODO: Use the depth buffer rather than discarding the fragments manually?
@@ -3441,7 +3442,7 @@ pub const Renderer = struct {
                     .store_op = .store,
                 }};
                 const pass = encoder.beginRenderPass(.{
-                    .label = "Framebuffer Blit",
+                    .label = .init("Framebuffer Blit"),
                     .color_attachment_count = color_attachments.len,
                     .color_attachments = &color_attachments,
                 });
@@ -3598,29 +3599,28 @@ pub const Renderer = struct {
         // Read the result and copy it to guest VRAM
         if ((self.ExperimentalFramebufferEmulation or render_to_texture) and self.ExperimentalRenderToVRAM) {
             const static = struct {
-                var fb_mapping_available: bool = false;
-                fn signal_fb_mapped(status: zgpu.wgpu.BufferMapAsyncStatus, _: ?*anyopaque) callconv(.c) void {
-                    switch (status) {
-                        .success => {},
-                        else => log.err(termcolor.red("Failed to map buffer: {t}"), .{status}),
-                    }
-                    fb_mapping_available = true;
+                var result: zgpu.wgpu.MapAsyncStatus = .@"error";
+                fn signal_fb_mapped(status: zgpu.wgpu.MapAsyncStatus, message: zgpu.wgpu.StringView.C, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
+                    result = status;
+                    if (status != .success)
+                        log.err(termcolor.red("Failed to map framebuffer: {t} ({s})"), .{ status, message.data[0..message.length] });
                 }
             };
 
             const copy_buffer = gctx.lookupResource(self.framebuffer_copy_buffer).?;
-            copy_buffer.mapAsync(.{ .read = true }, 0, 4 * NativeResolution.width * NativeResolution.height, &static.signal_fb_mapped, null);
+            const future = copy_buffer.mapAsync(.{ .read = true }, 0, 4 * NativeResolution.width * NativeResolution.height, .{ .callback = &static.signal_fb_mapped, .mode = .wait_any_only });
             // Wait for mapping to be available. There's no synchronous way to do that AFAIK.
             // It needs to be unmapped before the next frame.
-            while (!static.fb_mapping_available)
-                gctx.device.tick();
-            static.fb_mapping_available = false;
-
-            defer copy_buffer.unmap();
-            const mapped_pixels = copy_buffer.getConstMappedRange(u8, 0, 4 * NativeResolution.width * NativeResolution.height);
-            if (mapped_pixels) |pixels| {
-                holly.write_framebuffer(self.write_back_parameters, pixels);
-            } else log.err(termcolor.red("Failed to map framebuffer"), .{});
+            var wait_info = [_]wgpu.FutureWaitInfo{.{ .future = future }};
+            if (gctx.instance.waitAny(&wait_info, std.math.maxInt(u64)) == .success) {
+                if (static.result == .success) {
+                    defer copy_buffer.unmap();
+                    const mapped_pixels = copy_buffer.getConstMappedRange(u8, 0, 4 * NativeResolution.width * NativeResolution.height);
+                    if (mapped_pixels) |pixels| {
+                        holly.write_framebuffer(self.write_back_parameters, pixels);
+                    } else log.err(termcolor.red("Failed to map framebuffer"), .{});
+                } // Error logged in the callback
+            } else log.err("Failed to wait for framebuffer mapping to be available.", .{});
         }
 
         if (!render_to_texture) {
@@ -3636,7 +3636,10 @@ pub const Renderer = struct {
         defer self._gctx_queue_mutex.unlock();
 
         if (self._gctx.lookupResource(self.blit_pipeline)) |pipeline| {
-            const back_buffer_view = self._gctx.swapchain.getCurrentTextureView();
+            var surface: zgpu.wgpu.SurfaceTexture = undefined;
+            self._gctx.surface.getCurrentTexture(&surface);
+            defer surface.texture.?.release();
+            const back_buffer_view = surface.texture.?.createView(.{});
             defer back_buffer_view.release();
 
             const commands = commands: {
@@ -3655,7 +3658,7 @@ pub const Renderer = struct {
                         .store_op = .store,
                     }};
                     const pass = encoder.beginRenderPass(.{
-                        .label = "Final Blit",
+                        .label = .init("Final Blit"),
                         .color_attachment_count = color_attachments.len,
                         .color_attachments = &color_attachments,
                     });
@@ -3694,14 +3697,14 @@ pub const Renderer = struct {
 
         const color_targets = [_]wgpu.ColorTargetState{
             .{
-                .format = zgpu.GraphicsContext.swapchain_format,
+                .format = zgpu.GraphicsContext.surface_texture_format,
                 .blend = &.{
                     .color = .{ .operation = .add, .src_factor = key.src_blend_factor, .dst_factor = key.dst_blend_factor },
                     .alpha = .{ .operation = .add, .src_factor = key.src_blend_factor, .dst_factor = key.dst_blend_factor }, // FIXME: Not sure about this.
                 },
             },
             .{
-                .format = zgpu.GraphicsContext.swapchain_format,
+                .format = zgpu.GraphicsContext.surface_texture_format,
                 .blend = &.{
                     .color = .{ .operation = .add, .src_factor = key.src_blend_factor, .dst_factor = key.dst_blend_factor },
                     .alpha = .{ .operation = .add, .src_factor = key.src_blend_factor, .dst_factor = key.dst_blend_factor },
@@ -3712,7 +3715,7 @@ pub const Renderer = struct {
         const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
             .vertex = .{
                 .module = self.opaque_vertex_shader_module,
-                .entry_point = "main",
+                .entry_point = .init("main"),
                 .buffer_count = VertexBufferLayout.len,
                 .buffers = &VertexBufferLayout,
             },
@@ -3729,12 +3732,12 @@ pub const Renderer = struct {
             },
             .depth_stencil = &.{
                 .format = .depth32_float_stencil8,
-                .depth_write_enabled = key.depth_write_enabled,
+                .depth_write_enabled = if (key.depth_write_enabled) .true else .false,
                 .depth_compare = key.depth_compare,
             },
             .fragment = &.{
                 .module = if (key.translucent) self.pre_sort_fragment_shader_module else self.opaque_fragment_shader_module,
-                .entry_point = "main",
+                .entry_point = .init("main"),
                 .target_count = color_targets.len,
                 .targets = &color_targets,
             },
@@ -3745,7 +3748,7 @@ pub const Renderer = struct {
                 // Experiment: Asynchronous pipeline creation
                 self.opaque_pipelines.putAssumeCapacityNoClobber(key, .{});
                 const ptr = self.opaque_pipelines.getPtr(key).?;
-                self._gctx.createRenderPipelineAsync(self._allocator, self.opaque_pipeline_layout, pipeline_descriptor, ptr);
+                _ = self._gctx.createRenderPipelineAsync(self._allocator, self.opaque_pipeline_layout, pipeline_descriptor, ptr) catch |err| std.debug.panic("Failed to create pipeline: {t}", .{err});
                 return ptr.*;
             },
             else => {
@@ -3792,7 +3795,7 @@ pub const Renderer = struct {
     }
 
     /// Creates all resources that depends on the render size
-    pub fn on_inner_resolution_change(self: *@This(), display_mode: DisplayMode, scaling_filter: Filter) void {
+    pub fn on_inner_resolution_change(self: *@This(), width: u32, height: u32, display_mode: DisplayMode, scaling_filter: Filter) void {
         self.deinit_screen_textures();
 
         // This is currently the largest buffer whose size is dependent on the resolution. Make sure we can allocate it.
@@ -3821,7 +3824,7 @@ pub const Renderer = struct {
 
         const mv_apply_bind_group_layout = self._gctx.createBindGroupLayout(&.{
             zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
-        });
+        }, .{ .label = "ModifierVolumeApplyBindGroupLayout" });
         defer self._gctx.releaseResource(mv_apply_bind_group_layout);
 
         self.modifier_volume_apply_bind_group = self._gctx.createBindGroup(mv_apply_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
@@ -3834,7 +3837,7 @@ pub const Renderer = struct {
         self.create_translucent_modvol_merge_bind_group();
         self.create_blend_bind_groups();
 
-        self.update_blit_to_screen_vertex_buffer(display_mode);
+        self.update_blit_to_screen_vertex_buffer(width, height, display_mode);
     }
 
     /// Returns the rendered frame as RGBA pixels.
@@ -3845,18 +3848,11 @@ pub const Renderer = struct {
         defer self._gctx_queue_mutex.unlock();
 
         const static = struct {
-            var mapping_available: bool = false;
-            fn signal_mapped(status: zgpu.wgpu.BufferMapAsyncStatus, _: ?*anyopaque) callconv(.c) void {
-                switch (status) {
-                    .success => {},
-                    else => log.err(termcolor.red("Failed to map buffer: {t}"), .{status}),
-                }
-                mapping_available = true;
-            }
-            fn wait(gctx: *zgpu.GraphicsContext) void {
-                while (!mapping_available)
-                    gctx.device.tick();
-                mapping_available = false;
+            var result: zgpu.wgpu.MapAsyncStatus = .@"error";
+            fn signal_mapped(status: zgpu.wgpu.MapAsyncStatus, message: zgpu.wgpu.StringView.C, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
+                result = status;
+                if (status != .success)
+                    log.err(termcolor.red("Failed to map buffer: {t} ({s})"), .{ status, message.data[0..message.length] });
             }
         };
 
@@ -3897,26 +3893,29 @@ pub const Renderer = struct {
         defer commands.release();
         self._gctx.submit(&.{commands});
 
-        tmp_buffer.mapAsync(.{ .read = true }, 0, 4 * self.resolution.width * self.resolution.height, &static.signal_mapped, null);
-        defer tmp_buffer.unmap();
-        static.wait(self._gctx);
-
-        const mapped_pixels = tmp_buffer.getConstMappedRange(u8, 0, 4 * self.resolution.width * self.resolution.height);
-        if (mapped_pixels) |pixels| {
-            return .{
-                .width = self.resolution.width,
-                .height = self.resolution.height,
-                .bgra = try allocator.dupe(u8, pixels),
-            };
-        } else return error.MapFailed;
+        const future = tmp_buffer.mapAsync(.{ .read = true }, 0, 4 * self.resolution.width * self.resolution.height, .{ .callback = &static.signal_mapped, .mode = .wait_any_only });
+        var wait_info = [_]zgpu.wgpu.FutureWaitInfo{.{ .future = future }};
+        if (self._gctx.instance.waitAny(&wait_info, std.math.maxInt(u64)) == .success) {
+            if (static.result == .success) {
+                defer tmp_buffer.unmap();
+                const mapped_pixels = tmp_buffer.getConstMappedRange(u8, 0, 4 * self.resolution.width * self.resolution.height);
+                if (mapped_pixels) |pixels| {
+                    return .{
+                        .width = self.resolution.width,
+                        .height = self.resolution.height,
+                        .bgra = try allocator.dupe(u8, pixels),
+                    };
+                } else return error.MapFailed;
+            } else return error.MapFailed;
+        } else return error.WaitFailed;
     }
 
     // Locks gctx_queue_mutex.
-    pub fn update_blit_to_screen_vertex_buffer(self: *const @This(), display_mode: DisplayMode) void {
+    pub fn update_blit_to_screen_vertex_buffer(self: *const @This(), width: u32, height: u32, display_mode: DisplayMode) void {
         const iw: f32 = @floatFromInt(self.resolution.width);
         const ih: f32 = @floatFromInt(self.resolution.height);
-        const tw: f32 = @floatFromInt(self._gctx.swapchain_descriptor.width);
-        const th: f32 = @floatFromInt(self._gctx.swapchain_descriptor.height);
+        const tw: f32 = @floatFromInt(width);
+        const th: f32 = @floatFromInt(height);
         const ias = iw / ih;
         const tas = tw / th;
         const actual_dm = if (display_mode == .Center and (tw < iw or th < ih))
@@ -4017,7 +4016,7 @@ pub const Renderer = struct {
                 .height = resolution.height,
                 .depth_or_array_layers = 1,
             },
-            .format = zgpu.GraphicsContext.swapchain_format,
+            .format = zgpu.GraphicsContext.surface_texture_format,
             .mip_level_count = 1,
         });
         const resized_framebuffer_texture_view = gctx.createTextureView(resized_framebuffer_texture, .{});
@@ -4091,7 +4090,7 @@ pub const Renderer = struct {
         if (self.blit_bind_group.id != 0) self._gctx.releaseResource(self.blit_bind_group);
         if (self.blit_bind_group_render_to_texture.id != 0) self._gctx.releaseResource(self.blit_bind_group_render_to_texture);
 
-        const blit_bind_group_layout = self._gctx.createBindGroupLayout(&BlitBindGroupLayout);
+        const blit_bind_group_layout = self._gctx.createBindGroupLayout(&BlitBindGroupLayout, .{ .label = "BlitBindGroupLayout" });
         defer self._gctx.releaseResource(blit_bind_group_layout);
 
         const sampler = switch (scaling_filter) {
@@ -4184,12 +4183,12 @@ pub const Renderer = struct {
     }
 
     fn get_max_storage_buffer_binding_size(self: *const @This()) u64 {
-        var r: zgpu.wgpu.SupportedLimits = .{};
-        if (!self._gctx.device.getLimits(&r)) {
+        var limits: zgpu.wgpu.Limits = .{};
+        if (!self._gctx.device.getLimits(&limits)) {
             log.err("get_max_storage_buffer_binding_size: Failed to get device limits.", .{});
             return 134217728; // Min WebGPU spec.
         }
-        return r.limits.max_storage_buffer_binding_size;
+        return limits.max_storage_buffer_binding_size;
     }
 
     /// Assumes gctx_queue_mutex is locked.

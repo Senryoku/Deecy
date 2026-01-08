@@ -3,7 +3,7 @@ const std = @import("std");
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -110,11 +110,10 @@ pub fn build(b: *std.Build) void {
             .with_implot = true,
             .backend = .glfw_wgpu,
         });
-        deecy_module.addImport("zgui", zgui.module("root"));
+        const zgui_mod = zgui.module("root");
+        // zgui_mod.linkLibrary(b.dependency("webgpu_dawn", .{}).artifact("dawn"));
+        deecy_module.addImport("zgui", zgui_mod);
         deecy_module.linkLibrary(zgui.artifact("imgui"));
-
-        @import("zgpu").addLibraryPathsTo(exe);
-        @import("zgpu").addLibraryPathsTo(exe_check);
 
         const zglfw = b.dependency("zglfw", .{});
         deecy_module.addImport("zglfw", zglfw.module("root"));
@@ -123,9 +122,15 @@ pub fn build(b: *std.Build) void {
         const zpool = b.dependency("zpool", .{});
         deecy_module.addImport("zpool", zpool.module("root"));
 
-        const zgpu = b.dependency("zgpu", .{ .max_num_bindings_per_group = 12 });
-        deecy_module.addImport("zgpu", zgpu.module("root"));
-        deecy_module.linkLibrary(zgpu.artifact("zdawn"));
+        const zgpu = @import("zgpu");
+        if (target.result.os.tag == .windows) {
+            zgpu.installDxcFrom(exe, "zgpu");
+        }
+        const zgpu_dep = b.dependency("zgpu", .{ .max_num_bindings_per_group = 12 });
+        const zgpu_module = zgpu_dep.module("root");
+        deecy_module.addImport("zgpu", zgpu_module);
+
+        try zgpu.linkDawn(b, "zgpu", exe);
 
         const zaudio = b.dependency("zaudio", .{});
         deecy_module.addImport("zaudio", zaudio.module("root"));

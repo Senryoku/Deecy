@@ -6,37 +6,12 @@
     .paths = .{""},
     .dependencies = .{
         .zgpu = .{
-            .url = "git+https://github.com/Senryoku/zgpu.git#caf151597e53216266bf8b9c94b6212cb5e9a27d",
-            .hash = "zgpu-0.12.0-dev-nqFT5CqiCAAl8-7UE8tQgDi-Undx8ISTGM-vfpuEnPus",
-        },
-        .dawn_x86_64_windows_gnu = .{
-            .url = "https://github.com/michal-z/webgpu_dawn-x86_64-windows-gnu/archive/d3a68014e6b6b53fd330a0ccba99e4dcfffddae5.tar.gz",
-            .hash = "N-V-__8AAGsYnAT5RIzeAu881RveLghQ1EidqgVBVx10gVTo",
-            .lazy = true,
-        },
-        .dawn_x86_64_linux_gnu = .{
-            .url = "https://github.com/michal-z/webgpu_dawn-x86_64-linux-gnu/archive/7d70db023bf254546024629cbec5ee6113e12a42.tar.gz",
-            .hash = "N-V-__8AAK7XUQNKNRnv1J6i189jtURJKjp3HTftoyD4Y4CB",
-            .lazy = true,
-        },
-        .dawn_aarch64_linux_gnu = .{
-            .url = "https://github.com/michal-z/webgpu_dawn-aarch64-linux-gnu/archive/c1f55e740a62f6942ff046e709ecd509a005dbeb.tar.gz",
-            .hash = "N-V-__8AAJ-wTwNc0T9oSflO92iO6IxrdMeRil37UU-KQD_M",
-            .lazy = true,
-        },
-        .dawn_aarch64_macos = .{
-            .url = "https://github.com/michal-z/webgpu_dawn-aarch64-macos/archive/d2360cdfff0cf4a780cb77aa47c57aca03cc6dfe.tar.gz",
-            .hash = "N-V-__8AALVIRAIf5nfpx8-4mEo2RGsynVryPQPcHk95qFM5",
-            .lazy = true,
-        },
-        .dawn_x86_64_macos = .{
-            .url = "https://github.com/michal-z/webgpu_dawn-x86_64-macos/archive/901716b10b31ce3e0d3fe479326b41e91d59c661.tar.gz",
-            .hash = "N-V-__8AAIz1QAKx8C8vft2YoHjGTjEAkH2QMR2UiAo8xZJ-",
-            .lazy = true,
+            .url = "git+https://github.com/Senryoku/zgpu.git#addbb89d7c87f9c5a0d268caa408f5b6533cc092",
+            .hash = "zgpu-0.14.0-dev-nqFT5CjN0QV7bbe1ljbcaBMSFCCdel9KvSDvunvbN57m",
         },
         .zgui = .{
-            .url = "git+https://github.com/Senryoku/zgui.git#02eac6e7afc548fc5fcacc91ca90889a18a283ca",
-            .hash = "zgui-0.6.0-dev--L6sZE-AaQDjeZKy2ub9k0CpCe4uUzgnPneTPiiKwxyr",
+            .url = "git+https://github.com/Senryoku/zgui.git#b862dbeb879e1f2e2741e0fb4cc8fb0f7711d0db",
+            .hash = "zgui-0.6.0-dev--L6sZN5LbQCSTjTI_Xa17bhlvVpGg7Zfxe8nZ-rrN2Eu",
         },
         .zaudio = .{
             .url = "git+https://github.com/Senryoku/zaudio.git#bc37245a1a0b8a361f7c29c43d140744eb875b31",

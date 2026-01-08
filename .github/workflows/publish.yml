@@ -28,12 +28,24 @@ jobs:
           run: |
             mkdir Deecy
             cp zig-out/bin/Deecy.exe Deecy/
+            cp zig-out/bin/dxcompiler.dll Deecy/
+            cp zig-out/bin/dxil.dll Deecy/
             printf "Copy dc_boot.bin and dc_flash.bin in ./data.\nWebsite: https://github.com/Senryoku/Deecy" > Deecy/README.txt
             mkdir Deecy/data
             printf "Copy dc_boot.bin and dc_flash.bin here." > Deecy/data/README.txt
         - uses: actions/upload-artifact@v4
           with: 
             name: Deecy-x86_64-windows
+            path: Deecy/
+        - name: Compile Deecy for x86_64_v2
+          run: zig build --release=fast -Dcpu=x86_64_v2
+        - name: Prepare artifact for x86_64_v2
+          run: |
+            rm Deecy/Deecy.exe
+            cp zig-out/bin/Deecy.exe Deecy/
+        - uses: actions/upload-artifact@v4
+          with: 
+            name: Deecy-x86_64_v2-windows
             path: Deecy/
   build-linux:
     runs-on: ubuntu-latest
@@ -63,5 +75,15 @@ jobs:
         - uses: actions/upload-artifact@v4
           with: 
             name: Deecy-x86_64-linux
+            path: Deecy/
+        - name: Compile Deecy for x86_64_v2
+          run: zig build --release=fast -Dcpu=x86_64_v2
+        - name: Prepare artifact for x86_64_v2
+          run: |
+            rm Deecy/Deecy
+            cp zig-out/bin/Deecy Deecy/
+        - uses: actions/upload-artifact@v4
+          with: 
+            name: Deecy-x86_64_v2-linux
             path: Deecy/
 

@@ -197,7 +197,7 @@ pub fn draw_vmus(self: *@This(), editable: bool) void {
                 if (tex.display) {
                     if (tex.dirty)
                         self.upload_vmu_texture(@intCast(idx));
-                    zgui.image(self.deecy.gctx.lookupResource(tex.view).?, .{ .w = win_width, .h = win_width * 32.0 / 48.0 });
+                    zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr((self.deecy.gctx.lookupResource(tex.view).?))) }, .{ .w = win_width, .h = win_width * 32.0 / 48.0 });
                 }
                 if (editable) {
                     _ = zgui.checkbox("Display #" ++ std.fmt.comptimePrint("{d}", .{idx}), .{ .v = &tex.display });
@@ -714,27 +714,79 @@ pub fn draw(self: *@This()) !void {
                     d.config.renderer.internal_resolution_factor = @intFromEnum(resolution);
                     // NOTE: This might not be the best idea to do this here without explicit synchronization but... This has worked flawlessly so far.
                     d.renderer.resolution = .{ .width = Deecy.Renderer.NativeResolution.width * @intFromEnum(resolution), .height = Deecy.Renderer.NativeResolution.height * @intFromEnum(resolution) };
-                    d.renderer.on_inner_resolution_change(d.config.renderer.display_mode, d.config.renderer.scaling_filter);
+                    const fb_size = d.window.getFramebufferSize();
+                    d.renderer.on_inner_resolution_change(@intCast(fb_size[0]), @intCast(fb_size[1]), d.config.renderer.display_mode, d.config.renderer.scaling_filter);
                     // Force a re-render if we're paused
                     if (!d.running)
                         try d.renderer.render(&d.dc.gpu, false);
                 }
                 if (zgui.comboFromEnum("Display Mode", &d.config.renderer.display_mode)) {
-                    d.renderer.update_blit_to_screen_vertex_buffer(d.config.renderer.display_mode);
+                    const fb_size = d.window.getFramebufferSize();
+                    d.renderer.update_blit_to_screen_vertex_buffer(@intCast(fb_size[0]), @intCast(fb_size[1]), d.config.renderer.display_mode);
                 }
                 if (zgui.comboFromEnum("Scaling Filter", &d.config.renderer.scaling_filter)) {
                     d.renderer.set_scaling_filter(d.config.renderer.scaling_filter);
                 }
                 zgui.separator();
-                _ = zgui.comboFromEnum("Present Mode (Restart required)", &d.config.present_mode);
-                zgui.separator();
+
+                {
+                    const static = struct {
+                        var buffer: [128]u8 = @splat(0);
+                        var item_names: [:0]const u8 = "";
+                        var available_modes_buffer: [8]zgpu.wgpu.PresentMode = @splat(.undefined);
+                        var available_modes_count: u32 = 0;
+
+                        pub fn init(deecy: *Deecy) !void {
+                            const capabilities = try deecy.gctx.surface.getCapabilities(deecy.gctx.adapter);
+                            defer capabilities.deinit();
+                            available_modes_count = @intCast(capabilities.getPresentModes().len);
+                            var str_size: usize = 0;
+                            for (capabilities.getPresentModes(), 0..) |present_mode, idx| {
+                                available_modes_buffer[idx] = present_mode;
+                                const name = @tagName(Deecy.PresentMode.fromWGPU(present_mode));
+                                @memcpy(buffer[str_size..][0..name.len], name);
+                                str_size += name.len + 1;
+                            }
+                            item_names = buffer[0 .. str_size - 1 :0];
+                        }
+                    };
+                    if (Once(@src())) try static.init(d);
+
+                    const current_value = d.config.present_mode.toWGPU();
+                    var current_item: i32 = -1;
+                    for (static.available_modes_buffer[0..static.available_modes_count], 0..) |present_mode, idx| {
+                        if (present_mode == current_value) {
+                            current_item = @intCast(idx);
+                            break;
+                        }
+                    }
+                    if (zgui.combo("Present Mode", .{
+                        .items_separated_by_zeros = static.item_names,
+                        .current_item = &current_item,
+                    })) {
+                        if (current_item >= 0 and current_item < static.available_modes_count and static.available_modes_buffer[@intCast(current_item)] != .undefined) {
+                            d.gctx.present_mode = static.available_modes_buffer[@intCast(current_item)];
+                            d.config.present_mode = Deecy.PresentMode.fromWGPU(d.gctx.present_mode);
+                            const fb_size = d.window.getFramebufferSize();
+                            d.gctx.surface.configure(.{
+                                .device = d.gctx.device,
+                                .format = zgpu.GraphicsContext.surface_texture_format,
+                                .usage = .{ .render_attachment = true },
+                                .width = @intCast(fb_size[0]),
+                                .height = @intCast(fb_size[1]),
+                                .present_mode = d.gctx.present_mode,
+                            });
+                        }
+                    }
+                    zgui.separator();
+                }
+
                 zgui.text("Experimental settings", .{});
                 _ = zgui.checkbox("Framebuffer Emulation", .{ .v = &d.renderer.ExperimentalFramebufferEmulation });
                 _ = zgui.checkbox("Render to Texture", .{ .v = &d.renderer.ExperimentalRenderToTexture });
                 _ = zgui.checkbox("Render to Guest VRAM", .{ .v = &d.renderer.ExperimentalRenderToVRAM });
                 _ = zgui.checkbox("Clamp Sprites UVs", .{ .v = &d.renderer.ExperimentalClampSpritesUVs });
                 _ = zgui.checkbox("Render on Emulation Thread", .{ .v = &d.renderer.ExperimentalRenderOnEmulationThread });
-                // _ = zgui.checkbox("Frame Limiter", .{ .v = &d.config.frame_limiter });
                 _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
                 zgui.endTabItem();
             }
@@ -971,8 +1023,9 @@ pub fn draw(self: *@This()) !void {
 pub fn draw_game_library(self: *@This()) !void {
     const d = self.deecy;
     const target_width = 4 * 256 + 64;
-    zgui.setNextWindowPos(.{ .x = @floatFromInt((@max(target_width, d.gctx.swapchain_descriptor.width) - target_width) / 2), .y = 32, .cond = .always });
-    zgui.setNextWindowSize(.{ .w = target_width, .h = @floatFromInt(@max(48, d.gctx.swapchain_descriptor.height) - 64), .cond = .always });
+    const fb_size = d.window.getFramebufferSize();
+    zgui.setNextWindowPos(.{ .x = @floatFromInt((@max(target_width, fb_size[0]) - target_width) / 2), .y = 32, .cond = .always });
+    zgui.setNextWindowSize(.{ .w = target_width, .h = @floatFromInt(@max(48, fb_size[1]) - 64), .cond = .always });
 
     defer zgui.end();
     if (zgui.begin("Library", .{ .flags = .{ .no_resize = true, .no_move = true, .no_title_bar = true, .no_docking = true, .no_bring_to_front_on_focus = true } })) {
@@ -1058,7 +1111,7 @@ pub fn draw_game_library(self: *@This()) !void {
                         zgui.pushStrId("image");
                         defer zgui.popId();
                         if (entry.view) |view| {
-                            launch = zgui.imageButton(entry.name, self.deecy.gctx.lookupResource(view).?, .{ .w = 256, .h = 256 }) or launch;
+                            launch = zgui.imageButton(entry.name, .{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(((self.deecy.gctx.lookupResource(view).?)))) }, .{ .w = 256, .h = 256 }) or launch;
                         } else {
                             launch = zgui.button(entry.name, .{ .w = 256, .h = 256 }) or launch;
                         }
