@@ -490,6 +490,7 @@ pub const SH4 = struct {
         var mxcsr: u32 = 0x1F80; // Default MXCSR value
         if (self.fpscr.dn) {
             mxcsr |= 0x0040; // DAZ - Denormals are zeros
+            mxcsr |= 0x8000; // FTZ - Flush to zero
         }
         switch (self.fpscr.rm) {
             .RoundToNearest => mxcsr |= 0x0000, // Yes, there's no bit associated with this mode, it's the default.

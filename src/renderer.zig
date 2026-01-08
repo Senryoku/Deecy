@@ -2692,6 +2692,8 @@ pub const Renderer = struct {
                             for (strip_first_vertex_index..self.vertices.items.len - 2) |i| {
                                 self.vertices.items[i].base_color = self.vertices.items[i + 2].base_color;
                                 self.vertices.items[i].offset_color = self.vertices.items[i + 2].offset_color;
+                                self.vertices.items[i].area1_base_color = self.vertices.items[i + 2].area1_base_color;
+                                self.vertices.items[i].area1_offset_color = self.vertices.items[i + 2].area1_offset_color;
                                 // TODO: Bump map parameters?
                             }
                         }

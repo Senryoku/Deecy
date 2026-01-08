@@ -118,7 +118,12 @@ fn insert_interval(a: Volumes, interval: vec2<f32>) -> Volumes {
         union_volumes.count++;
     }
     let appended_intervals = union_volumes.count;
-    append_interval(&union_volumes, interval);
+    if appended_intervals == 0u {
+        union_volumes.intervals[0] = interval;
+        union_volumes.count = 1u;
+    } else {
+        append_interval(&union_volumes, interval);
+    }
     for(var i = appended_intervals; i < a.count; i++) {
         append_interval(&union_volumes, a.intervals[i]);
     }
