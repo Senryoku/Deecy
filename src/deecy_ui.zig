@@ -760,12 +760,23 @@ pub fn draw(self: *@This()) !void {
                             break;
                         }
                     }
-                    if (zgui.combo("Present Mode (Restart required)", .{
+                    if (zgui.combo("Present Mode", .{
                         .items_separated_by_zeros = static.item_names,
                         .current_item = &current_item,
                     })) {
-                        if (current_item >= 0 and current_item < static.available_modes_count and static.available_modes_buffer[@intCast(current_item)] != .undefined)
-                            d.config.present_mode = Deecy.PresentMode.fromWGPU(static.available_modes_buffer[@intCast(current_item)]);
+                        if (current_item >= 0 and current_item < static.available_modes_count and static.available_modes_buffer[@intCast(current_item)] != .undefined) {
+                            d.gctx.present_mode = static.available_modes_buffer[@intCast(current_item)];
+                            d.config.present_mode = Deecy.PresentMode.fromWGPU(d.gctx.present_mode);
+                            const fb_size = d.window.getFramebufferSize();
+                            d.gctx.surface.configure(.{
+                                .device = d.gctx.device,
+                                .format = zgpu.GraphicsContext.surface_texture_format,
+                                .usage = .{ .render_attachment = true },
+                                .width = @intCast(fb_size[0]),
+                                .height = @intCast(fb_size[1]),
+                                .present_mode = d.gctx.present_mode,
+                            });
+                        }
                     }
                     zgui.separator();
                 }
