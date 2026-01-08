@@ -728,15 +728,54 @@ pub fn draw(self: *@This()) !void {
                     d.renderer.set_scaling_filter(d.config.renderer.scaling_filter);
                 }
                 zgui.separator();
-                _ = zgui.comboFromEnum("Present Mode (Restart required)", &d.config.present_mode);
-                zgui.separator();
+
+                {
+                    const static = struct {
+                        var buffer: [128]u8 = @splat(0);
+                        var item_names: [:0]const u8 = "";
+                        var available_modes_buffer: [8]zgpu.wgpu.PresentMode = @splat(.undefined);
+                        var available_modes_count: u32 = 0;
+
+                        pub fn init(deecy: *Deecy) !void {
+                            const capabilities = try deecy.gctx.surface.getCapabilities(deecy.gctx.adapter);
+                            defer capabilities.deinit();
+                            available_modes_count = @intCast(capabilities.getPresentModes().len);
+                            var str_size: usize = 0;
+                            for (capabilities.getPresentModes(), 0..) |present_mode, idx| {
+                                available_modes_buffer[idx] = present_mode;
+                                const name = @tagName(Deecy.PresentMode.fromWGPU(present_mode));
+                                @memcpy(buffer[str_size..][0..name.len], name);
+                                str_size += name.len + 1;
+                            }
+                            item_names = buffer[0 .. str_size - 1 :0];
+                        }
+                    };
+                    if (Once(@src())) try static.init(d);
+
+                    const current_value = d.config.present_mode.toWGPU();
+                    var current_item: i32 = -1;
+                    for (static.available_modes_buffer[0..static.available_modes_count], 0..) |present_mode, idx| {
+                        if (present_mode == current_value) {
+                            current_item = @intCast(idx);
+                            break;
+                        }
+                    }
+                    if (zgui.combo("Present Mode (Restart required)", .{
+                        .items_separated_by_zeros = static.item_names,
+                        .current_item = &current_item,
+                    })) {
+                        if (current_item >= 0 and current_item < static.available_modes_count and static.available_modes_buffer[@intCast(current_item)] != .undefined)
+                            d.config.present_mode = Deecy.PresentMode.fromWGPU(static.available_modes_buffer[@intCast(current_item)]);
+                    }
+                    zgui.separator();
+                }
+
                 zgui.text("Experimental settings", .{});
                 _ = zgui.checkbox("Framebuffer Emulation", .{ .v = &d.renderer.ExperimentalFramebufferEmulation });
                 _ = zgui.checkbox("Render to Texture", .{ .v = &d.renderer.ExperimentalRenderToTexture });
                 _ = zgui.checkbox("Render to Guest VRAM", .{ .v = &d.renderer.ExperimentalRenderToVRAM });
                 _ = zgui.checkbox("Clamp Sprites UVs", .{ .v = &d.renderer.ExperimentalClampSpritesUVs });
                 _ = zgui.checkbox("Render on Emulation Thread", .{ .v = &d.renderer.ExperimentalRenderOnEmulationThread });
-                // _ = zgui.checkbox("Frame Limiter", .{ .v = &d.config.frame_limiter });
                 _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
                 zgui.endTabItem();
             }

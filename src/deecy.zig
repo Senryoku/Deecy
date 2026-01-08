@@ -216,6 +216,21 @@ const ControllerSettings = struct {
     subperipherals: [2]union(enum) { None, VMU: struct { filename: []const u8 }, VibrationPack } = .{ .None, .None },
 };
 
+pub const PresentMode = enum(u32) {
+    Fifo = @intFromEnum(zgpu.wgpu.PresentMode.fifo),
+    FifoRelaxed = @intFromEnum(zgpu.wgpu.PresentMode.fifo_relaxed),
+    Immediate = @intFromEnum(zgpu.wgpu.PresentMode.immediate),
+    Mailbox = @intFromEnum(zgpu.wgpu.PresentMode.mailbox),
+
+    pub fn toWGPU(self: PresentMode) zgpu.wgpu.PresentMode {
+        return @enumFromInt(@intFromEnum(self));
+    }
+
+    pub fn fromWGPU(self: zgpu.wgpu.PresentMode) PresentMode {
+        return @enumFromInt(@intFromEnum(self));
+    }
+};
+
 const Configuration = struct {
     per_game_vmu: bool = true,
     performance_overlay: enum { Off, Simple, Detailed } = .Simple,
@@ -224,7 +239,7 @@ const Configuration = struct {
     display_debug_ui: bool = false,
 
     window_size: struct { width: u32 = 2 * @ceil((16.0 / 9.0 * @as(f32, @floatFromInt(Renderer.NativeResolution.height)))), height: u32 = 2 * Renderer.NativeResolution.height } = .{},
-    present_mode: zgpu.wgpu.PresentMode = .fifo,
+    present_mode: PresentMode = .Fifo,
     fullscreen: bool = false,
     frame_limiter: enum { Off, Auto, @"120Hz", @"100Hz", @"60Hz", @"50Hz" } = .Off,
 
@@ -429,7 +444,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
                 .fn_getWaylandSurface = @ptrCast(&zglfw.getWaylandWindow),
                 .fn_getCocoaWindow = @ptrCast(&zglfw.getCocoaWindow),
             }, .{
-                .present_mode = config.present_mode,
+                .present_mode = config.present_mode.toWGPU(),
                 .required_features = &[_]zgpu.wgpu.FeatureName{ .bgra8_unorm_storage, .depth32_float_stencil8 },
                 // Increasing max_texture_array_layers is required: The renderer uses a single texture array for each size.
                 // 2048 is a big jump from the WebGPU default of 256, but it seems to be widely supported, especially on desktop.
