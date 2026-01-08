@@ -731,52 +731,37 @@ pub fn draw(self: *@This()) !void {
 
                 {
                     const static = struct {
-                        var buffer: [128]u8 = @splat(0);
-                        var item_names: [:0]const u8 = "";
-                        var available_modes_buffer: [8]zgpu.wgpu.PresentMode = @splat(.undefined);
+                        var available_modes_buffer: [@typeInfo(zgpu.wgpu.PresentMode).@"enum".fields.len]zgpu.wgpu.PresentMode = @splat(.undefined);
                         var available_modes_count: u32 = 0;
-
+                        var present_modes: []const zgpu.wgpu.PresentMode = &.{};
                         pub fn init(deecy: *Deecy) !void {
                             const capabilities = try deecy.gctx.surface.getCapabilities(deecy.gctx.adapter);
                             defer capabilities.deinit();
                             available_modes_count = @intCast(capabilities.getPresentModes().len);
-                            var str_size: usize = 0;
-                            for (capabilities.getPresentModes(), 0..) |present_mode, idx| {
+                            for (capabilities.getPresentModes(), 0..) |present_mode, idx|
                                 available_modes_buffer[idx] = present_mode;
-                                const name = @tagName(Deecy.PresentMode.fromWGPU(present_mode));
-                                @memcpy(buffer[str_size..][0..name.len], name);
-                                str_size += name.len + 1;
-                            }
-                            item_names = buffer[0 .. str_size - 1 :0];
+                            present_modes = available_modes_buffer[0..available_modes_count];
                         }
                     };
                     if (Once(@src())) try static.init(d);
 
-                    const current_value = d.config.present_mode.toWGPU();
-                    var current_item: i32 = -1;
-                    for (static.available_modes_buffer[0..static.available_modes_count], 0..) |present_mode, idx| {
-                        if (present_mode == current_value) {
-                            current_item = @intCast(idx);
-                            break;
+                    if (zgui.beginCombo("Present Mode", .{ .preview_value = @tagName(Deecy.PresentMode.fromWGPU(d.gctx.present_mode)) })) {
+                        for (static.present_modes) |present_mode| {
+                            if (zgui.selectable(@tagName(Deecy.PresentMode.fromWGPU(present_mode)), .{ .selected = d.gctx.present_mode == present_mode })) {
+                                d.gctx.present_mode = present_mode;
+                                d.config.present_mode = Deecy.PresentMode.fromWGPU(d.gctx.present_mode);
+                                const fb_size = d.window.getFramebufferSize();
+                                d.gctx.surface.configure(.{
+                                    .device = d.gctx.device,
+                                    .format = zgpu.GraphicsContext.surface_texture_format,
+                                    .usage = .{ .render_attachment = true },
+                                    .width = @intCast(fb_size[0]),
+                                    .height = @intCast(fb_size[1]),
+                                    .present_mode = d.gctx.present_mode,
+                                });
+                            }
                         }
-                    }
-                    if (zgui.combo("Present Mode", .{
-                        .items_separated_by_zeros = static.item_names,
-                        .current_item = &current_item,
-                    })) {
-                        if (current_item >= 0 and current_item < static.available_modes_count and static.available_modes_buffer[@intCast(current_item)] != .undefined) {
-                            d.gctx.present_mode = static.available_modes_buffer[@intCast(current_item)];
-                            d.config.present_mode = Deecy.PresentMode.fromWGPU(d.gctx.present_mode);
-                            const fb_size = d.window.getFramebufferSize();
-                            d.gctx.surface.configure(.{
-                                .device = d.gctx.device,
-                                .format = zgpu.GraphicsContext.surface_texture_format,
-                                .usage = .{ .render_attachment = true },
-                                .width = @intCast(fb_size[0]),
-                                .height = @intCast(fb_size[1]),
-                                .present_mode = d.gctx.present_mode,
-                            });
-                        }
+                        zgui.endCombo();
                     }
                     zgui.separator();
                 }
