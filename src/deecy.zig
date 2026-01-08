@@ -1045,20 +1045,20 @@ fn userdata_game_directory(self: *@This()) !?[]const u8 {
     return path;
 }
 
-// Caller owns the returned ArrayList
-fn save_state_path(self: *@This(), index: usize) !std.ArrayList(u8) {
+/// Caller owns the returned string
+fn save_state_path(self: *@This(), index: usize) ![]const u8 {
     const game_dir = try self.userdata_game_directory() orelse try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), "NoDisc" });
     defer self._allocator.free(game_dir);
-    var save_slot_path: std.ArrayList(u8) = .empty;
-    try save_slot_path.writer(self._allocator).print("{s}/save_{d}.sav", .{ game_dir, index });
-    return save_slot_path;
+    var buf: [32]u8 = undefined;
+    const file_name = try std.fmt.bufPrint(&buf, "save_{d}.sav", .{index});
+    return try std.fs.path.join(self._allocator, &[_][]const u8{ game_dir, file_name });
 }
 
 fn check_save_state_slots(self: *@This()) !void {
     for (0..self.save_state_slots.len) |i| {
-        var save_slot_path = try self.save_state_path(i);
-        defer save_slot_path.deinit(self._allocator);
-        self.save_state_slots[i] = try file_exists(save_slot_path.items);
+        const save_slot_path = try self.save_state_path(i);
+        defer self._allocator.free(save_slot_path);
+        self.save_state_slots[i] = try file_exists(save_slot_path);
     }
 }
 
@@ -1466,9 +1466,13 @@ fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array
     const compressed = try lz4.Standard.compress(self._allocator, uncompressed_array);
     defer self._allocator.free(compressed);
 
-    var save_slot_path = try self.save_state_path(index);
-    defer save_slot_path.deinit(self._allocator);
-    var file = try std.fs.cwd().createFile(save_slot_path.items, .{});
+    const save_slot_path = try self.save_state_path(index);
+    defer self._allocator.free(save_slot_path);
+
+    if (std.fs.path.dirname(save_slot_path)) |dirname|
+        try std.fs.cwd().makePath(dirname);
+
+    var file = try std.fs.cwd().createFile(save_slot_path, .{});
     defer file.close();
     _ = try file.write(std.mem.asBytes(&SaveStateHeader{
         .uncompressed_size = @intCast(uncompressed_array.len),
@@ -1478,7 +1482,7 @@ fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array
 
     self.save_state_slots[index] = true;
 
-    deecy_log.info("  Saved State #{d} to '{s}' in {d}ms", .{ index, save_slot_path.items, std.time.milliTimestamp() - start_time });
+    deecy_log.info("  Saved State #{d} to '{s}' in {d}ms", .{ index, save_slot_path, std.time.milliTimestamp() - start_time });
 
     self.ui.notifications.push("State Saved", .{}, "State #{d} saved successfully.", .{index});
 }
@@ -1490,14 +1494,14 @@ pub fn load_state(self: *@This(), index: usize) !void {
         if (was_running) self.start();
     }
 
-    var save_slot_path = try self.save_state_path(index);
-    defer save_slot_path.deinit(self._allocator);
+    const save_slot_path = try self.save_state_path(index);
+    defer self._allocator.free(save_slot_path);
 
-    deecy_log.info("Loading State #{d} from '{s}'...", .{ index, save_slot_path.items });
+    deecy_log.info("Loading State #{d} from '{s}'...", .{ index, save_slot_path });
 
     const start_time = std.time.milliTimestamp();
 
-    var file = try std.fs.cwd().openFile(save_slot_path.items, .{});
+    var file = try std.fs.cwd().openFile(save_slot_path, .{});
     defer file.close();
 
     var header: SaveStateHeader = undefined;
@@ -1520,7 +1524,7 @@ pub fn load_state(self: *@This(), index: usize) !void {
     try self.dc.deserialize(&reader);
     try reader.readSliceAll(std.mem.asBytes(&self._cycles_to_run));
 
-    deecy_log.info("Loaded State #{d} from '{s}' in {d}ms", .{ index, save_slot_path.items, std.time.milliTimestamp() - start_time });
+    deecy_log.info("Loaded State #{d} from '{s}' in {d}ms", .{ index, save_slot_path, std.time.milliTimestamp() - start_time });
 
     self.ui.notifications.push("State Loaded", .{}, "Save State #{d} loaded successfully.", .{index});
 }
