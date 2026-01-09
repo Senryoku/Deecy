@@ -60,6 +60,37 @@ fn wait_for_key(d: *Deecy) zglfw.Key {
     _ = d.window.setKeyCallback(prev_callback);
     return value.?;
 }
+fn wait_for_controller_button(d: *Deecy, gamepad_id: zglfw.Gamepad) ?zglfw.Gamepad.Button {
+    while (true) {
+        zglfw.pollEvents();
+        if (zglfw.getKey(d.window, .escape) == .press) return null;
+
+        const gamepad_state = gamepad_id.getState() catch return null;
+        for (gamepad_state.buttons, 0..) |button, i| {
+            if (button == .press)
+                return @enumFromInt(i);
+        }
+        std.Thread.sleep(1_000_000);
+    }
+    return null;
+}
+fn wait_for_controller_axis(d: *Deecy, gamepad_id: zglfw.Gamepad) ?zglfw.Gamepad.Axis {
+    const initial_state = gamepad_id.getState() catch return null;
+    const Threshold = 0.1;
+    while (true) {
+        zglfw.pollEvents();
+        if (zglfw.getKey(d.window, .escape) == .press) return null;
+
+        const gamepad_state = gamepad_id.getState() catch return null;
+        for (gamepad_state.axes, 0..) |value, i| {
+            if (@abs(initial_state.axes[i] - value) > Threshold) {
+                return @enumFromInt(i);
+            }
+        }
+        std.Thread.sleep(1_000_000);
+    }
+    return null;
+}
 
 last_error: []const u8 = "",
 
@@ -824,13 +855,12 @@ pub fn draw(self: *@This()) !void {
                         try d.enable_controller(i, connected);
                     }
                     if (d.dc.maple.ports[i].main) |*peripheral| {
-                        const name = if (d.controllers[i]) |j|
-                            (if (j.id.isPresent())
-                                (if (j.id.asGamepad()) |gamepad| gamepad.getName() else "None")
-                            else
-                                "None")
-                        else
-                            "None";
+                        var gamepad_id: ?zglfw.Gamepad = null;
+                        if (d.controllers[i]) |j| {
+                            if (j.id.isPresent())
+                                gamepad_id = j.id.asGamepad();
+                        }
+                        const name = if (gamepad_id) |gamepad| gamepad.getName() else "None";
                         if (zgui.beginCombo("Device##" ++ number, .{ .preview_value = name })) {
                             for (available_controllers.items, 0..) |item, index| {
                                 if (available_controllers.items[index].id) |id| {
@@ -885,6 +915,32 @@ pub fn draw(self: *@This()) !void {
                                     }
                                 }
 
+                                if (gamepad_id) |gamepad| {
+                                    if (zgui.collapsingHeader("Controller Bindings", .{})) {
+                                        zgui.indent(.{});
+                                        defer zgui.unindent(.{});
+                                        inline for (std.meta.fields(Deecy.ControllerBindings)) |field| {
+                                            if (zgui.button("Edit##" ++ field.name, .{})) {
+                                                const maybe_button = switch (field.type) {
+                                                    ?zglfw.Gamepad.Button => wait_for_controller_button(d, gamepad),
+                                                    ?zglfw.Gamepad.Axis => wait_for_controller_axis(d, gamepad),
+                                                    else => @compileError("Unexpected field type"),
+                                                };
+                                                if (maybe_button) |button|
+                                                    @field(d.config.controllers_bindings[i], field.name) = button;
+                                            }
+                                            zgui.sameLine(.{});
+                                            if (zgui.button("Remove##" ++ field.name, .{}))
+                                                @field(d.config.controllers_bindings[i], field.name) = null;
+                                            zgui.sameLine(.{});
+                                            if (@field(d.config.controllers_bindings[i], field.name)) |key| {
+                                                zgui.text("{s}: {t}", .{ field.name, key });
+                                            } else {
+                                                zgui.text("{s}: None", .{field.name});
+                                            }
+                                        }
+                                    }
+                                }
                                 if (zgui.collapsingHeader("Keyboard Bindings", .{})) {
                                     zgui.indent(.{});
                                     defer zgui.unindent(.{});

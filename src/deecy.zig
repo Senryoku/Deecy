@@ -181,7 +181,7 @@ pub const KeyboardBindings = struct {
     right_stick_left: ?zglfw.Key = null,
     right_stick_right: ?zglfw.Key = null,
 
-    const Default: KeyboardBindings = .{
+    const Default: @This() = .{
         .a = .q,
         .b = .w,
         .x = .a,
@@ -198,6 +198,35 @@ pub const KeyboardBindings = struct {
         .left_stick_left = .kp_4,
         .left_stick_right = .kp_6,
     };
+};
+
+pub const ControllerBindings = struct {
+    a: ?zglfw.Gamepad.Button = .a,
+    b: ?zglfw.Gamepad.Button = .b,
+    x: ?zglfw.Gamepad.Button = .x,
+    y: ?zglfw.Gamepad.Button = .y,
+    up: ?zglfw.Gamepad.Button = .dpad_up,
+    down: ?zglfw.Gamepad.Button = .dpad_down,
+    left: ?zglfw.Gamepad.Button = .dpad_left,
+    right: ?zglfw.Gamepad.Button = .dpad_right,
+    start: ?zglfw.Gamepad.Button = .start,
+    left_trigger: ?zglfw.Gamepad.Axis = .left_trigger,
+    right_trigger: ?zglfw.Gamepad.Axis = .right_trigger,
+    left_stick_up_down: ?zglfw.Gamepad.Axis = .left_y,
+    left_stick_left_right: ?zglfw.Gamepad.Axis = .left_x,
+    right_stick_up_down: ?zglfw.Gamepad.Axis = .right_y,
+    right_stick_left_right: ?zglfw.Gamepad.Axis = .right_x,
+    // Digital version of all axes
+    left_trigger_button: ?zglfw.Gamepad.Button = null,
+    right_trigger_button: ?zglfw.Gamepad.Button = null,
+    left_stick_up_button: ?zglfw.Gamepad.Button = null,
+    left_stick_down_button: ?zglfw.Gamepad.Button = null,
+    left_stick_left_button: ?zglfw.Gamepad.Button = null,
+    left_stick_right_button: ?zglfw.Gamepad.Button = null,
+    right_stick_up_button: ?zglfw.Gamepad.Button = null,
+    right_stick_down_button: ?zglfw.Gamepad.Button = null,
+    right_stick_left_button: ?zglfw.Gamepad.Button = null,
+    right_stick_right_button: ?zglfw.Gamepad.Button = null,
 };
 
 pub const DefaultVMUPaths = default_vmu_paths: {
@@ -246,6 +275,7 @@ const Configuration = struct {
     renderer: Renderer.Configuration = .{},
 
     keyboard_bindings: [4]KeyboardBindings = .{ .Default, .{}, .{}, .{} },
+    controllers_bindings: [4]ControllerBindings = .{ .{}, .{}, .{}, .{} },
     controllers: [4]ControllerSettings = .{ .{ .enabled = true, .subperipherals = .{ .{ .VMU = .{ .filename = DefaultVMUPaths[0][0] } }, .None } }, .{ .enabled = true }, .{ .enabled = false }, .{ .enabled = false } },
     region: enum(u8) {
         /// USA by default and auto detect when using a disc.
@@ -913,42 +943,69 @@ pub fn poll_controllers(self: *@This()) void {
                             if (host_controller.id.isPresent()) {
                                 if (host_controller.id.asGamepad()) |gamepad| {
                                     const gamepad_state = gamepad.getState() catch continue;
-                                    const gamepad_binds: [9]struct { zglfw.Gamepad.Button, DreamcastModule.Maple.Controller.Buttons } = .{
-                                        .{ .start, .{ .start = 0 } },
-                                        .{ .dpad_up, .{ .up = 0 } },
-                                        .{ .dpad_down, .{ .down = 0 } },
-                                        .{ .dpad_left, .{ .left = 0 } },
-                                        .{ .dpad_right, .{ .right = 0 } },
-                                        .{ .a, .{ .a = 0 } },
-                                        .{ .b, .{ .b = 0 } },
-                                        .{ .x, .{ .x = 0 } },
-                                        .{ .y, .{ .y = 0 } },
+                                    const config = self.config.controllers_bindings[controller_idx];
+                                    const gamepad_binds: [9]struct { ?zglfw.Gamepad.Button, DreamcastModule.Maple.Controller.Buttons } = .{
+                                        .{ config.start, .{ .start = 0 } },
+                                        .{ config.up, .{ .up = 0 } },
+                                        .{ config.down, .{ .down = 0 } },
+                                        .{ config.left, .{ .left = 0 } },
+                                        .{ config.right, .{ .right = 0 } },
+                                        .{ config.a, .{ .a = 0 } },
+                                        .{ config.b, .{ .b = 0 } },
+                                        .{ config.x, .{ .x = 0 } },
+                                        .{ config.y, .{ .y = 0 } },
                                     };
                                     for (gamepad_binds) |keybind| {
-                                        const key_status = gamepad_state.buttons[@intFromEnum(keybind[0])];
-                                        if (key_status == .press) {
-                                            c.press_buttons(keybind[1]);
-                                        } else if (key_status == .release) {
-                                            c.release_buttons(keybind[1]);
+                                        if (keybind[0]) |button| {
+                                            const key_status = gamepad_state.buttons[@intFromEnum(button)];
+                                            switch (key_status) {
+                                                .press => c.press_buttons(keybind[1]),
+                                                .release => c.release_buttons(keybind[1]),
+                                            }
                                         }
                                     }
-                                    c.axis[0] = @as(u8, @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.right_trigger)], 0.0, 1.0) * 255));
-                                    c.axis[1] = @as(u8, @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_trigger)], 0.0, 1.0) * 255));
+                                    if (config.right_trigger) |axis|
+                                        c.axis[0] = @as(u8, @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255));
+                                    if (config.left_trigger) |axis|
+                                        c.axis[1] = @as(u8, @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255));
 
                                     const capabilities: DreamcastModule.Maple.Controller.InputCapabilities = @bitCast(c.subcapabilities[0]);
-                                    inline for ([_]struct { host: zglfw.Gamepad.Axis, guest: u8 }{
-                                        .{ .host = .left_x, .guest = 2 },
-                                        .{ .host = .left_y, .guest = 3 },
-                                        .{ .host = .right_x, .guest = 4 },
-                                        .{ .host = .right_y, .guest = 5 },
+                                    inline for ([_]struct { host: ?zglfw.Gamepad.Axis, guest: u8 }{
+                                        .{ .host = config.left_stick_left_right, .guest = 2 },
+                                        .{ .host = config.left_stick_up_down, .guest = 3 },
+                                        .{ .host = config.right_stick_left_right, .guest = 4 },
+                                        .{ .host = config.right_stick_up_down, .guest = 5 },
                                     }, 0..) |binding, idx| {
                                         if (@field(capabilities, ([_][]const u8{ "analogHorizontal", "analogVertical", "analogHorizontal2", "analogVertical2" })[idx]) != 0) {
-                                            var value = gamepad_state.axes[@intFromEnum(binding.host)];
-                                            if (@abs(value) < host_controller.deadzone)
-                                                value = 0.0;
-                                            // TODO: Remap with deadzone?
-                                            value = value * 0.5 + 0.5;
-                                            c.axis[binding.guest] = @as(u8, @intFromFloat(std.math.ceil(value * 255)));
+                                            if (binding.host) |host_axis| {
+                                                var value = gamepad_state.axes[@intFromEnum(host_axis)];
+                                                if (@abs(value) < host_controller.deadzone)
+                                                    value = 0.0;
+                                                // TODO: Remap with deadzone?
+                                                value = value * 0.5 + 0.5;
+                                                c.axis[binding.guest] = @as(u8, @intFromFloat(std.math.ceil(value * 255)));
+                                            }
+                                        }
+                                    }
+                                    // Digital alternatives for all axes
+                                    for ([_]struct { host: ?zglfw.Gamepad.Button, guest_axis: u8, value: u8 }{
+                                        .{ .host = config.right_trigger_button, .guest_axis = 0, .value = 255 },
+                                        .{ .host = config.left_trigger_button, .guest_axis = 1, .value = 255 },
+                                        .{ .host = config.left_stick_up_button, .guest_axis = 3, .value = 0 },
+                                        .{ .host = config.left_stick_down_button, .guest_axis = 3, .value = 255 },
+                                        .{ .host = config.left_stick_left_button, .guest_axis = 2, .value = 0 },
+                                        .{ .host = config.left_stick_right_button, .guest_axis = 2, .value = 255 },
+                                        .{ .host = config.right_stick_up_button, .guest_axis = 5, .value = 0 },
+                                        .{ .host = config.right_stick_down_button, .guest_axis = 5, .value = 255 },
+                                        .{ .host = config.right_stick_left_button, .guest_axis = 4, .value = 0 },
+                                        .{ .host = config.right_stick_right_button, .guest_axis = 4, .value = 255 },
+                                    }) |entry| {
+                                        if (entry.host) |button| {
+                                            const key_status = gamepad_state.buttons[@intFromEnum(button)];
+                                            switch (key_status) {
+                                                .press => c.axis[entry.guest_axis] = entry.value,
+                                                else => {},
+                                            }
                                         }
                                     }
                                 }
