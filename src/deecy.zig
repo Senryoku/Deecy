@@ -407,7 +407,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
                 deecy_log.err("Failed to parse config file: {t}.\n{f}", .{ err, diagnostics });
                 break :config .{};
             };
-            break :config helpers.toComplete(Configuration, zon);
+            break :config helpers.to_complete(Configuration, zon);
         } else |_| {
             break :config .{};
         }

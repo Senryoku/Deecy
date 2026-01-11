@@ -1,7 +1,7 @@
 .{
     .name = .Deecy,
     .fingerprint = 0x4ebcf6922b758411,
-    .version = "0.5.2",
+    .version = "0.6.0",
     .minimum_zig_version = "0.15.2",
     .paths = .{""},
     .dependencies = .{
@@ -10,8 +10,8 @@
             .hash = "zgpu-0.14.0-dev-nqFT5CjN0QV7bbe1ljbcaBMSFCCdel9KvSDvunvbN57m",
         },
         .zgui = .{
-            .url = "git+https://github.com/Senryoku/zgui.git#b862dbeb879e1f2e2741e0fb4cc8fb0f7711d0db",
-            .hash = "zgui-0.6.0-dev--L6sZN5LbQCSTjTI_Xa17bhlvVpGg7Zfxe8nZ-rrN2Eu",
+            .url = "git+https://github.com/Senryoku/zgui.git#e597b82d20b38df2e7e7a719882a111858dbd5b5",
+            .hash = "zgui-0.6.0-dev--L6sZORLbQCA3n0CK8Fbs336_cofFmcNjR5Lgf4OikWf",
         },
         .zaudio = .{
             .url = "git+https://github.com/Senryoku/zaudio.git#bc37245a1a0b8a361f7c29c43d140744eb875b31",

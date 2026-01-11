@@ -48,7 +48,7 @@ pub fn Partial(comptime T: type) type {
 }
 
 /// Converts a Partial(T) to a T, using T fields default values.
-pub fn toComplete(comptime T: type, partial: Partial(T)) T {
+pub fn to_complete(comptime T: type, partial: Partial(T)) T {
     var result: T = undefined;
     inline for (comptime std.meta.fields(T)) |field| {
         @field(result, field.name) = @field(partial, field.name) orelse @as(*const field.type, @ptrCast(@alignCast(field.default_value_ptr))).*;
@@ -61,4 +61,25 @@ pub fn use_wayland(allocator: std.mem.Allocator) bool {
     var env_var = std.process.getEnvMap(allocator) catch return false;
     defer env_var.deinit();
     return std.mem.eql(u8, env_var.get("XDG_SESSION_TYPE") orelse "", "wayland");
+}
+
+pub fn title_case(comptime input: []const u8) []const u8 {
+    comptime var result: []const u8 = "";
+    comptime var capitalize_next = true;
+    inline for (input) |char| {
+        if (char == '_') {
+            result = result ++ " ";
+            capitalize_next = true;
+        } else if (capitalize_next) {
+            if (char >= 'a' and char <= 'z') {
+                result = result ++ [_]u8{char - ('a' - 'A')};
+            } else {
+                result = result ++ [_]u8{char};
+            }
+            capitalize_next = false;
+        } else {
+            result = result ++ [_]u8{char};
+        }
+    }
+    return result;
 }

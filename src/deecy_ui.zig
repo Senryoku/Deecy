@@ -46,52 +46,6 @@ const GameFile = struct {
     }
 };
 
-// Stupid way of waiting for any key press
-var key_pressed: ?zglfw.Key = null;
-fn wait_for_key_callback(_: *zglfw.Window, key: zglfw.Key, _: i32, action: zglfw.Action, _: zglfw.Mods) callconv(.c) void {
-    if (action == .press)
-        key_pressed = key;
-}
-fn wait_for_key(d: *Deecy) zglfw.Key {
-    const prev_callback = d.window.setKeyCallback(wait_for_key_callback);
-    while (key_pressed == null) zglfw.waitEvents();
-    const value = key_pressed;
-    key_pressed = null;
-    _ = d.window.setKeyCallback(prev_callback);
-    return value.?;
-}
-fn wait_for_controller_button(d: *Deecy, gamepad_id: zglfw.Gamepad) ?zglfw.Gamepad.Button {
-    while (true) {
-        zglfw.pollEvents();
-        if (zglfw.getKey(d.window, .escape) == .press) return null;
-
-        const gamepad_state = gamepad_id.getState() catch return null;
-        for (gamepad_state.buttons, 0..) |button, i| {
-            if (button == .press)
-                return @enumFromInt(i);
-        }
-        std.Thread.sleep(1_000_000);
-    }
-    return null;
-}
-fn wait_for_controller_axis(d: *Deecy, gamepad_id: zglfw.Gamepad) ?zglfw.Gamepad.Axis {
-    const initial_state = gamepad_id.getState() catch return null;
-    const Threshold = 0.1;
-    while (true) {
-        zglfw.pollEvents();
-        if (zglfw.getKey(d.window, .escape) == .press) return null;
-
-        const gamepad_state = gamepad_id.getState() catch return null;
-        for (gamepad_state.axes, 0..) |value, i| {
-            if (@abs(initial_state.axes[i] - value) > Threshold) {
-                return @enumFromInt(i);
-            }
-        }
-        std.Thread.sleep(1_000_000);
-    }
-    return null;
-}
-
 last_error: []const u8 = "",
 
 vmu_displays: [4]struct {
@@ -731,7 +685,6 @@ pub fn draw(self: *@This()) !void {
 
     zgui.setNextWindowSize(.{ .w = 290, .h = 800, .cond = .first_use_ever });
     zgui.setNextWindowPos(.{ .x = 1408, .y = 32, .cond = .first_use_ever });
-
     if (zgui.begin("Settings", .{})) {
         if (zgui.beginTabBar("SettingsTabBar", .{})) {
             if (zgui.beginTabItem("Renderer", .{})) {
@@ -813,16 +766,16 @@ pub fn draw(self: *@This()) !void {
                     try d.set_per_game_vmu(per_game_vmu);
                 }
 
-                var available_controllers: std.ArrayList(struct { id: ?zglfw.Joystick, name: [:0]const u8 }) = .empty;
+                var available_controllers: std.ArrayList(struct { id: ?zglfw.Joystick, name: [:0]const u8 }) = try .initCapacity(self.allocator, zglfw.Joystick.maximum_supported + 1);
                 defer available_controllers.deinit(self.allocator);
 
-                try available_controllers.append(self.allocator, .{ .id = null, .name = "None" });
+                available_controllers.appendAssumeCapacity(.{ .id = null, .name = "None" });
 
                 for (0..zglfw.Joystick.maximum_supported) |idx| {
                     const joystick: zglfw.Joystick = @enumFromInt(idx);
                     if (joystick.isPresent()) {
                         if (joystick.asGamepad()) |gamepad| {
-                            try available_controllers.append(self.allocator, .{ .id = joystick, .name = gamepad.getName() });
+                            available_controllers.appendAssumeCapacity(.{ .id = joystick, .name = gamepad.getName() });
                         }
                     }
                 }
@@ -843,183 +796,91 @@ pub fn draw(self: *@This()) !void {
                         }
                     }
                 }
-                inline for (0..4) |i| {
-                    zgui.pushIntId(i);
-                    defer zgui.popId();
-
-                    zgui.separator();
-
-                    const number = std.fmt.comptimePrint("{d}", .{i + 1});
-                    var connected: bool = d.dc.maple.ports[i].main != null;
-                    if (zgui.checkbox("Controller #" ++ number, .{ .v = &connected })) {
-                        try d.enable_controller(i, connected);
-                    }
-                    if (d.dc.maple.ports[i].main) |*peripheral| {
-                        var gamepad_id: ?zglfw.Gamepad = null;
-                        if (d.controllers[i]) |j| {
-                            if (j.id.isPresent())
-                                gamepad_id = j.id.asGamepad();
-                        }
-                        const name = if (gamepad_id) |gamepad| gamepad.getName() else "None";
-                        if (zgui.beginCombo("Device##" ++ number, .{ .preview_value = name })) {
-                            for (available_controllers.items, 0..) |item, index| {
-                                if (available_controllers.items[index].id) |id| {
-                                    if (zgui.selectable(item.name, .{ .selected = d.controllers[i] != null and d.controllers[i].?.id == id }))
-                                        d.controllers[i] = .{ .id = id };
-                                } else {
-                                    if (zgui.selectable(item.name, .{ .selected = d.controllers[i] == null }))
-                                        d.controllers[i] = null;
-                                }
-                            }
-                            zgui.endCombo();
-                        }
-                        if (d.controllers[i]) |*j| {
-                            _ = zgui.sliderFloat("Deadzone##" ++ number, .{ .v = &j.deadzone, .min = 0.0, .max = 1.0, .flags = .{} });
-                        }
-                        switch (peripheral.*) {
-                            .Controller => |*controller| {
-                                var capabilities: MapleModule.Controller.InputCapabilities = @bitCast(controller.subcapabilities[0]);
-
-                                if (zgui.collapsingHeader("Button Check", .{})) {
-                                    zgui.textColored(if (controller.buttons.a == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[A] ", .{});
-                                    zgui.sameLine(.{});
-                                    zgui.textColored(if (controller.buttons.b == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[B] ", .{});
-                                    zgui.sameLine(.{});
-                                    zgui.textColored(if (controller.buttons.x == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[X] ", .{});
-                                    zgui.sameLine(.{});
-                                    zgui.textColored(if (controller.buttons.y == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[Y] ", .{});
-                                    zgui.sameLine(.{});
-                                    zgui.textColored(if (controller.buttons.start == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[Start] ", .{});
-
-                                    zgui.textColored(if (controller.buttons.up == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[^] ", .{});
-                                    zgui.sameLine(.{});
-                                    zgui.textColored(if (controller.buttons.down == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[v] ", .{});
-                                    zgui.sameLine(.{});
-                                    zgui.textColored(if (controller.buttons.left == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[<] ", .{});
-                                    zgui.sameLine(.{});
-                                    zgui.textColored(if (controller.buttons.right == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[>] ", .{});
-
-                                    var buf: [64]u8 = undefined;
-                                    const width = (zgui.getContentRegionAvail()[0] - 3 * zgui.getStyle().window_padding[0]) / 2.0;
-                                    inline for ([_]u8{ 1, 0, 2, 3, 4, 5 }, 0..) |axis, idx| {
-                                        if (@field(capabilities, ([_][]const u8{ "analogLtrigger", "analogRtrigger", "analogHorizontal", "analogVertical", "analogHorizontal2", "analogVertical2" })[idx]) != 0) {
-                                            const value = controller.axis[axis];
-                                            const overlay = try std.fmt.bufPrintZ(&buf, "{s} {d}/255", .{ .{ "L", "R", "H", "V", "H2", "V2" }[idx], value });
-                                            _ = zgui.progressBar(.{
-                                                .fraction = @as(f32, @floatFromInt(value)) / 255.0,
-                                                .overlay = overlay,
-                                                .w = width,
-                                            });
-                                            if (idx % 2 == 0) zgui.sameLine(.{});
-                                        }
-                                    }
-                                }
-
-                                if (gamepad_id) |gamepad| {
-                                    if (zgui.collapsingHeader("Controller Bindings", .{})) {
-                                        zgui.indent(.{});
-                                        defer zgui.unindent(.{});
-                                        inline for (std.meta.fields(Deecy.ControllerBindings)) |field| {
-                                            if (zgui.button("Edit##" ++ field.name, .{})) {
-                                                const maybe_button = switch (field.type) {
-                                                    ?zglfw.Gamepad.Button => wait_for_controller_button(d, gamepad),
-                                                    ?zglfw.Gamepad.Axis => wait_for_controller_axis(d, gamepad),
-                                                    else => @compileError("Unexpected field type"),
-                                                };
-                                                if (maybe_button) |button|
-                                                    @field(d.config.controllers_bindings[i], field.name) = button;
-                                            }
-                                            zgui.sameLine(.{});
-                                            if (zgui.button("Remove##" ++ field.name, .{}))
-                                                @field(d.config.controllers_bindings[i], field.name) = null;
-                                            zgui.sameLine(.{});
-                                            if (@field(d.config.controllers_bindings[i], field.name)) |key| {
-                                                zgui.text("{s}: {t}", .{ field.name, key });
-                                            } else {
-                                                zgui.text("{s}: None", .{field.name});
-                                            }
-                                        }
-                                    }
-                                }
-                                if (zgui.collapsingHeader("Keyboard Bindings", .{})) {
-                                    zgui.indent(.{});
-                                    defer zgui.unindent(.{});
-                                    inline for (std.meta.fields(Deecy.KeyboardBindings)) |field| {
-                                        if (zgui.button("Edit##" ++ field.name, .{})) {
-                                            @field(d.config.keyboard_bindings[i], field.name) = wait_for_key(d);
-                                        }
-                                        zgui.sameLine(.{});
-                                        if (zgui.button("Remove##" ++ field.name, .{})) {
-                                            @field(d.config.keyboard_bindings[i], field.name) = null;
-                                        }
-                                        zgui.sameLine(.{});
-                                        if (@field(d.config.keyboard_bindings[i], field.name)) |key| {
-                                            zgui.text("{s}: {t}", .{ field.name, key });
-                                        } else {
-                                            zgui.text("{s}: None", .{field.name});
-                                        }
-                                    }
-                                }
-
-                                var has_right_stick = capabilities.analogVertical2 != 0;
-                                if (zgui.checkbox("Right Stick", .{ .v = &has_right_stick })) {
-                                    if (has_right_stick) {
-                                        capabilities.analogVertical2 = 1;
-                                        capabilities.analogHorizontal2 = 1;
-                                    } else {
-                                        capabilities.analogVertical2 = 0;
-                                        capabilities.analogHorizontal2 = 0;
-                                    }
-                                    controller.subcapabilities[0] = @bitCast(capabilities);
-                                    d.config.controllers[i].subcapabilities = capabilities;
-                                }
-                            },
-                            else => {},
-                        }
-                    }
-                    @setEvalBranchQuota(5000);
-                    if (d.dc.maple.ports[i].main) |_| {
-                        inline for (0..2) |slot| {
-                            zgui.pushIntId(slot);
+                if (zgui.beginTabBar("Ports TabBar", .{})) {
+                    inline for (0..4) |port| {
+                        if (zgui.beginTabItem("Port " ++ &[1]u8{'A' + port}, .{})) {
+                            zgui.pushIntId(port);
                             defer zgui.popId();
-                            var peripheral_type = std.meta.activeTag(d.config.controllers[i].subperipherals[slot]);
-                            if (zgui.comboFromEnum(std.fmt.comptimePrint("#{d}", .{slot}), &peripheral_type)) {
-                                d.deinit_peripheral(i, slot);
-                                d.config.controllers[i].subperipherals[slot] = switch (peripheral_type) {
-                                    .None => .None,
-                                    .VMU => .{ .VMU = .{ .filename = Deecy.DefaultVMUPaths[i][slot] } },
-                                    .VibrationPack => .VibrationPack,
-                                };
-                                try d.init_peripheral(i, slot);
+
+                            var connected: bool = d.dc.maple.ports[port].main != null;
+                            if (zgui.checkbox("Plugged in", .{ .v = &connected })) {
+                                try d.enable_controller(port, connected);
                             }
-                            zgui.indent(.{});
-                            defer zgui.unindent(.{});
-                            if (d.dc.maple.ports[i].subperipherals[slot]) |*s| {
-                                switch (s.*) {
-                                    .VMU => |vmu| {
-                                        zgui.textColored(.{ 1.0, 1.0, 1.0, 0.75 }, "Loaded: {s}", .{vmu.backing_file_path});
-                                        if (d.config.controllers[i].subperipherals[slot] == .VMU) {
-                                            const vmu_config = &d.config.controllers[i].subperipherals[slot].VMU;
-                                            if (vmu_config.filename.len < static.VMUFilenamesInputBuffers[i][slot].len - 1) {
-                                                const c_str: [:0]u8 = static.VMUFilenamesInputBuffers[i][slot][0 .. static.VMUFilenamesInputBuffers[i][slot].len - 1 :0];
-                                                _ = zgui.inputText("##Filename", .{ .buf = c_str });
-                                                zgui.sameLine(.{});
-                                                if (zgui.button("Load", .{})) {
-                                                    d.deinit_peripheral(i, slot);
-                                                    vmu_config.filename = static.VMUFilenamesInputBuffers[i][slot][0..std.mem.indexOfSentinel(u8, 0, c_str)];
-                                                    try d.init_peripheral(i, slot);
-                                                }
-                                            }
+                            if (d.dc.maple.ports[port].main) |*peripheral| {
+                                var gamepad_id: ?zglfw.Gamepad = null;
+                                if (d.controllers[port]) |j| {
+                                    if (j.id.isPresent())
+                                        gamepad_id = j.id.asGamepad();
+                                }
+                                const name = if (gamepad_id) |gamepad| gamepad.getName() else "None";
+                                if (zgui.beginCombo("Device", .{ .preview_value = name })) {
+                                    for (available_controllers.items, 0..) |item, index| {
+                                        if (available_controllers.items[index].id) |id| {
+                                            if (zgui.selectable(item.name, .{ .selected = d.controllers[port] != null and d.controllers[port].?.id == id }))
+                                                d.controllers[port] = .{ .id = id };
+                                        } else {
+                                            if (zgui.selectable(item.name, .{ .selected = d.controllers[port] == null }))
+                                                d.controllers[port] = null;
                                         }
-                                    },
+                                    }
+                                    zgui.endCombo();
+                                }
+                                if (d.controllers[port]) |*j| {
+                                    _ = zgui.sliderFloat("Deadzone", .{ .v = &j.deadzone, .min = 0.0, .max = 1.0, .flags = .{} });
+                                }
+                                switch (peripheral.*) {
+                                    .Controller => try @import("ui/controller_settings.zig").draw_controller_settings(d, port),
                                     else => {},
                                 }
                             }
+                            if (zgui.collapsingHeader("Expansion slots", .{ .default_open = true })) {
+                                if (d.dc.maple.ports[port].main) |_| {
+                                    inline for (0..2) |slot| {
+                                        zgui.pushIntId(slot);
+                                        defer zgui.popId();
+                                        var peripheral_type = std.meta.activeTag(d.config.controllers[port].subperipherals[slot]);
+                                        if (zgui.comboFromEnum("#" ++ &[1]u8{'0' + slot}, &peripheral_type)) {
+                                            d.deinit_peripheral(port, slot);
+                                            d.config.controllers[port].subperipherals[slot] = switch (peripheral_type) {
+                                                .None => .None,
+                                                .VMU => .{ .VMU = .{ .filename = Deecy.DefaultVMUPaths[port][slot] } },
+                                                .VibrationPack => .VibrationPack,
+                                            };
+                                            try d.init_peripheral(port, slot);
+                                        }
+                                        zgui.indent(.{});
+                                        defer zgui.unindent(.{});
+                                        if (d.dc.maple.ports[port].subperipherals[slot]) |*s| {
+                                            switch (s.*) {
+                                                .VMU => |vmu| {
+                                                    zgui.textColored(.{ 1.0, 1.0, 1.0, 0.75 }, "Loaded: {s}", .{vmu.backing_file_path});
+                                                    if (d.config.controllers[port].subperipherals[slot] == .VMU) {
+                                                        const vmu_config = &d.config.controllers[port].subperipherals[slot].VMU;
+                                                        if (vmu_config.filename.len < static.VMUFilenamesInputBuffers[port][slot].len - 1) {
+                                                            const c_str: [:0]u8 = static.VMUFilenamesInputBuffers[port][slot][0 .. static.VMUFilenamesInputBuffers[port][slot].len - 1 :0];
+                                                            _ = zgui.inputText("##Filename", .{ .buf = c_str });
+                                                            zgui.sameLine(.{});
+                                                            if (zgui.button("Load", .{})) {
+                                                                d.deinit_peripheral(port, slot);
+                                                                vmu_config.filename = static.VMUFilenamesInputBuffers[port][slot][0..std.mem.indexOfSentinel(u8, 0, c_str)];
+                                                                try d.init_peripheral(port, slot);
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                                else => {},
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            zgui.endTabItem();
                         }
                     }
-                }
 
-                zgui.endTabItem();
+                    zgui.endTabItem();
+                }
+                zgui.endTabBar();
             }
 
             if (zgui.beginTabItem("Audio", .{})) {
@@ -1066,7 +927,7 @@ pub fn draw_game_library(self: *@This()) !void {
     const target_width = 4 * 256 + 64;
     const fb_size = d.window.getFramebufferSize();
     zgui.setNextWindowPos(.{ .x = @floatFromInt((@max(target_width, fb_size[0]) - target_width) / 2), .y = 32, .cond = .always });
-    zgui.setNextWindowSize(.{ .w = target_width, .h = @floatFromInt(@max(48, fb_size[1]) - 64), .cond = .always });
+    zgui.setNextWindowSize(.{ .w = target_width, .h = @floatFromInt(@max(64, fb_size[1]) - 64), .cond = .always });
 
     defer zgui.end();
     if (zgui.begin("Library", .{ .flags = .{ .no_resize = true, .no_move = true, .no_title_bar = true, .no_docking = true, .no_bring_to_front_on_focus = true } })) {
