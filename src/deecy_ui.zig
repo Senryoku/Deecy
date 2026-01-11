@@ -693,6 +693,7 @@ pub fn draw(self: *@This()) !void {
                     self.deecy.toggle_fullscreen();
                 }
                 zgui.text("Curent Resolution: {d}x{d}", .{ d.renderer.resolution.width, d.renderer.resolution.height });
+                zgui.setNextItemWidth(128.0);
                 var resolution: enum(u8) { Native = 1, x2 = 2, x3 = 3, x4 = 4, x5 = 5 } = @enumFromInt(d.renderer.resolution.width / Deecy.Renderer.NativeResolution.width);
                 if (zgui.comboFromEnum("Resolution", &resolution)) {
                     d.config.renderer.internal_resolution_factor = @intFromEnum(resolution);
@@ -704,10 +705,12 @@ pub fn draw(self: *@This()) !void {
                     if (!d.running)
                         try d.renderer.render(&d.dc.gpu, false);
                 }
+                zgui.setNextItemWidth(128.0);
                 if (zgui.comboFromEnum("Display Mode", &d.config.renderer.display_mode)) {
                     const fb_size = d.window.getFramebufferSize();
                     d.renderer.update_blit_to_screen_vertex_buffer(@intCast(fb_size[0]), @intCast(fb_size[1]), d.config.renderer.display_mode);
                 }
+                zgui.setNextItemWidth(128.0);
                 if (zgui.comboFromEnum("Scaling Filter", &d.config.renderer.scaling_filter)) {
                     d.renderer.set_scaling_filter(d.config.renderer.scaling_filter);
                 }
@@ -729,6 +732,7 @@ pub fn draw(self: *@This()) !void {
                     };
                     if (Once(@src())) try static.init(d);
 
+                    zgui.setNextItemWidth(128.0);
                     if (zgui.beginCombo("Present Mode", .{ .preview_value = @tagName(Deecy.PresentMode.fromWGPU(d.gctx.present_mode)) })) {
                         for (static.present_modes) |present_mode| {
                             if (zgui.selectable(@tagName(Deecy.PresentMode.fromWGPU(present_mode)), .{ .selected = d.gctx.present_mode == present_mode })) {
@@ -756,6 +760,7 @@ pub fn draw(self: *@This()) !void {
                 _ = zgui.checkbox("Render to Guest VRAM", .{ .v = &d.renderer.ExperimentalRenderToVRAM });
                 _ = zgui.checkbox("Clamp Sprites UVs", .{ .v = &d.renderer.ExperimentalClampSpritesUVs });
                 _ = zgui.checkbox("Render on Emulation Thread", .{ .v = &d.renderer.ExperimentalRenderOnEmulationThread });
+                zgui.setNextItemWidth(128.0);
                 _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
                 zgui.endTabItem();
             }
