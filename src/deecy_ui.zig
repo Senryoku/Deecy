@@ -755,13 +755,19 @@ pub fn draw(self: *@This()) !void {
                 }
 
                 zgui.text("Experimental settings", .{});
+                zgui.setNextItemWidth(128.0);
+                _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
                 _ = zgui.checkbox("Framebuffer Emulation", .{ .v = &d.renderer.ExperimentalFramebufferEmulation });
                 _ = zgui.checkbox("Render to Texture", .{ .v = &d.renderer.ExperimentalRenderToTexture });
                 _ = zgui.checkbox("Render to Guest VRAM", .{ .v = &d.renderer.ExperimentalRenderToVRAM });
                 _ = zgui.checkbox("Clamp Sprites UVs", .{ .v = &d.renderer.ExperimentalClampSpritesUVs });
                 _ = zgui.checkbox("Render on Emulation Thread", .{ .v = &d.renderer.ExperimentalRenderOnEmulationThread });
-                zgui.setNextItemWidth(128.0);
-                _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
+                _ = zgui.checkbox("Use Pipeline Cache (Restart Required)", .{ .v = &d.config.enable_dawn_pipeline_cache });
+                if (builtin.mode == .Debug) {
+                    if (zgui.button("Reset Pipeline Cache", .{})) {
+                        try @import("pipeline_cache.zig").clear(d._allocator);
+                    }
+                }
                 zgui.endTabItem();
             }
 

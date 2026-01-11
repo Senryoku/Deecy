@@ -4,6 +4,8 @@ const std = @import("std");
 // declaratively construct a build graph that will be executed by an external
 // runner.
 pub fn build(b: *std.Build) !void {
+    const zon = @import("build.zig.zon");
+
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -60,7 +62,7 @@ pub fn build(b: *std.Build) !void {
     });
 
     const deecy_options = b.addOptions();
-    // None right now.
+    deecy_options.addOption([]const u8, "version", zon.version);
 
     const deecy_module = b.createModule(.{
         .target = target,

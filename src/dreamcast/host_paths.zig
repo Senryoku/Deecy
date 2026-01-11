@@ -7,6 +7,8 @@ var userdata_path: []const u8 = "";
 var data_path_buffer: [std.fs.max_path_bytes]u8 = @splat(0);
 var userdata_path_buffer: [std.fs.max_path_bytes]u8 = @splat(0);
 
+var _mutex = if (path_config.use_appdata_dir) std.Thread.Mutex{} else void;
+
 fn generate_appdata_path(buf: []u8, path: []const u8) []const u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -21,6 +23,8 @@ fn generate_appdata_path(buf: []u8, path: []const u8) []const u8 {
 
 pub fn get_data_path() []const u8 {
     if (path_config.use_appdata_dir) {
+        _mutex.lock();
+        defer _mutex.unlock();
         if (data_path.len == 0)
             data_path = generate_appdata_path(&data_path_buffer, path_config.data_path);
         return data_path;
@@ -30,6 +34,8 @@ pub fn get_data_path() []const u8 {
 
 pub fn get_userdata_path() []const u8 {
     if (path_config.use_appdata_dir) {
+        _mutex.lock();
+        defer _mutex.unlock();
         if (userdata_path.len == 0)
             userdata_path = generate_appdata_path(&userdata_path_buffer, path_config.userdata_path);
         return userdata_path;

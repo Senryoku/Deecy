@@ -273,6 +273,7 @@ const Configuration = struct {
     frame_limiter: enum { Off, Auto, @"120Hz", @"100Hz", @"60Hz", @"50Hz" } = .Off,
 
     renderer: Renderer.Configuration = .{},
+    enable_dawn_pipeline_cache: bool = false,
 
     keyboard_bindings: [4]KeyboardBindings = .{ .Default, .{}, .{}, .{} },
     controllers_bindings: [4]ControllerBindings = .{ .{}, .{}, .{}, .{} },
@@ -480,6 +481,12 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
                 // 2048 is a big jump from the WebGPU default of 256, but it seems to be widely supported, especially on desktop.
                 // (support for Vulkan: https://vulkan.gpuinfo.org/displaydevicelimit.php?name=maxImageArrayLayers)
                 .required_limits = &.{ .max_texture_array_layers = 2048 },
+                .cache_descriptor = if (self.config.enable_dawn_pipeline_cache) .{
+                    .isolation_key = .init("Deecy-" ++ comptime_config.version),
+                    .load_data_function = @import("./pipeline_cache.zig").load_pipeline_cache,
+                    .store_data_function = @import("./pipeline_cache.zig").store_pipeline_cache,
+                    .function_user_data = self,
+                } else null,
             });
         }
 
