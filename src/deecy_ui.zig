@@ -42,7 +42,7 @@ const GameFile = struct {
     }
 
     pub fn sort(_: void, a: @This(), b: @This()) bool {
-        return std.mem.order(u8, a.name, b.name) == .lt;
+        return std.ascii.orderIgnoreCase(a.name, b.name) == .lt;
     }
 };
 
@@ -922,8 +922,14 @@ pub fn draw(self: *@This()) !void {
     }
 }
 
+/// A few random colors to help differentiate games without images.
+const GameColors = [_]u32{ 0xFF222B55, 0xFF553D22, 0xFF2D3D2D, 0xFF4D334D, 0xFF444422, 0xFF224444, 0xFF333366, 0xFF554433, 0xFF3D4D42, 0xFF663333 };
+
 pub fn draw_game_library(self: *@This()) !void {
     const d = self.deecy;
+    const bg_color = zgui.colorConvertFloat4ToU32(zgui.getStyle().colors[@intFromEnum(zgui.StyleCol.window_bg)]);
+    const title_height = 24;
+    const text_padding = .{ 16, 8 };
     const target_width = 4 * 256 + 64;
     const fb_size = d.window.getFramebufferSize();
     zgui.setNextWindowPos(.{ .x = @floatFromInt((@max(target_width, fb_size[0]) - target_width) / 2), .y = 32, .cond = .always });
@@ -937,7 +943,7 @@ pub fn draw_game_library(self: *@This()) !void {
             var lowercase_buffer: [64]u8 = @splat(0);
             var lowercase_game_search: []u8 = lowercase_buffer[0..0];
         };
-        zgui.setNextItemWidth(128.0);
+        zgui.setNextItemWidth(150.0);
         if (zgui.inputTextWithHint("##Search", .{ .hint = "Search file...", .buf = @ptrCast(&static.display_game_search), .flags = .{ .auto_select_all = true } })) {
             static.lowercase_buffer = @splat(0);
             for (0..static.display_game_search.len) |i| {
@@ -950,16 +956,14 @@ pub fn draw_game_library(self: *@This()) !void {
         }
         // TODO: Set active on startup when this API is added to ImGui (https://github.com/ocornut/imgui/issues/3949)
         // if (zgui.isWindowAppearing()) zgui.setActive("##Search");
-        zgui.sameLine(.{});
-        zgui.spacing();
-        zgui.sameLine(.{});
+        zgui.sameLine(.{ .spacing = 24.0 });
         zgui.alignTextToFramePadding();
         if (d.config.game_directory) |dir| {
             zgui.text("Directory: {s}", .{dir});
         } else {
             zgui.text("Directory: None", .{});
         }
-        zgui.sameLine(.{});
+        zgui.sameLine(.{ .spacing = 24.0 });
         if (zgui.button("Refresh", .{})) {
             try self.deecy.launch_async(refresh_games, .{self});
         }
@@ -979,6 +983,8 @@ pub fn draw_game_library(self: *@This()) !void {
             }
         }
 
+        const draw_list = zgui.getWindowDrawList();
+
         {
             self.disc_files_mutex.lock();
             defer self.disc_files_mutex.unlock();
@@ -987,35 +993,55 @@ pub fn draw_game_library(self: *@This()) !void {
                 _ = zgui.beginChild("Games", .{});
                 defer zgui.endChild();
 
+                const clip_min = zgui.getWindowPos();
+                const clip_max = .{ clip_min[0] + zgui.getContentRegionAvail()[0], clip_min[1] + zgui.getContentRegionAvail()[1] };
+                draw_list.pushClipRect(.{ .pmin = clip_min, .pmax = clip_max });
+                defer draw_list.popClipRect();
+
                 var truncated_name: [28:0]u8 = undefined;
                 var lowercase_name: [256]u8 = undefined;
                 zgui.pushStyleVar2f(.{ .idx = .frame_padding, .v = .{ 0, 0 } });
                 zgui.pushStyleVar2f(.{ .idx = .item_spacing, .v = .{ 8.0, 8.0 } });
-                defer zgui.popStyleVar(.{ .count = 2 });
+                zgui.pushStyleVar1f(.{ .idx = .frame_rounding, .v = 8.0 });
+                defer zgui.popStyleVar(.{ .count = 3 });
                 var displayed_count: usize = 0;
                 for (self.disc_files.items, 0..) |entry, idx| {
                     lowercase_name = @splat(0);
                     for (0..@min(entry.name.len, lowercase_name.len)) |i| lowercase_name[i] = std.ascii.toLower(entry.name[i]);
                     if (static.lowercase_game_search.len > 0 and std.mem.indexOf(u8, &lowercase_name, static.lowercase_game_search) == null) continue;
 
-                    var launch = false;
                     {
                         zgui.beginGroup();
                         defer zgui.endGroup();
-                        zgui.pushStyleVar2f(.{ .idx = .item_spacing, .v = .{ 0, 0 } });
-                        defer zgui.popStyleVar(.{});
                         zgui.pushIntId(@intCast(idx));
                         defer zgui.popId();
-                        @memset(&truncated_name, 0);
-                        @memcpy(truncated_name[0..@min(entry.name.len, truncated_name.len - 1)], entry.name[0..@min(entry.name.len, truncated_name.len - 1)]);
-                        launch = (zgui.button(&truncated_name, .{ .w = 256, .h = 24 })) or launch;
 
-                        zgui.pushStrId("image");
-                        defer zgui.popId();
+                        const cursor_pos = zgui.getCursorScreenPos();
+                        if (zgui.button("##Launch", .{ .w = 256.0, .h = 256.0 + 8.0 + title_height }))
+                            try d.load_and_start(entry.path);
+                        zgui.setCursorScreenPos(.{ cursor_pos[0] + text_padding[0], cursor_pos[1] + text_padding[1] });
+
                         if (entry.view) |view| {
-                            launch = zgui.imageButton(entry.name, .{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(((self.deecy.gctx.lookupResource(view).?)))) }, .{ .w = 256, .h = 256 }) or launch;
+                            @memset(&truncated_name, 0);
+                            @memcpy(truncated_name[0..@min(entry.name.len, truncated_name.len - 1)], entry.name[0..@min(entry.name.len, truncated_name.len - 1)]);
+                            zgui.text("{s}", .{truncated_name});
+                            zgui.setCursorScreenPos(.{ cursor_pos[0], cursor_pos[1] + text_padding[1] + title_height });
+                            zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(((self.deecy.gctx.lookupResource(view).?)))) }, .{ .w = 256, .h = 256 });
                         } else {
-                            launch = zgui.button(entry.name, .{ .w = 256, .h = 256 }) or launch;
+                            const p = .{ cursor_pos[0] + 128.0, cursor_pos[1] + text_padding[1] + title_height + 128.0 };
+                            draw_list.addCircleFilled(.{ .p = p, .r = 96.0, .col = 0x80FFFFFF, .num_segments = 0 });
+                            draw_list.addCircleFilled(.{ .p = p, .r = 92.0, .col = GameColors[entry.name.len % GameColors.len], .num_segments = 0 });
+                            draw_list.addCircleFilled(.{ .p = p, .r = 24.0, .col = 0x80FFFFFF, .num_segments = 0 });
+                            {
+                                zgui.pushFont(null, 130.0);
+                                defer zgui.popFont();
+                                draw_list.addText(.{ p[0] - 65.0, p[1] - 65.0 }, 0x80808080, "{s}", .{entry.name[0..2]});
+                            }
+                            draw_list.addCircleFilled(.{ .p = .{ cursor_pos[0] + 128.0, cursor_pos[1] + text_padding[1] + title_height + 128.0 }, .r = 16.0, .col = bg_color, .num_segments = 0 });
+
+                            zgui.pushTextWrapPos(zgui.getCursorPosX() + 256.0 - 2 * text_padding[0]);
+                            defer zgui.popTextWrapPos();
+                            zgui.textWrapped("{s}", .{entry.name});
                         }
                     }
 
@@ -1023,9 +1049,6 @@ pub fn draw_game_library(self: *@This()) !void {
                         zgui.text("{s}", .{entry.name});
                         zgui.endTooltip();
                     }
-
-                    if (launch)
-                        try d.load_and_start(entry.path);
 
                     if (displayed_count % 4 != 3) zgui.sameLine(.{});
                     displayed_count += 1;
