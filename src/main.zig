@@ -89,6 +89,7 @@ pub const std_options: std.Options = .{
         // .{ .scope = .chd_flac_residual, .level = .debug },
         .{ .scope = .maple, .level = .info },
         .{ .scope = .renderer, .level = .info },
+        .{ .scope = .pipeline_cache, .level = .info },
         .{ .scope = .flashrom, .level = .info },
     },
 };

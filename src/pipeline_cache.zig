@@ -27,6 +27,8 @@ pub fn load_pipeline_cache(key_ptr: [*]const u8, key_size: usize, value_ptr: ?[*
 }
 
 fn load_pipeline_cache_impl(allocator: std.mem.Allocator, key: []const u8, value_ptr: ?[*]u8, value_size: usize) !usize {
+    log.debug("load_pipeline_cache: key.len: {d}, value_size: {d}", .{ key.len, value_size });
+
     var name_buf: [64]u8 = undefined;
     const hex_name = try cache_file_name(key, &name_buf);
 
@@ -39,7 +41,10 @@ fn load_pipeline_cache_impl(allocator: std.mem.Allocator, key: []const u8, value
 
     const size = try file.getEndPos();
 
-    if (value_ptr == null) return @intCast(size);
+    // Only requesting the size.
+    if (value_ptr == null or value_size == 0) return @intCast(size);
+
+    if (size > value_size) return error.ValueBufferTooSmall;
 
     const buffer: []u8 = @ptrCast(value_ptr.?[0..value_size]);
     return try file.readAll(buffer);
@@ -57,6 +62,8 @@ pub fn store_pipeline_cache(key_ptr: [*]const u8, key_size: usize, value_ptr: [*
 }
 
 fn store_pipeline_cache_impl(allocator: std.mem.Allocator, key: []const u8, value: []const u8) !void {
+    log.debug("store_pipeline_cache: key.len: {d}, value.len: {d}", .{ key.len, value.len });
+
     var name_buf: [64]u8 = undefined;
     const hex_name = try cache_file_name(key, &name_buf);
 
