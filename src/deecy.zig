@@ -48,48 +48,6 @@ fn glfw_key_callback(window: *zglfw.Window, key: zglfw.Key, scancode: i32, actio
 
         if (action == .press)
             app.shortcuts.on_key(.{ .keyboard = .{ .key = key, .mods = .from_glfw(mods) } });
-
-        // if (!mods.shift and !mods.alt and !mods.control) {
-        //     if (action == .press) {
-        //         switch (key) {
-        //             .escape => app.toggle_ui(),
-        //             .space => app.start_pause(),
-        //             .d => app.toggle_debug_ui(),
-        //             .f => app.toggle_fullscreen(),
-        //             .l => app.toggle_realtime(),
-        //             .n => app.next_vblankin(),
-        //             .F1, .F2, .F3, .F4 => {
-        //                 const idx: usize = switch (key) {
-        //                     .F1 => 0,
-        //                     .F2 => 1,
-        //                     .F3 => 2,
-        //                     .F4 => 3,
-        //                     else => unreachable,
-        //                 };
-        //                 app.save_state(idx) catch |err| {
-        //                     deecy_log.err(termcolor.red("Failed to save state #{d}: {t}"), .{ idx, err });
-        //                 };
-        //             },
-        //             .F5, .F6, .F7, .F8 => {
-        //                 const idx: usize = switch (key) {
-        //                     .F5 => 0,
-        //                     .F6 => 1,
-        //                     .F7 => 2,
-        //                     .F8 => 3,
-        //                     else => unreachable,
-        //                 };
-        //                 app.load_state(idx) catch |err| {
-        //                     deecy_log.err(termcolor.red("Failed to load state #{d}: {t}"), .{ idx, err });
-        //                 };
-        //             },
-        //             .F12 => app.save_screenshot() catch |err| {
-        //                 deecy_log.err(termcolor.red("Failed to save screenshot: {t}"), .{err});
-        //                 return;
-        //             },
-        //             else => {},
-        //         }
-        //     }
-        // }
     }
 }
 
@@ -337,6 +295,7 @@ controllers: [4]?struct {
         power: f32 = 0,
         change: f32 = 0,
     } = .{},
+    last_state: zglfw.Gamepad.State = .{},
     // FIXME: Move to config?
     deadzone: f32 = 0.1,
 
@@ -934,10 +893,17 @@ pub fn poll_controllers(self: *@This()) void {
                         any_keyboard_key_pressed = true;
 
                     if (!any_keyboard_key_pressed) {
-                        if (self.controllers[controller_idx]) |host_controller| {
+                        if (self.controllers[controller_idx]) |*host_controller| {
                             if (host_controller.id.isPresent()) {
                                 if (host_controller.id.asGamepad()) |gamepad| {
                                     const gamepad_state = gamepad.getState() catch continue;
+                                    defer host_controller.last_state = gamepad_state;
+
+                                    inline for (std.meta.fields(zglfw.Gamepad.Button)) |button| {
+                                        if (gamepad_state.buttons[button.value] == .press and host_controller.last_state.buttons[button.value] == .release)
+                                            self.shortcuts.on_key(.{ .controller = @enumFromInt(button.value) });
+                                    }
+
                                     const config = self.config.controllers_bindings[controller_idx];
                                     const gamepad_binds: [9]struct { ?zglfw.Gamepad.Button, DreamcastModule.Maple.Controller.Buttons } = .{
                                         .{ config.start, .{ .start = 0 } },
@@ -960,9 +926,9 @@ pub fn poll_controllers(self: *@This()) void {
                                         }
                                     }
                                     if (config.right_trigger) |axis|
-                                        c.axis[0] = @as(u8, @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255));
+                                        c.axis[0] = @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255);
                                     if (config.left_trigger) |axis|
-                                        c.axis[1] = @as(u8, @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255));
+                                        c.axis[1] = @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255);
 
                                     const capabilities: DreamcastModule.Maple.Controller.InputCapabilities = @bitCast(c.subcapabilities[0]);
                                     inline for ([_]struct { host: ?zglfw.Gamepad.Axis, guest: u8 }{
@@ -978,7 +944,7 @@ pub fn poll_controllers(self: *@This()) void {
                                                     value = 0.0;
                                                 // TODO: Remap with deadzone?
                                                 value = value * 0.5 + 0.5;
-                                                c.axis[binding.guest] = @as(u8, @intFromFloat(std.math.ceil(value * 255)));
+                                                c.axis[binding.guest] = @intFromFloat(std.math.ceil(value * 255));
                                             }
                                         }
                                     }
@@ -1198,9 +1164,17 @@ pub fn save_state_idx(comptime idx: u8) fn (*Self) void {
     std.debug.assert(idx < 4);
     return struct {
         pub fn save_state(self: *Self) void {
-            self.save_state(idx);
+            self.save_state(idx) catch |err| deecy_log.err(termcolor.red("Failed to save state: {}"), .{err});
         }
     }.save_state;
+}
+pub fn load_state_idx(comptime idx: u8) fn (*Self) void {
+    std.debug.assert(idx < 4);
+    return struct {
+        pub fn load_state(self: *Self) void {
+            self.load_state(idx) catch |err| deecy_log.err(termcolor.red("Failed to load state: {}"), .{err});
+        }
+    }.load_state;
 }
 
 pub fn start(self: *@This()) void {

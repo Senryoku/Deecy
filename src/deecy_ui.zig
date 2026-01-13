@@ -908,6 +908,14 @@ pub fn draw(self: *@This()) !void {
                 zgui.endTabItem();
             }
 
+            if (zgui.beginTabItem("Shortcuts", .{})) {
+                var it = d.shortcuts.shortcuts.iterator();
+                while (it.next()) |entry| {
+                    zgui.text("{f}: {t}", .{ entry.key_ptr.*, entry.value_ptr.name });
+                }
+                zgui.endTabItem();
+            }
+
             zgui.endTabBar();
         }
     }
