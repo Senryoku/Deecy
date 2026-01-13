@@ -32,6 +32,7 @@ pub const Renderer = @import("./renderer.zig").Renderer;
 
 pub const UI = @import("./deecy_ui.zig");
 const DebugUI = @import("./debug_ui.zig");
+const Shortcuts = @import("./ui/shortcuts.zig");
 
 const lz4 = @import("lz4");
 
@@ -45,67 +46,50 @@ fn glfw_key_callback(window: *zglfw.Window, key: zglfw.Key, scancode: i32, actio
     if (maybe_app) |app| {
         if (zgui.io.getWantCaptureKeyboard()) return;
 
-        if (!mods.shift and !mods.alt and !mods.control) {
-            if (action == .press) {
-                switch (key) {
-                    .escape => {
-                        app.display_ui = !app.display_ui;
-                    },
-                    .space => {
-                        if (app.running) {
-                            app.pause();
-                        } else {
-                            app.start();
-                        }
-                    },
-                    .d => app.config.display_debug_ui = !app.config.display_debug_ui,
-                    .f => app.toggle_fullscreen(),
-                    .l => app.set_realtime(!app.realtime),
-                    .n => {
-                        if (app.running) {
-                            app.pause();
-                        } else {
-                            for (app.dc.scheduled_events.items) |event| {
-                                if (event.event == .VBlankIn) {
-                                    const cycles = 1024 + (event.trigger_cycle -| app.dc._global_cycles);
-                                    app.run_for(cycles);
-                                    return;
-                                }
-                            }
-                        }
-                    },
-                    .F1, .F2, .F3, .F4 => {
-                        const idx: usize = switch (key) {
-                            .F1 => 0,
-                            .F2 => 1,
-                            .F3 => 2,
-                            .F4 => 3,
-                            else => unreachable,
-                        };
-                        app.save_state(idx) catch |err| {
-                            deecy_log.err(termcolor.red("Failed to save state #{d}: {t}"), .{ idx, err });
-                        };
-                    },
-                    .F5, .F6, .F7, .F8 => {
-                        const idx: usize = switch (key) {
-                            .F5 => 0,
-                            .F6 => 1,
-                            .F7 => 2,
-                            .F8 => 3,
-                            else => unreachable,
-                        };
-                        app.load_state(idx) catch |err| {
-                            deecy_log.err(termcolor.red("Failed to load state #{d}: {t}"), .{ idx, err });
-                        };
-                    },
-                    .F12 => app.save_screenshot() catch |err| {
-                        deecy_log.err(termcolor.red("Failed to save screenshot: {t}"), .{err});
-                        return;
-                    },
-                    else => {},
-                }
-            }
-        }
+        if (action == .press)
+            app.shortcuts.on_key(.{ .keyboard = .{ .key = key, .mods = .from_glfw(mods) } });
+
+        // if (!mods.shift and !mods.alt and !mods.control) {
+        //     if (action == .press) {
+        //         switch (key) {
+        //             .escape => app.toggle_ui(),
+        //             .space => app.start_pause(),
+        //             .d => app.toggle_debug_ui(),
+        //             .f => app.toggle_fullscreen(),
+        //             .l => app.toggle_realtime(),
+        //             .n => app.next_vblankin(),
+        //             .F1, .F2, .F3, .F4 => {
+        //                 const idx: usize = switch (key) {
+        //                     .F1 => 0,
+        //                     .F2 => 1,
+        //                     .F3 => 2,
+        //                     .F4 => 3,
+        //                     else => unreachable,
+        //                 };
+        //                 app.save_state(idx) catch |err| {
+        //                     deecy_log.err(termcolor.red("Failed to save state #{d}: {t}"), .{ idx, err });
+        //                 };
+        //             },
+        //             .F5, .F6, .F7, .F8 => {
+        //                 const idx: usize = switch (key) {
+        //                     .F5 => 0,
+        //                     .F6 => 1,
+        //                     .F7 => 2,
+        //                     .F8 => 3,
+        //                     else => unreachable,
+        //                 };
+        //                 app.load_state(idx) catch |err| {
+        //                     deecy_log.err(termcolor.red("Failed to load state #{d}: {t}"), .{ idx, err });
+        //                 };
+        //             },
+        //             .F12 => app.save_screenshot() catch |err| {
+        //                 deecy_log.err(termcolor.red("Failed to save screenshot: {t}"), .{err});
+        //                 return;
+        //             },
+        //             else => {},
+        //         }
+        //     }
+        // }
     }
 }
 
@@ -335,6 +319,8 @@ config: Configuration = .{},
 toggle_fullscreen_request: bool = false,
 previous_window_position: struct { x: i32 = 0, y: i32 = 0, w: i32 = 0, h: i32 = 0 } = .{},
 
+shortcuts: Shortcuts,
+
 running: bool = false,
 _cycles_to_run: i64 = 0,
 _stop_request: bool = false,
@@ -421,6 +407,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         .window = undefined,
         .config = config,
         .breakpoints = .empty,
+        .shortcuts = try .init(allocator),
         ._allocator = allocator,
     };
 
@@ -571,6 +558,7 @@ pub fn destroy(self: *@This()) void {
 
     self.save_config() catch |err| deecy_log.err("Error writing config: {t}", .{err});
     self.config.deinit(self._allocator);
+    self.shortcuts.deinit(self._allocator);
 
     self.breakpoints.deinit(self._allocator);
 
@@ -1149,6 +1137,19 @@ fn check_save_state_slots(self: *@This()) !void {
     }
 }
 
+pub fn start_pause(self: *@This()) void {
+    if (self.running) {
+        self.pause();
+    } else {
+        self.start();
+    }
+}
+pub fn toggle_ui(self: *@This()) void {
+    self.display_ui = !self.display_ui;
+}
+pub fn toggle_debug_ui(self: *@This()) void {
+    self.config.display_debug_ui = !self.config.display_debug_ui;
+}
 pub fn toggle_fullscreen(self: *@This()) void {
     if (self.config.fullscreen) {
         self.config.fullscreen = false;
@@ -1176,6 +1177,30 @@ pub fn toggle_fullscreen(self: *@This()) void {
         self.window.setMonitor(monitor, 0, 0, mode.width, mode.height, mode.refresh_rate);
         self.config.fullscreen = true;
     }
+}
+pub fn toggle_realtime(self: *@This()) void {
+    self.set_realtime(!self.realtime);
+}
+pub fn next_vblankin(self: *@This()) void {
+    if (self.running) {
+        self.pause();
+    } else {
+        for (self.dc.scheduled_events.items) |event| {
+            if (event.event == .VBlankIn) {
+                const cycles = 1024 + (event.trigger_cycle -| self.dc._global_cycles);
+                self.run_for(cycles);
+                return;
+            }
+        }
+    }
+}
+pub fn save_state_idx(comptime idx: u8) fn (*Self) void {
+    std.debug.assert(idx < 4);
+    return struct {
+        pub fn save_state(self: *Self) void {
+            self.save_state(idx);
+        }
+    }.save_state;
 }
 
 pub fn start(self: *@This()) void {
@@ -1445,7 +1470,13 @@ fn run_for(self: *@This(), sh4_cycles: u64) void {
     }
 }
 
-fn save_screenshot(self: *const @This()) !void {
+pub fn save_screenshot(self: *const @This()) void {
+    self.save_screenshot_impl() catch |err| {
+        deecy_log.err(termcolor.red("Error saving screenshot: {}"), .{err});
+    };
+}
+
+fn save_screenshot_impl(self: *const @This()) !void {
     const screen = try self.renderer.capture(self._allocator);
     defer screen.deinit(self._allocator);
 
