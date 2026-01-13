@@ -55,7 +55,6 @@ pub const Key = union(enum) {
 };
 
 pub const Action = struct {
-    // Only append to this, never re-order or remove, thanks :D
     pub const Name = enum {
         Screenshot,
         @"Toggle UI",
@@ -124,7 +123,6 @@ const Actions = actions_table: {
 };
 
 const SerializedShortcut = struct {
-    // FIXME: I don't love this, as this means any change to Action.Name will lead to very weird behavior. It might me better to store the full name as a string.
     action: Action.Name,
     key: Key,
 };
