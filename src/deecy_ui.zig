@@ -19,6 +19,7 @@ const Disc = DreamcastModule.GDROM.Disc;
 const PVRFile = @import("pvr_file.zig");
 
 const Notifications = @import("./ui/notifications.zig");
+const wait_for = @import("./ui/wait_for_input.zig");
 
 const Self = @This();
 
@@ -932,6 +933,15 @@ pub fn draw(self: *@This()) !void {
                     zgui.endTable();
                 }
                 // TODO: Add shortcuts
+                const static = struct {
+                    var action = @import("ui/shortcuts.zig").Action.Name.Screenshot;
+                };
+                _ = zgui.comboFromEnum("Action", &static.action);
+                zgui.sameLine(.{});
+                if (zgui.button("Add", .{})) {
+                    const button = wait_for.any_button(d);
+                    std.debug.print("Button: {any}\n", .{button});
+                }
                 zgui.endTabItem();
             }
 
