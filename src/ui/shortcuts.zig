@@ -48,29 +48,30 @@ pub const Key = union(enum) {
 
     pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         switch (self) {
-            .controller => |controller| try writer.print("controller.{s}", .{@tagName(controller)}),
-            .keyboard => |keyboard| try writer.print("keyboard.{f}{s}", .{ keyboard.mods, @tagName(keyboard.key) }),
+            .controller => |controller| try writer.print("{s}", .{@import("helpers").title_case_enum(controller)}),
+            .keyboard => |keyboard| try writer.print("{f}{s}", .{ keyboard.mods, @import("helpers").title_case_enum(keyboard.key) }),
         }
     }
 };
 
 pub const Action = struct {
+    // Only append to this, never re-order or remove, thanks :D
     pub const Name = enum {
         Screenshot,
-        ToggleUI,
-        StartPause,
-        DebugUI,
-        ToggleFullscreen,
-        ToggleRealtime,
-        NextVBlankIn,
-        SaveState1,
-        SaveState2,
-        SaveState3,
-        SaveState4,
-        LoadState1,
-        LoadState2,
-        LoadState3,
-        LoadState4,
+        @"Toggle UI",
+        @"Start/Pause",
+        @"Debug UI",
+        @"Toggle Fullscreen",
+        @"Toggle Realtime",
+        @"Next VBlank In",
+        @"Save State 1",
+        @"Save State 2",
+        @"Save State 3",
+        @"Save State 4",
+        @"Load State 1",
+        @"Load State 2",
+        @"Load State 3",
+        @"Load State 4",
     };
     name: Name,
     callback: *const fn (*Deecy) void,
@@ -100,22 +101,22 @@ pub fn on_key(self: *@This(), key: Key) void {
 
 const Actions = actions_table: {
     var table: [@typeInfo(Action.Name).@"enum".fields.len]Action = undefined;
-    for (.{
-        .{ Action.Name.Screenshot, Deecy.save_screenshot },
-        .{ Action.Name.ToggleUI, Deecy.toggle_ui },
-        .{ Action.Name.StartPause, Deecy.start_pause },
-        .{ Action.Name.DebugUI, Deecy.toggle_debug_ui },
-        .{ Action.Name.ToggleFullscreen, Deecy.toggle_fullscreen },
-        .{ Action.Name.ToggleRealtime, Deecy.toggle_realtime },
-        .{ Action.Name.NextVBlankIn, Deecy.next_vblankin },
-        .{ Action.Name.SaveState1, Deecy.save_state_idx(0) },
-        .{ Action.Name.SaveState2, Deecy.save_state_idx(1) },
-        .{ Action.Name.SaveState3, Deecy.save_state_idx(2) },
-        .{ Action.Name.SaveState4, Deecy.save_state_idx(3) },
-        .{ Action.Name.LoadState1, Deecy.load_state_idx(0) },
-        .{ Action.Name.LoadState2, Deecy.load_state_idx(1) },
-        .{ Action.Name.LoadState3, Deecy.load_state_idx(2) },
-        .{ Action.Name.LoadState4, Deecy.load_state_idx(3) },
+    for ([_]struct { Action.Name, *const fn (*Deecy) void }{
+        .{ .Screenshot, Deecy.save_screenshot },
+        .{ .@"Toggle UI", Deecy.toggle_ui },
+        .{ .@"Start/Pause", Deecy.start_pause },
+        .{ .@"Debug UI", Deecy.toggle_debug_ui },
+        .{ .@"Toggle Fullscreen", Deecy.toggle_fullscreen },
+        .{ .@"Toggle Realtime", Deecy.toggle_realtime },
+        .{ .@"Next VBlank In", Deecy.next_vblankin },
+        .{ .@"Save State 1", Deecy.save_state_idx(0) },
+        .{ .@"Save State 2", Deecy.save_state_idx(1) },
+        .{ .@"Save State 3", Deecy.save_state_idx(2) },
+        .{ .@"Save State 4", Deecy.save_state_idx(3) },
+        .{ .@"Load State 1", Deecy.load_state_idx(0) },
+        .{ .@"Load State 2", Deecy.load_state_idx(1) },
+        .{ .@"Load State 3", Deecy.load_state_idx(2) },
+        .{ .@"Load State 4", Deecy.load_state_idx(3) },
     }) |entry| {
         table[@intFromEnum(entry[0])] = .{ .name = entry[0], .callback = entry[1] };
     }
@@ -186,22 +187,22 @@ fn get_action(name: Action.Name) Action {
 
 fn load_default_shortcuts(self: *@This()) !void {
     self.shortcuts.clearRetainingCapacity();
-    inline for (.{
-        .{ zglfw.Key.escape, Action.Name.ToggleUI },
-        .{ zglfw.Key.space, Action.Name.StartPause },
-        .{ zglfw.Key.d, Action.Name.DebugUI },
-        .{ zglfw.Key.f, Action.Name.ToggleFullscreen },
-        .{ zglfw.Key.l, Action.Name.ToggleRealtime },
-        .{ zglfw.Key.n, Action.Name.NextVBlankIn },
-        .{ zglfw.Key.F1, Action.Name.SaveState1 },
-        .{ zglfw.Key.F2, Action.Name.SaveState2 },
-        .{ zglfw.Key.F3, Action.Name.SaveState3 },
-        .{ zglfw.Key.F4, Action.Name.SaveState4 },
-        .{ zglfw.Key.F5, Action.Name.LoadState1 },
-        .{ zglfw.Key.F6, Action.Name.LoadState2 },
-        .{ zglfw.Key.F7, Action.Name.LoadState3 },
-        .{ zglfw.Key.F8, Action.Name.LoadState4 },
-        .{ zglfw.Key.F12, Action.Name.Screenshot },
+    inline for ([_]struct { zglfw.Key, Action.Name }{
+        .{ .escape, .@"Toggle UI" },
+        .{ .space, .@"Start/Pause" },
+        .{ .d, .@"Debug UI" },
+        .{ .f, .@"Toggle Fullscreen" },
+        .{ .l, .@"Toggle Realtime" },
+        .{ .n, .@"Next VBlank In" },
+        .{ .F1, .@"Save State 1" },
+        .{ .F2, .@"Save State 2" },
+        .{ .F3, .@"Save State 3" },
+        .{ .F4, .@"Save State 4" },
+        .{ .F5, .@"Load State 1" },
+        .{ .F6, .@"Load State 2" },
+        .{ .F7, .@"Load State 3" },
+        .{ .F8, .@"Load State 4" },
+        .{ .F12, .Screenshot },
     }) |entry|
         try self.shortcuts.put(.{ .keyboard = .{ .key = entry[0] } }, get_action(entry[1]));
 }

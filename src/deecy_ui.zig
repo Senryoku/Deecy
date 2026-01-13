@@ -909,10 +909,29 @@ pub fn draw(self: *@This()) !void {
             }
 
             if (zgui.beginTabItem("Shortcuts", .{})) {
-                var it = d.shortcuts.shortcuts.iterator();
-                while (it.next()) |entry| {
-                    zgui.text("{f}: {t}", .{ entry.key_ptr.*, entry.value_ptr.name });
+                // TODO: Make sortable. Sort by default: Type then key?
+                if (zgui.beginTable("Shortcuts##Table", .{ .column = 3 })) {
+                    zgui.tableSetupColumn("Type", .{});
+                    zgui.tableSetupColumn("Key/Button", .{});
+                    zgui.tableSetupColumn("Action", .{});
+                    zgui.tableHeadersRow();
+
+                    // TODO: Sort.
+                    var it = d.shortcuts.shortcuts.iterator();
+                    while (it.next()) |entry| {
+                        zgui.tableNextRow(.{});
+                        _ = zgui.tableSetColumnIndex(0);
+                        zgui.text("{t}", .{std.meta.activeTag(entry.key_ptr.*)});
+                        _ = zgui.tableSetColumnIndex(1);
+                        zgui.text("{f}", .{entry.key_ptr.*});
+                        _ = zgui.tableSetColumnIndex(2);
+                        zgui.text("{t}", .{entry.value_ptr.name});
+                        // TODO: Edit in place
+                        // TODO: Delete
+                    }
+                    zgui.endTable();
                 }
+                // TODO: Add shortcuts
                 zgui.endTabItem();
             }
 
