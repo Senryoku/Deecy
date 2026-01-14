@@ -6,7 +6,10 @@ const zgpu = @import("zgpu");
 const Deecy = @import("../deecy.zig");
 const Dreamcast = @import("dreamcast");
 const termcolor = @import("termcolor");
+
 const wait_for = @import("wait_for_input.zig");
+const common = @import("common.zig");
+const Icons = common.Icons;
 
 const Color = 0xFFFFFFFF;
 const PressedButtonColor: u32 = 0xFFFFFFFF;
@@ -346,9 +349,9 @@ pub fn draw_controller_settings(d: *Deecy, comptime port: u8) !void {
                 }
                 zgui.sameLine(.{});
                 {
-                    zgui.pushStyleColor4f(.{ .c = .{ 0.86, 0.12, 0.15, 1.0 }, .idx = .button });
-                    defer zgui.popStyleColor(.{ .count = 1 });
-                    if (zgui.button("X##" ++ field.name, .{}))
+                    common.push_red_button_style();
+                    defer common.pop_red_button_style();
+                    if (zgui.button(Icons.Trash ++ "##" ++ field.name, .{}))
                         @field(d.config.controllers_bindings[port], field.name) = null;
                 }
                 zgui.sameLine(.{});
@@ -369,9 +372,9 @@ pub fn draw_controller_settings(d: *Deecy, comptime port: u8) !void {
             }
             zgui.sameLine(.{});
             {
-                zgui.pushStyleColor4f(.{ .c = .{ 0.86, 0.12, 0.15, 1.0 }, .idx = .button });
-                defer zgui.popStyleColor(.{ .count = 1 });
-                if (zgui.button("X##" ++ field.name, .{}))
+                common.push_red_button_style();
+                defer common.pop_red_button_style();
+                if (zgui.button(Icons.Trash ++ "##" ++ field.name, .{}))
                     @field(d.config.keyboard_bindings[port], field.name) = null;
             }
             zgui.sameLine(.{});

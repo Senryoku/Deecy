@@ -86,6 +86,7 @@ fn glfw_resize_callback(window: *zglfw.Window, width: i32, height: i32) callconv
 
 const assets_dir = "assets/";
 const DefaultFont = @embedFile(assets_dir ++ "fonts/Hack-Regular.ttf");
+const IconFont = @embedFile(assets_dir ++ "fonts/Font Awesome 7 Free-Solid-900.otf");
 
 /// Replaces invalid characters with underscores
 fn safe_path(path: []u8) void {
@@ -584,10 +585,12 @@ fn ui_init(self: *@This()) !void {
     zgui.init(self._allocator);
     zgui.io.setConfigFlags(.{ .dock_enable = true });
 
-    _ = zgui.io.addFontFromMemory(
-        DefaultFont,
-        std.math.floor(16.0 * self.scale_factor),
-    );
+    _ = zgui.io.addFontFromMemory(DefaultFont, std.math.floor(16.0 * self.scale_factor));
+    var config = zgui.FontConfig.init();
+    config.merge_mode = true;
+    config.pixel_snap_h = true;
+    config.glyph_min_advance_x = 16.0 * self.scale_factor;
+    _ = zgui.io.addFontFromMemoryWithConfig(IconFont, std.math.floor(14.0 * self.scale_factor), config, null); // &[3]u16{ 0xe005, 0xf8ff, 0 });
 
     var style = zgui.getStyle();
 

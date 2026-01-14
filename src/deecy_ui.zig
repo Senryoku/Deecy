@@ -19,6 +19,8 @@ const Disc = DreamcastModule.GDROM.Disc;
 const PVRFile = @import("pvr_file.zig");
 
 const Notifications = @import("./ui/notifications.zig");
+const common = @import("./ui/common.zig");
+const Icons = common.Icons;
 const wait_for = @import("./ui/wait_for_input.zig");
 
 const Self = @This();
@@ -980,9 +982,13 @@ pub fn draw(self: *@This()) !void {
 
                         zgui.tableNextRow(.{});
                         _ = zgui.tableSetColumnIndex(0);
-                        zgui.text("{t}", .{std.meta.activeTag(entry.key)});
+                        zgui.alignTextToFramePadding();
+                        zgui.text("{s}", .{switch (entry.key) {
+                            .keyboard => Icons.Keyboard ++ " Keyboard",
+                            .controller => Icons.Gamepad ++ " Controller",
+                        }});
                         _ = zgui.tableSetColumnIndex(1);
-                        if (zgui.button("E", .{})) {
+                        if (zgui.button(Icons.Pen, .{})) {
                             const maybe_key = wait_for.any_button(d);
                             if (maybe_key) |key| {
                                 d.shortcuts.remove(entry.key);
@@ -994,37 +1000,28 @@ pub fn draw(self: *@This()) !void {
                             }
                         }
                         zgui.sameLine(.{});
+                        zgui.alignTextToFramePadding();
                         zgui.text("{f}", .{entry.key});
                         _ = zgui.tableSetColumnIndex(2);
                         zgui.setNextItemWidth(200.0);
-                        if (zgui.comboFromEnum("##Action", &entry.action)) {
+                        if (zgui.comboFromEnum("##Action", &entry.action))
                             try d.shortcuts.put(entry.key, entry.action);
-                        }
                         _ = zgui.tableSetColumnIndex(3);
-                        zgui.pushStyleColor4f(.{ .c = .{ 0.86, 0.12, 0.15, 1.0 }, .idx = .button });
-                        defer zgui.popStyleColor(.{ .count = 1 });
-                        if (zgui.button("X", .{})) {
+                        common.push_red_button_style();
+                        defer common.pop_red_button_style();
+                        if (zgui.button(Icons.Trash, .{}))
                             d.shortcuts.remove(entry.key);
-                        }
                     }
                     zgui.endTable();
                 }
                 zgui.separator();
                 {
+                    zgui.textDisabled("Add shortcut:", .{});
                     const static = struct {
                         var action = Shortcuts.Action.Name.Screenshot;
                         var key: ?Shortcuts.Key = null;
                     };
-                    zgui.setNextItemWidth(200.0);
-                    _ = zgui.comboFromEnum("##NewAction", &static.action);
-                    zgui.sameLine(.{});
-                    if (static.key) |key| {
-                        zgui.text("{f}", .{key});
-                    } else {
-                        zgui.text("(None)", .{});
-                    }
-                    zgui.sameLine(.{});
-                    if (zgui.button("Select Key", .{})) {
+                    if (zgui.button(Icons.Pen, .{})) {
                         const maybe_key = wait_for.any_button(d);
                         if (maybe_key) |key| {
                             static.key = switch (key) {
@@ -1034,6 +1031,15 @@ pub fn draw(self: *@This()) !void {
                         }
                     }
                     zgui.sameLine(.{});
+                    if (static.key) |key| {
+                        zgui.text("{f}", .{key});
+                    } else {
+                        zgui.text("(None)", .{});
+                    }
+                    zgui.sameLine(.{});
+                    zgui.setNextItemWidth(200.0);
+                    _ = zgui.comboFromEnum("##NewAction", &static.action);
+                    zgui.sameLine(.{});
                     zgui.beginDisabled(.{ .disabled = static.key == null });
                     defer zgui.endDisabled();
                     if (zgui.button("Add", .{})) {
@@ -1041,9 +1047,9 @@ pub fn draw(self: *@This()) !void {
                             try d.shortcuts.put(key, static.action);
                     }
                 }
-                if (zgui.button("Reset to default", .{})) {
+                zgui.separator();
+                if (zgui.button(Icons.ArrowRotateLeft ++ " Reset to default", .{}))
                     try d.shortcuts.load_default_shortcuts();
-                }
                 zgui.endTabItem();
             }
 
