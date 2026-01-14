@@ -98,6 +98,14 @@ pub fn on_key(self: *@This(), key: Key) void {
     }
 }
 
+pub fn put(self: *@This(), key: Key, action: Action.Name) !void {
+    try self.shortcuts.put(key, get_action(action));
+}
+
+pub fn remove(self: *@This(), key: Key) void {
+    _ = self.shortcuts.remove(key);
+}
+
 const Actions = actions_table: {
     var table: [@typeInfo(Action.Name).@"enum".fields.len]Action = undefined;
     for ([_]struct { Action.Name, *const fn (*Deecy) void }{
@@ -183,10 +191,9 @@ fn get_action(name: Action.Name) Action {
     return Actions[@intFromEnum(name)];
 }
 
-fn load_default_shortcuts(self: *@This()) !void {
+pub fn load_default_shortcuts(self: *@This()) !void {
     self.shortcuts.clearRetainingCapacity();
     inline for ([_]struct { zglfw.Key, Action.Name }{
-        .{ .escape, .@"Toggle UI" },
         .{ .space, .@"Start/Pause" },
         .{ .d, .@"Debug UI" },
         .{ .f, .@"Toggle Fullscreen" },

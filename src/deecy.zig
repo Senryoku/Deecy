@@ -46,8 +46,12 @@ fn glfw_key_callback(window: *zglfw.Window, key: zglfw.Key, scancode: i32, actio
     if (maybe_app) |app| {
         if (zgui.io.getWantCaptureKeyboard()) return;
 
-        if (action == .press)
-            app.shortcuts.on_key(.{ .keyboard = .{ .key = key, .mods = .from_glfw(mods) } });
+        if (action == .press) {
+            // Escape is a special case in all "wait for input" functions. I'll keep it as the only non-modifiable shortcut.
+            if (key == .escape) {
+                app.toggle_ui();
+            } else app.shortcuts.on_key(.{ .keyboard = .{ .key = key, .mods = .from_glfw(mods) } });
+        }
     }
 }
 

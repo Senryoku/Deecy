@@ -910,37 +910,139 @@ pub fn draw(self: *@This()) !void {
             }
 
             if (zgui.beginTabItem("Shortcuts", .{})) {
-                // TODO: Make sortable. Sort by default: Type then key?
-                if (zgui.beginTable("Shortcuts##Table", .{ .column = 3 })) {
-                    zgui.tableSetupColumn("Type", .{});
-                    zgui.tableSetupColumn("Key/Button", .{});
-                    zgui.tableSetupColumn("Action", .{});
+                const Shortcuts = @import("ui/shortcuts.zig");
+                if (zgui.beginTable("Shortcuts##Table", .{ .column = 4, .flags = .{ .sortable = true, .sort_multi = true, .sizing = .fixed_fit } })) {
+                    const Column = enum(u32) { Type = 0, Key, Action };
+
+                    zgui.tableSetupColumn("Type", .{ .user_id = @intFromEnum(Column.Type) });
+                    zgui.tableSetupColumn("Key/Button", .{ .user_id = @intFromEnum(Column.Key) });
+                    zgui.tableSetupColumn("Action", .{ .user_id = @intFromEnum(Column.Action) });
+                    zgui.tableSetupColumn("", .{ .user_id = 4, .flags = .{ .no_sort = true } });
                     zgui.tableHeadersRow();
 
-                    // TODO: Sort.
+                    const SortedShortcut = struct {
+                        var sort_spec: ?zgui.TableSortSpecs = null;
+                        key: Shortcuts.Key,
+                        action: Shortcuts.Action.Name,
+
+                        fn column_order(col: Column, a: @This(), b: @This()) std.math.Order {
+                            switch (col) {
+                                .Type => return std.ascii.orderIgnoreCase(@tagName(std.meta.activeTag(a.key)), @tagName(std.meta.activeTag(b.key))),
+                                .Key => {
+                                    if (std.meta.activeTag(a.key) != std.meta.activeTag(b.key)) return column_order(.Type, a, b);
+                                    return switch (a.key) {
+                                        .keyboard => std.ascii.orderIgnoreCase(@tagName(a.key.keyboard.key), @tagName(b.key.keyboard.key)),
+                                        .controller => std.ascii.orderIgnoreCase(@tagName(a.key.controller), @tagName(b.key.controller)),
+                                    };
+                                },
+                                .Action => return std.ascii.orderIgnoreCase(@tagName(a.action), @tagName(b.action)),
+                            }
+                        }
+
+                        pub fn order(_: void, a: @This(), b: @This()) std.math.Order {
+                            if (sort_spec) |s| {
+                                for (0..@intCast(s.count)) |sort_order| {
+                                    for (s.specs[0..@intCast(s.count)]) |spec| {
+                                        if (spec.sort_direction != .none and spec.sort_order == sort_order) {
+                                            const ord = column_order(@enumFromInt(spec.user_id), a, b);
+                                            if (ord != .eq) return switch (spec.sort_direction) {
+                                                .ascending => ord,
+                                                .descending => ord.invert(),
+                                                .none => unreachable,
+                                            };
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            return std.math.Order.lt;
+                        }
+
+                        pub fn less_than(_: void, a: @This(), b: @This()) bool {
+                            return order({}, a, b) == .lt;
+                        }
+                    };
+                    SortedShortcut.sort_spec = zgui.tableGetSortSpecs();
+                    var sorted_list = try std.ArrayList(SortedShortcut).initCapacity(d._allocator, d.shortcuts.shortcuts.count());
+                    defer sorted_list.deinit(d._allocator);
+
                     var it = d.shortcuts.shortcuts.iterator();
                     while (it.next()) |entry| {
+                        sorted_list.appendAssumeCapacity(.{ .key = entry.key_ptr.*, .action = entry.value_ptr.name });
+                    }
+                    std.mem.sortUnstable(SortedShortcut, sorted_list.items, {}, SortedShortcut.less_than);
+
+                    var idx: i32 = 0;
+                    for (sorted_list.items) |*entry| {
+                        zgui.pushIntId(@intCast(idx));
+                        defer zgui.popId();
+                        idx += 1;
+
                         zgui.tableNextRow(.{});
                         _ = zgui.tableSetColumnIndex(0);
-                        zgui.text("{t}", .{std.meta.activeTag(entry.key_ptr.*)});
+                        zgui.text("{t}", .{std.meta.activeTag(entry.key)});
                         _ = zgui.tableSetColumnIndex(1);
-                        zgui.text("{f}", .{entry.key_ptr.*});
+                        if (zgui.button("E", .{})) {
+                            const maybe_key = wait_for.any_button(d);
+                            if (maybe_key) |key| {
+                                d.shortcuts.remove(entry.key);
+                                entry.key = switch (key) {
+                                    .keyboard => Shortcuts.Key{ .keyboard = .{ .key = key.keyboard.key, .mods = .from_glfw(key.keyboard.modifiers) } },
+                                    .controller => Shortcuts.Key{ .controller = key.controller },
+                                };
+                                try d.shortcuts.put(entry.key, entry.action);
+                            }
+                        }
+                        zgui.sameLine(.{});
+                        zgui.text("{f}", .{entry.key});
                         _ = zgui.tableSetColumnIndex(2);
-                        zgui.text("{t}", .{entry.value_ptr.name});
-                        // TODO: Edit in place
-                        // TODO: Delete
+                        zgui.setNextItemWidth(200.0);
+                        if (zgui.comboFromEnum("##Action", &entry.action)) {
+                            try d.shortcuts.put(entry.key, entry.action);
+                        }
+                        _ = zgui.tableSetColumnIndex(3);
+                        zgui.pushStyleColor4f(.{ .c = .{ 0.86, 0.12, 0.15, 1.0 }, .idx = .button });
+                        defer zgui.popStyleColor(.{ .count = 1 });
+                        if (zgui.button("X", .{})) {
+                            d.shortcuts.remove(entry.key);
+                        }
                     }
                     zgui.endTable();
                 }
-                // TODO: Add shortcuts
-                const static = struct {
-                    var action = @import("ui/shortcuts.zig").Action.Name.Screenshot;
-                };
-                _ = zgui.comboFromEnum("Action", &static.action);
-                zgui.sameLine(.{});
-                if (zgui.button("Add", .{})) {
-                    const button = wait_for.any_button(d);
-                    std.debug.print("Button: {any}\n", .{button});
+                zgui.separator();
+                {
+                    const static = struct {
+                        var action = Shortcuts.Action.Name.Screenshot;
+                        var key: ?Shortcuts.Key = null;
+                    };
+                    zgui.setNextItemWidth(200.0);
+                    _ = zgui.comboFromEnum("##NewAction", &static.action);
+                    zgui.sameLine(.{});
+                    if (static.key) |key| {
+                        zgui.text("{f}", .{key});
+                    } else {
+                        zgui.text("(None)", .{});
+                    }
+                    zgui.sameLine(.{});
+                    if (zgui.button("Select Key", .{})) {
+                        const maybe_key = wait_for.any_button(d);
+                        if (maybe_key) |key| {
+                            static.key = switch (key) {
+                                .keyboard => Shortcuts.Key{ .keyboard = .{ .key = key.keyboard.key, .mods = .from_glfw(key.keyboard.modifiers) } },
+                                .controller => Shortcuts.Key{ .controller = key.controller },
+                            };
+                        }
+                    }
+                    zgui.sameLine(.{});
+                    zgui.beginDisabled(.{ .disabled = static.key == null });
+                    defer zgui.endDisabled();
+                    if (zgui.button("Add", .{})) {
+                        if (static.key) |key|
+                            try d.shortcuts.put(key, static.action);
+                    }
+                }
+                if (zgui.button("Reset to default", .{})) {
+                    try d.shortcuts.load_default_shortcuts();
                 }
                 zgui.endTabItem();
             }
