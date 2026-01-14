@@ -846,43 +846,44 @@ pub fn draw(self: *@This()) !void {
                                     .Controller => try @import("ui/controller_settings.zig").draw_controller_settings(d, port),
                                     else => {},
                                 }
-                            }
-                            if (zgui.collapsingHeader("Expansion slots", .{ .default_open = true })) {
-                                if (d.dc.maple.ports[port].main) |_| {
-                                    inline for (0..2) |slot| {
-                                        zgui.pushIntId(slot);
-                                        defer zgui.popId();
-                                        var peripheral_type = std.meta.activeTag(d.config.controllers[port].subperipherals[slot]);
-                                        if (zgui.comboFromEnum("#" ++ &[1]u8{'0' + slot}, &peripheral_type)) {
-                                            d.deinit_peripheral(port, slot);
-                                            d.config.controllers[port].subperipherals[slot] = switch (peripheral_type) {
-                                                .None => .None,
-                                                .VMU => .{ .VMU = .{ .filename = Deecy.DefaultVMUPaths[port][slot] } },
-                                                .VibrationPack => .VibrationPack,
-                                            };
-                                            try d.init_peripheral(port, slot);
-                                        }
-                                        zgui.indent(.{});
-                                        defer zgui.unindent(.{});
-                                        if (d.dc.maple.ports[port].subperipherals[slot]) |*s| {
-                                            switch (s.*) {
-                                                .VMU => |vmu| {
-                                                    zgui.textColored(.{ 1.0, 1.0, 1.0, 0.75 }, "Loaded: {s}", .{vmu.backing_file_path});
-                                                    if (d.config.controllers[port].subperipherals[slot] == .VMU) {
-                                                        const vmu_config = &d.config.controllers[port].subperipherals[slot].VMU;
-                                                        if (vmu_config.filename.len < static.VMUFilenamesInputBuffers[port][slot].len - 1) {
-                                                            const c_str: [:0]u8 = static.VMUFilenamesInputBuffers[port][slot][0 .. static.VMUFilenamesInputBuffers[port][slot].len - 1 :0];
-                                                            _ = zgui.inputText("##Filename", .{ .buf = c_str });
-                                                            zgui.sameLine(.{});
-                                                            if (zgui.button("Load", .{})) {
-                                                                d.deinit_peripheral(port, slot);
-                                                                vmu_config.filename = static.VMUFilenamesInputBuffers[port][slot][0..std.mem.indexOfSentinel(u8, 0, c_str)];
-                                                                try d.init_peripheral(port, slot);
+
+                                if (zgui.collapsingHeader("Expansion slots", .{ .default_open = true })) {
+                                    if (d.dc.maple.ports[port].main) |_| {
+                                        inline for (0..2) |slot| {
+                                            zgui.pushIntId(slot);
+                                            defer zgui.popId();
+                                            var peripheral_type = std.meta.activeTag(d.config.controllers[port].subperipherals[slot]);
+                                            if (zgui.comboFromEnum("#" ++ &[1]u8{'0' + slot}, &peripheral_type)) {
+                                                d.deinit_peripheral(port, slot);
+                                                d.config.controllers[port].subperipherals[slot] = switch (peripheral_type) {
+                                                    .None => .None,
+                                                    .VMU => .{ .VMU = .{ .filename = Deecy.DefaultVMUPaths[port][slot] } },
+                                                    .VibrationPack => .VibrationPack,
+                                                };
+                                                try d.init_peripheral(port, slot);
+                                            }
+                                            zgui.indent(.{});
+                                            defer zgui.unindent(.{});
+                                            if (d.dc.maple.ports[port].subperipherals[slot]) |*s| {
+                                                switch (s.*) {
+                                                    .VMU => |vmu| {
+                                                        zgui.textDisabled("Loaded: {s}", .{vmu.backing_file_path});
+                                                        if (d.config.controllers[port].subperipherals[slot] == .VMU) {
+                                                            const vmu_config = &d.config.controllers[port].subperipherals[slot].VMU;
+                                                            if (vmu_config.filename.len < static.VMUFilenamesInputBuffers[port][slot].len - 1) {
+                                                                const c_str: [:0]u8 = static.VMUFilenamesInputBuffers[port][slot][0 .. static.VMUFilenamesInputBuffers[port][slot].len - 1 :0];
+                                                                _ = zgui.inputText("##Filename", .{ .buf = c_str });
+                                                                zgui.sameLine(.{});
+                                                                if (zgui.button("Load", .{})) {
+                                                                    d.deinit_peripheral(port, slot);
+                                                                    vmu_config.filename = static.VMUFilenamesInputBuffers[port][slot][0..std.mem.indexOfSentinel(u8, 0, c_str)];
+                                                                    try d.init_peripheral(port, slot);
+                                                                }
                                                             }
                                                         }
-                                                    }
-                                                },
-                                                else => {},
+                                                    },
+                                                    else => {},
+                                                }
                                             }
                                         }
                                     }
@@ -1034,7 +1035,7 @@ pub fn draw(self: *@This()) !void {
                     if (static.key) |key| {
                         zgui.text("{f}", .{key});
                     } else {
-                        zgui.text("(None)", .{});
+                        zgui.textUnformatted("(None)");
                     }
                     zgui.sameLine(.{});
                     zgui.setNextItemWidth(200.0);
@@ -1117,7 +1118,7 @@ pub fn draw_game_library(self: *@This()) !void {
         if (d.config.game_directory) |dir| {
             zgui.text("Directory: {s}", .{dir});
         } else {
-            zgui.text("Directory: None", .{});
+            zgui.textUnformatted("Directory: None");
         }
         zgui.sameLine(.{ .spacing = 24.0 });
         if (zgui.button("Refresh", .{})) {

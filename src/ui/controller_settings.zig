@@ -6,6 +6,7 @@ const zgpu = @import("zgpu");
 const Deecy = @import("../deecy.zig");
 const Dreamcast = @import("dreamcast");
 const termcolor = @import("termcolor");
+const helpers = @import("helpers");
 
 const wait_for = @import("wait_for_input.zig");
 const common = @import("common.zig");
@@ -24,19 +25,23 @@ fn controller_binding_tooltip(d: *Deecy, comptime port: u8, comptime field_name:
     if (zgui.isItemHovered(.{})) {
         zgui.setMouseCursor(.hand);
         if (zgui.beginTooltip()) {
-            zgui.textUnformatted(@import("helpers").title_case(field_name));
+            {
+                zgui.pushFont(null, 24.0);
+                defer zgui.popFont();
+                zgui.textUnformatted(helpers.title_case(field_name));
+            }
             zgui.separator();
             if (@hasField(Deecy.KeyboardBindings, field_name)) {
                 if (@field(d.config.keyboard_bindings[port], field_name)) |keyboard_binding| {
-                    zgui.text("Keyboard: {t}", .{keyboard_binding});
+                    zgui.text("Keyboard: {s}", .{helpers.title_case_enum(keyboard_binding)});
                 } else {
-                    zgui.text("Keyboard: None", .{});
+                    zgui.textUnformatted("Keyboard: None");
                 }
             }
             if (@field(d.config.controllers_bindings[port], controller_field_name)) |controller_binding| {
-                zgui.text("Controller: {t}", .{controller_binding});
+                zgui.text("Controller: {s}", .{helpers.title_case_enum(controller_binding)});
             } else {
-                zgui.text("Controller: None", .{});
+                zgui.textUnformatted("Controller: None");
             }
             zgui.textDisabled("Left click to edit controller binding.", .{});
             if (@hasField(Deecy.KeyboardBindings, field_name)) {
@@ -331,58 +336,69 @@ pub fn draw_controller_settings(d: *Deecy, comptime port: u8) !void {
 
     zgui.setCursorScreenPos(.{ x, y + s * IntendedSize });
 
-    // FIXME/TODO: Keeping this around for now, but ideally this shouldn't be needed anymore.
+    // FIXME/TODO: Keeping this around for now, but ideally this shouldn't be needed anymore (right now L/R *buttons* cannot be bound using the visual UI).
 
     if (gamepad_id) |gamepad| {
         if (zgui.collapsingHeader("Controller Bindings", .{})) {
             zgui.indent(.{});
             defer zgui.unindent(.{});
-            inline for (std.meta.fields(Deecy.ControllerBindings)) |field| {
-                if (zgui.button("Edit##" ++ field.name, .{})) {
-                    const maybe_button = switch (field.type) {
-                        ?zglfw.Gamepad.Button => wait_for.controller_button(d, gamepad),
-                        ?zglfw.Gamepad.Axis => wait_for.controller_axis(d, gamepad),
-                        else => @compileError("Unexpected field type"),
-                    };
-                    if (maybe_button) |button|
-                        @field(d.config.controllers_bindings[port], field.name) = button;
+            if (zgui.beginTable("##ControllerBindings", .{ .column = 4, .flags = .{ .sizing = .fixed_fit } })) {
+                zgui.tableSetupColumn("Guest", .{});
+                zgui.tableSetupColumn("Host", .{});
+                zgui.tableHeadersRow();
+                inline for (std.meta.fields(Deecy.ControllerBindings)) |field| {
+                    zgui.tableNextRow(.{});
+                    _ = zgui.tableNextColumn();
+                    zgui.text(helpers.title_case(field.name), .{});
+                    _ = zgui.tableNextColumn();
+                    if (zgui.button(Icons.Pen ++ "##" ++ field.name, .{})) {
+                        const maybe_button = switch (field.type) {
+                            ?zglfw.Gamepad.Button => wait_for.controller_button(d, gamepad),
+                            ?zglfw.Gamepad.Axis => wait_for.controller_axis(d, gamepad),
+                            else => @compileError("Unexpected field type"),
+                        };
+                        if (maybe_button) |button|
+                            @field(d.config.controllers_bindings[port], field.name) = button;
+                    }
+                    zgui.sameLine(.{});
+                    if (@field(d.config.controllers_bindings[port], field.name)) |key| {
+                        if (common.red_button(Icons.Trash ++ "##" ++ field.name, .{}))
+                            @field(d.config.controllers_bindings[port], field.name) = null;
+                        zgui.sameLine(.{});
+                        zgui.text("{s}", .{helpers.title_case_enum(key)});
+                    } else {
+                        zgui.text("None", .{});
+                    }
                 }
-                zgui.sameLine(.{});
-                {
-                    common.push_red_button_style();
-                    defer common.pop_red_button_style();
-                    if (zgui.button(Icons.Trash ++ "##" ++ field.name, .{}))
-                        @field(d.config.controllers_bindings[port], field.name) = null;
-                }
-                zgui.sameLine(.{});
-                if (@field(d.config.controllers_bindings[port], field.name)) |key| {
-                    zgui.text("{s}: {t}", .{ field.name, key });
-                } else {
-                    zgui.text("{s}: None", .{field.name});
-                }
+                zgui.endTable();
             }
         }
     }
     if (zgui.collapsingHeader("Keyboard Bindings", .{})) {
         zgui.indent(.{});
         defer zgui.unindent(.{});
-        inline for (std.meta.fields(Deecy.KeyboardBindings)) |field| {
-            if (zgui.button("Edit##" ++ field.name, .{})) {
-                @field(d.config.keyboard_bindings[port], field.name) = wait_for.keyboard(d);
+        if (zgui.beginTable("##KeyboardBindings", .{ .column = 2, .flags = .{ .sizing = .fixed_fit } })) {
+            zgui.tableSetupColumn("Guest", .{});
+            zgui.tableSetupColumn("Host", .{});
+            zgui.tableHeadersRow();
+            inline for (std.meta.fields(Deecy.KeyboardBindings)) |field| {
+                zgui.tableNextRow(.{});
+                _ = zgui.tableNextColumn();
+                zgui.text(helpers.title_case(field.name), .{});
+                _ = zgui.tableNextColumn();
+                if (zgui.button(Icons.Pen ++ "##" ++ field.name, .{}))
+                    @field(d.config.keyboard_bindings[port], field.name) = wait_for.keyboard(d);
+                zgui.sameLine(.{});
+                if (@field(d.config.keyboard_bindings[port], field.name)) |key| {
+                    if (common.red_button(Icons.Trash ++ "##" ++ field.name, .{}))
+                        @field(d.config.keyboard_bindings[port], field.name) = null;
+                    zgui.sameLine(.{});
+                    zgui.text("{s}", .{helpers.title_case_enum(key)});
+                } else {
+                    zgui.text("None", .{});
+                }
             }
-            zgui.sameLine(.{});
-            {
-                common.push_red_button_style();
-                defer common.pop_red_button_style();
-                if (zgui.button(Icons.Trash ++ "##" ++ field.name, .{}))
-                    @field(d.config.keyboard_bindings[port], field.name) = null;
-            }
-            zgui.sameLine(.{});
-            if (@field(d.config.keyboard_bindings[port], field.name)) |key| {
-                zgui.text("{s}: {t}", .{ field.name, key });
-            } else {
-                zgui.text("{s}: None", .{field.name});
-            }
+            zgui.endTable();
         }
     }
 }
