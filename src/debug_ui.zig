@@ -410,6 +410,14 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.text("IMASK: {d: >2} ", .{dc.cpu.sr.imask});
         zgui.text("GBR: {X:0>8}", .{dc.cpu.gbr});
         zgui.text("VBR: {X:0>8}", .{dc.cpu.vbr});
+        zgui.text("FPSCR: {t}", .{dc.cpu.fpscr.rm});
+        zgui.sameLine(.{});
+        text_highlighted(dc.cpu.fpscr.dn, " [DN]", .{});
+        zgui.sameLine(.{});
+        text_highlighted(dc.cpu.fpscr.pr == 1, " [PR]", .{});
+        zgui.sameLine(.{});
+        text_highlighted(dc.cpu.fpscr.sz == 1, " [SZ]", .{});
+        zgui.text(" - {X:0>8}", .{@as(u32, @bitCast(dc.cpu.fpscr))});
         zgui.beginGroup();
         for (0..8) |i| {
             zgui.text("R{d: <2}: {X:0>8}", .{ i, dc.cpu.R(@truncate(i)).* });

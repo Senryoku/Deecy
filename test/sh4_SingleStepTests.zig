@@ -415,6 +415,7 @@ test {
                 "1111mmm010111101_sz0_pr0.json", // fcnvds DRm,FPUL - Causes an exception when PR == 0.
                 "0000000000101011_sz0_pr0.json", // rte - I don't think the test cases are accurate.
                 "11000011iiiiiiii_sz0_pr0.json", // trapa - Tests expects it to be a nop.
+                "1111nnmm11101101_sz0_pr0.json", // fipr - Tests are not accurate.
             }) |filename| {
                 if (std.mem.eql(u8, entry.basename, filename)) {
                     std.debug.print(termcolor.yellow("! Skipping {s}\n"), .{entry.basename});

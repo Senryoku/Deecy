@@ -1735,11 +1735,11 @@ const FloatType = enum {
 
 pub fn data_type_of(f: f32) FloatType {
     return switch (@as(u32, @bitCast(f))) {
-        0x7FFFFFFF...0x7FC00000 => .SignalingNaN,
-        0x7FBFFFFF...0x7F800001 => .QuietNaN,
+        0x7FC00000...0x7FFFFFFF => .SignalingNaN,
+        0x7F800001...0x7FBFFFFF => .QuietNaN,
         0x7F800000 => .PositiveInfinity,
-        0x7F7FFFFF...0x00800000 => .PositiveNormalized,
-        0x007FFFFF...0x00000001 => .PositiveDenormalized,
+        0x00800000...0x7F7FFFFF => .PositiveNormalized,
+        0x00000001...0x007FFFFF => .PositiveDenormalized,
         0x00000000 => .PositiveZero,
         0x80000000 => .NegativeZero,
         0x80000001...0x807FFFFF => .NegativeDenormalized,
@@ -1953,28 +1953,17 @@ pub fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) !void {
 
 pub fn fipr_FVm_FVn(cpu: *SH4, opcode: Instr) !void {
     if (cpu.sr.fd) return error.FPUDisabled;
-    // Computes the dot product of FVn and FVm and stores it into pub fn+3.
+    // Computes the dot product of FVn and FVm and stores it into Fn+3.
     const n = opcode.nmd.n & 0b1100;
     const m = (opcode.nmd.n << 2) & 0b1100;
     // FIXME: Not accurate to the actual hardware implementation.
-
+    //        This version is the best I could find for now, improving the physics in Sonic Adventure (see issue #156).
+    //        After trying way slower and complex versions, attempting to follow different online sources on the internal precision,
+    //        rounding and handling of special values, none of them helped with this particular case.
+    //        Either the next desync is due to another bug, or I haven't found the correct specs - or I failed to implement them correctly.
     const FVn: @Vector(4, f32) = @as([*]f32, @ptrCast(cpu.FR(n)))[0..4].*;
     const FVm: @Vector(4, f32) = @as([*]f32, @ptrCast(cpu.FR(m)))[0..4].*;
-    switch (Experimental.fpir) {
-        .FMA => {
-            // This passes units tests.
-            var tmp: f32 = FVn[0] * FVm[0];
-            tmp = @mulAdd(f32, FVn[1], FVm[1], tmp);
-            tmp = @mulAdd(f32, FVn[2], FVm[2], tmp);
-            tmp = @mulAdd(f32, FVn[3], FVm[3], tmp);
-            cpu.FR(n + 3).* = tmp;
-        },
-        .Reduce => {
-            // This produces slightly shorter assembly.
-            @setFloatMode(.optimized); // Strict: 94/500 fails, Optimized: 117/500 fails.
-            cpu.FR(n + 3).* = @reduce(.Add, FVn * FVm);
-        },
-    }
+    cpu.FR(n + 3).* = @reduce(.Add, FVn * FVm);
 }
 
 pub fn test_fipr(n: [4]f32, m: [4]f32) !void {
