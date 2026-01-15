@@ -83,3 +83,9 @@ pub fn title_case(comptime input: []const u8) []const u8 {
     }
     return result;
 }
+
+pub fn title_case_enum(enum_value: anytype) []const u8 {
+    switch (enum_value) {
+        inline else => |value| return title_case(@tagName(value)),
+    }
+}

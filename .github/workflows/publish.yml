@@ -22,9 +22,9 @@ jobs:
           uses: mlugg/setup-zig@v2
           with:
             version: ${{ steps.zigversion.outputs.version }}
-        - name: Compile Deecy
-          run: zig build --release=fast
-        - name: Prepare artifact
+        - name: Compile Deecy for x86_64_v4
+          run: zig build --release=fast -Dcpu=x86_64_v4
+        - name: Prepare artifact for x86_64_v4
           run: |
             mkdir Deecy
             cp zig-out/bin/Deecy.exe Deecy/
@@ -35,7 +35,17 @@ jobs:
             printf "Copy dc_boot.bin and dc_flash.bin here." > Deecy/data/README.txt
         - uses: actions/upload-artifact@v4
           with: 
-            name: Deecy-x86_64-windows
+            name: Deecy-x86_64_v4-windows
+            path: Deecy/
+        - name: Compile Deecy for x86_64_v3
+          run: zig build --release=fast -Dcpu=x86_64_v3
+        - name: Prepare artifact for x86_64_v3
+          run: |
+            rm Deecy/Deecy.exe
+            cp zig-out/bin/Deecy.exe Deecy/
+        - uses: actions/upload-artifact@v4
+          with: 
+            name: Deecy-x86_64_v3-windows
             path: Deecy/
         - name: Compile Deecy for x86_64_v2
           run: zig build --release=fast -Dcpu=x86_64_v2
@@ -63,9 +73,9 @@ jobs:
           uses: mlugg/setup-zig@v2
           with:
             version: ${{ steps.zigversion.outputs.version }}
-        - name: Compile Deecy
-          run: zig build --release=fast
-        - name: Prepare artifact
+        - name: Compile Deecy for x86_64_v4
+          run: zig build --release=fast -Dcpu=x86_64_v4
+        - name: Prepare artifact for x86_64_v4
           run: |
             mkdir Deecy
             cp zig-out/bin/Deecy Deecy/
@@ -74,7 +84,17 @@ jobs:
             printf "Copy dc_boot.bin and dc_flash.bin here." > Deecy/data/README.txt
         - uses: actions/upload-artifact@v4
           with: 
-            name: Deecy-x86_64-linux
+            name: Deecy-x86_64_v4-linux
+            path: Deecy/
+        - name: Compile Deecy for x86_64_v3
+          run: zig build --release=fast -Dcpu=x86_64_v3
+        - name: Prepare artifact for x86_64_v3
+          run: |
+            rm Deecy/Deecy
+            cp zig-out/bin/Deecy Deecy/
+        - uses: actions/upload-artifact@v4
+          with: 
+            name: Deecy-x86_64_v3-linux
             path: Deecy/
         - name: Compile Deecy for x86_64_v2
           run: zig build --release=fast -Dcpu=x86_64_v2

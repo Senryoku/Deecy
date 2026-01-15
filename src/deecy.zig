@@ -32,6 +32,7 @@ pub const Renderer = @import("./renderer.zig").Renderer;
 
 pub const UI = @import("./deecy_ui.zig");
 const DebugUI = @import("./debug_ui.zig");
+const Shortcuts = @import("./ui/shortcuts.zig");
 
 const lz4 = @import("lz4");
 
@@ -45,66 +46,11 @@ fn glfw_key_callback(window: *zglfw.Window, key: zglfw.Key, scancode: i32, actio
     if (maybe_app) |app| {
         if (zgui.io.getWantCaptureKeyboard()) return;
 
-        if (!mods.shift and !mods.alt and !mods.control) {
-            if (action == .press) {
-                switch (key) {
-                    .escape => {
-                        app.display_ui = !app.display_ui;
-                    },
-                    .space => {
-                        if (app.running) {
-                            app.pause();
-                        } else {
-                            app.start();
-                        }
-                    },
-                    .d => app.config.display_debug_ui = !app.config.display_debug_ui,
-                    .f => app.toggle_fullscreen(),
-                    .l => app.set_realtime(!app.realtime),
-                    .n => {
-                        if (app.running) {
-                            app.pause();
-                        } else {
-                            for (app.dc.scheduled_events.items) |event| {
-                                if (event.event == .VBlankIn) {
-                                    const cycles = 1024 + (event.trigger_cycle -| app.dc._global_cycles);
-                                    app.run_for(cycles);
-                                    return;
-                                }
-                            }
-                        }
-                    },
-                    .F1, .F2, .F3, .F4 => {
-                        const idx: usize = switch (key) {
-                            .F1 => 0,
-                            .F2 => 1,
-                            .F3 => 2,
-                            .F4 => 3,
-                            else => unreachable,
-                        };
-                        app.save_state(idx) catch |err| {
-                            deecy_log.err(termcolor.red("Failed to save state #{d}: {t}"), .{ idx, err });
-                        };
-                    },
-                    .F5, .F6, .F7, .F8 => {
-                        const idx: usize = switch (key) {
-                            .F5 => 0,
-                            .F6 => 1,
-                            .F7 => 2,
-                            .F8 => 3,
-                            else => unreachable,
-                        };
-                        app.load_state(idx) catch |err| {
-                            deecy_log.err(termcolor.red("Failed to load state #{d}: {t}"), .{ idx, err });
-                        };
-                    },
-                    .F12 => app.save_screenshot() catch |err| {
-                        deecy_log.err(termcolor.red("Failed to save screenshot: {t}"), .{err});
-                        return;
-                    },
-                    else => {},
-                }
-            }
+        if (action == .press) {
+            // Escape is a special case in all "wait for input" functions. I'll keep it as the only non-modifiable shortcut.
+            if (key == .escape) {
+                app.toggle_ui();
+            } else app.shortcuts.on_key(.{ .keyboard = .{ .key = key, .mods = .from_glfw(mods) } });
         }
     }
 }
@@ -142,6 +88,7 @@ fn glfw_resize_callback(window: *zglfw.Window, width: i32, height: i32) callconv
 
 const assets_dir = "assets/";
 const DefaultFont = @embedFile(assets_dir ++ "fonts/Hack-Regular.ttf");
+const IconFont = @embedFile(assets_dir ++ "fonts/Font Awesome 7 Free-Solid-900.otf");
 
 /// Replaces invalid characters with underscores
 fn safe_path(path: []u8) void {
@@ -337,6 +284,8 @@ config: Configuration = .{},
 toggle_fullscreen_request: bool = false,
 previous_window_position: struct { x: i32 = 0, y: i32 = 0, w: i32 = 0, h: i32 = 0 } = .{},
 
+shortcuts: Shortcuts,
+
 running: bool = false,
 _cycles_to_run: i64 = 0,
 _stop_request: bool = false,
@@ -353,6 +302,7 @@ controllers: [4]?struct {
         power: f32 = 0,
         change: f32 = 0,
     } = .{},
+    last_state: zglfw.Gamepad.State = .{},
     // FIXME: Move to config?
     deadzone: f32 = 0.1,
 
@@ -423,6 +373,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         .window = undefined,
         .config = config,
         .breakpoints = .empty,
+        .shortcuts = try .init(allocator),
         ._allocator = allocator,
     };
 
@@ -573,6 +524,7 @@ pub fn destroy(self: *@This()) void {
 
     self.save_config() catch |err| deecy_log.err("Error writing config: {t}", .{err});
     self.config.deinit(self._allocator);
+    self.shortcuts.deinit(self._allocator);
 
     self.breakpoints.deinit(self._allocator);
 
@@ -635,10 +587,12 @@ fn ui_init(self: *@This()) !void {
     zgui.init(self._allocator);
     zgui.io.setConfigFlags(.{ .dock_enable = true });
 
-    _ = zgui.io.addFontFromMemory(
-        DefaultFont,
-        std.math.floor(16.0 * self.scale_factor),
-    );
+    _ = zgui.io.addFontFromMemory(DefaultFont, std.math.floor(16.0 * self.scale_factor));
+    var config = zgui.FontConfig.init();
+    config.merge_mode = true;
+    config.pixel_snap_h = true;
+    config.glyph_min_advance_x = 16.0 * self.scale_factor;
+    _ = zgui.io.addFontFromMemoryWithConfig(IconFont, std.math.floor(14.0 * self.scale_factor), config, null); // &[3]u16{ 0xe005, 0xf8ff, 0 });
 
     var style = zgui.getStyle();
 
@@ -948,10 +902,17 @@ pub fn poll_controllers(self: *@This()) void {
                         any_keyboard_key_pressed = true;
 
                     if (!any_keyboard_key_pressed) {
-                        if (self.controllers[controller_idx]) |host_controller| {
+                        if (self.controllers[controller_idx]) |*host_controller| {
                             if (host_controller.id.isPresent()) {
                                 if (host_controller.id.asGamepad()) |gamepad| {
                                     const gamepad_state = gamepad.getState() catch continue;
+                                    defer host_controller.last_state = gamepad_state;
+
+                                    inline for (std.meta.fields(zglfw.Gamepad.Button)) |button| {
+                                        if (gamepad_state.buttons[button.value] == .press and host_controller.last_state.buttons[button.value] == .release)
+                                            self.shortcuts.on_key(.{ .controller = @enumFromInt(button.value) });
+                                    }
+
                                     const config = self.config.controllers_bindings[controller_idx];
                                     const gamepad_binds: [9]struct { ?zglfw.Gamepad.Button, DreamcastModule.Maple.Controller.Buttons } = .{
                                         .{ config.start, .{ .start = 0 } },
@@ -974,9 +935,9 @@ pub fn poll_controllers(self: *@This()) void {
                                         }
                                     }
                                     if (config.right_trigger) |axis|
-                                        c.axis[0] = @as(u8, @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255));
+                                        c.axis[0] = @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255);
                                     if (config.left_trigger) |axis|
-                                        c.axis[1] = @as(u8, @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255));
+                                        c.axis[1] = @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255);
 
                                     const capabilities: DreamcastModule.Maple.Controller.InputCapabilities = @bitCast(c.subcapabilities[0]);
                                     inline for ([_]struct { host: ?zglfw.Gamepad.Axis, guest: u8 }{
@@ -992,7 +953,7 @@ pub fn poll_controllers(self: *@This()) void {
                                                     value = 0.0;
                                                 // TODO: Remap with deadzone?
                                                 value = value * 0.5 + 0.5;
-                                                c.axis[binding.guest] = @as(u8, @intFromFloat(std.math.ceil(value * 255)));
+                                                c.axis[binding.guest] = @intFromFloat(std.math.ceil(value * 255));
                                             }
                                         }
                                     }
@@ -1151,6 +1112,19 @@ fn check_save_state_slots(self: *@This()) !void {
     }
 }
 
+pub fn start_pause(self: *@This()) void {
+    if (self.running) {
+        self.pause();
+    } else {
+        self.start();
+    }
+}
+pub fn toggle_ui(self: *@This()) void {
+    self.display_ui = !self.display_ui;
+}
+pub fn toggle_debug_ui(self: *@This()) void {
+    self.config.display_debug_ui = !self.config.display_debug_ui;
+}
 pub fn toggle_fullscreen(self: *@This()) void {
     if (self.config.fullscreen) {
         self.config.fullscreen = false;
@@ -1178,6 +1152,38 @@ pub fn toggle_fullscreen(self: *@This()) void {
         self.window.setMonitor(monitor, 0, 0, mode.width, mode.height, mode.refresh_rate);
         self.config.fullscreen = true;
     }
+}
+pub fn toggle_realtime(self: *@This()) void {
+    self.set_realtime(!self.realtime);
+}
+pub fn next_vblankin(self: *@This()) void {
+    if (self.running) {
+        self.pause();
+    } else {
+        for (self.dc.scheduled_events.items) |event| {
+            if (event.event == .VBlankIn) {
+                const cycles = 1024 + (event.trigger_cycle -| self.dc._global_cycles);
+                self.run_for(cycles);
+                return;
+            }
+        }
+    }
+}
+pub fn save_state_idx(comptime idx: u8) fn (*Self) void {
+    std.debug.assert(idx < 4);
+    return struct {
+        pub fn save_state(self: *Self) void {
+            self.save_state(idx) catch |err| deecy_log.err(termcolor.red("Failed to save state: {}"), .{err});
+        }
+    }.save_state;
+}
+pub fn load_state_idx(comptime idx: u8) fn (*Self) void {
+    std.debug.assert(idx < 4);
+    return struct {
+        pub fn load_state(self: *Self) void {
+            self.load_state(idx) catch |err| deecy_log.err(termcolor.red("Failed to load state: {}"), .{err});
+        }
+    }.load_state;
 }
 
 pub fn start(self: *@This()) void {
@@ -1278,24 +1284,25 @@ pub fn draw_ui(self: *@This()) !void {
         if (self.config.display_debug_ui)
             try self.debug_ui.draw(self);
     }
-    if (self.config.performance_overlay != .Off and self.renderer.last_n_frametimes.count > 0) {
-        zgui.setNextWindowPos(.{ .x = 0, .y = if (self.display_ui) 22.0 else 0.0 });
-        if (zgui.begin("##PerformanceOverlay", .{ .flags = .{
-            .no_focus_on_appearing = true,
-            .no_bring_to_front_on_focus = true,
-            .no_resize = true,
-            .no_move = true,
-            .no_background = true,
-            .no_title_bar = true,
-            .no_mouse_inputs = true,
-            .no_nav_inputs = true,
-            .no_nav_focus = true,
-            .no_saved_settings = true,
-            .always_auto_resize = true,
-        } })) {
+    zgui.setNextWindowPos(.{ .x = 0, .y = if (self.display_ui) 22.0 else 0.0 });
+    if (zgui.begin("##PerformanceOverlay", .{ .flags = .{
+        .no_focus_on_appearing = true,
+        .no_bring_to_front_on_focus = true,
+        .no_resize = true,
+        .no_move = true,
+        .no_background = true,
+        .no_title_bar = true,
+        .no_mouse_inputs = true,
+        .no_nav_inputs = true,
+        .no_nav_focus = true,
+        .no_saved_settings = true,
+        .always_auto_resize = true,
+    } })) {
+        const status = if (self.running) if (self.realtime) UI.Icons.Play else UI.Icons.Forward else UI.Icons.Pause;
+        if (self.config.performance_overlay != .Off and self.renderer.last_n_frametimes.count > 0) {
             // TODO: Display VSync per second?
             const avg: f32 = @as(f32, @floatFromInt(self.renderer.last_n_frametimes.sum())) / @as(f32, @floatFromInt(self.renderer.last_n_frametimes.count));
-            zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
+            zgui.text("{s} {d: >4.1} ({d: >3.1}ms)", .{ status, 1000000.0 / avg, avg / 1000.0 });
             if (self.config.performance_overlay == .Detailed) {
                 const max_count = @TypeOf(self.renderer.last_n_frametimes).MaxCount;
                 var values: [max_count]f32 = undefined;
@@ -1352,6 +1359,34 @@ pub fn draw_ui(self: *@This()) !void {
                     });
                     zgui.plot.endPlot();
                 }
+            }
+        } else {
+            const static = struct {
+                var state: union(enum) { None, Fading: f64, Hidden } = .None;
+            };
+            if (self.running and self.realtime) {
+                // Fade it out during gameplay.
+                const HoldDuration = 1.0;
+                const FadeDuration = 1.0;
+                switch (static.state) {
+                    .None => static.state = .{ .Fading = zglfw.getTime() },
+                    .Fading => |start_time| {
+                        const now = zglfw.getTime();
+                        const diff: f32 = @floatCast(now - start_time);
+                        if (diff > HoldDuration + FadeDuration) {
+                            static.state = .Hidden;
+                        } else if (diff > HoldDuration) {
+                            const opacity = std.math.clamp(1.0 - (diff - HoldDuration) / FadeDuration, 0.0, 1.0);
+                            zgui.textColored(.{ 1.0, 1.0, 1.0, opacity }, "{s}", .{status});
+                        } else {
+                            zgui.text("{s}", .{status});
+                        }
+                    },
+                    .Hidden => {},
+                }
+            } else {
+                static.state = .None;
+                zgui.text("{s}", .{status});
             }
         }
         zgui.end();
@@ -1447,7 +1482,13 @@ fn run_for(self: *@This(), sh4_cycles: u64) void {
     }
 }
 
-fn save_screenshot(self: *const @This()) !void {
+pub fn save_screenshot(self: *const @This()) void {
+    self.save_screenshot_impl() catch |err| {
+        deecy_log.err(termcolor.red("Error saving screenshot: {}"), .{err});
+    };
+}
+
+fn save_screenshot_impl(self: *const @This()) !void {
     const screen = try self.renderer.capture(self._allocator);
     defer screen.deinit(self._allocator);
 
