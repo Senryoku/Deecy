@@ -126,15 +126,17 @@ fn glfw_drop_callback(window: *zglfw.Window, count: i32, paths: [*][*:0]const u8
 fn glfw_resize_callback(window: *zglfw.Window, width: i32, height: i32) callconv(.c) void {
     const maybe_app = window.getUserPointer(@This());
     if (maybe_app) |app| {
-        app.gctx.surface.configure(.{
-            .device = app.gctx.device,
-            .format = zgpu.GraphicsContext.surface_texture_format,
-            .usage = .{ .render_attachment = true },
-            .width = @intCast(width),
-            .height = @intCast(height),
-            .present_mode = app.gctx.present_mode,
-        });
-        app.on_resize();
+        if (width > 0 and height > 0) {
+            app.gctx.surface.configure(.{
+                .device = app.gctx.device,
+                .format = zgpu.GraphicsContext.surface_texture_format,
+                .usage = .{ .render_attachment = true },
+                .width = @intCast(width),
+                .height = @intCast(height),
+                .present_mode = app.gctx.present_mode,
+            });
+            app.on_resize();
+        }
     }
 }
 
