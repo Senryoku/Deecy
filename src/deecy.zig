@@ -1282,24 +1282,25 @@ pub fn draw_ui(self: *@This()) !void {
         if (self.config.display_debug_ui)
             try self.debug_ui.draw(self);
     }
-    if (self.config.performance_overlay != .Off and self.renderer.last_n_frametimes.count > 0) {
-        zgui.setNextWindowPos(.{ .x = 0, .y = if (self.display_ui) 22.0 else 0.0 });
-        if (zgui.begin("##PerformanceOverlay", .{ .flags = .{
-            .no_focus_on_appearing = true,
-            .no_bring_to_front_on_focus = true,
-            .no_resize = true,
-            .no_move = true,
-            .no_background = true,
-            .no_title_bar = true,
-            .no_mouse_inputs = true,
-            .no_nav_inputs = true,
-            .no_nav_focus = true,
-            .no_saved_settings = true,
-            .always_auto_resize = true,
-        } })) {
+    zgui.setNextWindowPos(.{ .x = 0, .y = if (self.display_ui) 22.0 else 0.0 });
+    if (zgui.begin("##PerformanceOverlay", .{ .flags = .{
+        .no_focus_on_appearing = true,
+        .no_bring_to_front_on_focus = true,
+        .no_resize = true,
+        .no_move = true,
+        .no_background = true,
+        .no_title_bar = true,
+        .no_mouse_inputs = true,
+        .no_nav_inputs = true,
+        .no_nav_focus = true,
+        .no_saved_settings = true,
+        .always_auto_resize = true,
+    } })) {
+        const status = if (self.running) if (self.realtime) UI.Icons.Play else UI.Icons.Forward else UI.Icons.Pause;
+        if (self.config.performance_overlay != .Off and self.renderer.last_n_frametimes.count > 0) {
             // TODO: Display VSync per second?
             const avg: f32 = @as(f32, @floatFromInt(self.renderer.last_n_frametimes.sum())) / @as(f32, @floatFromInt(self.renderer.last_n_frametimes.count));
-            zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
+            zgui.text("{s} {d: >4.1} ({d: >3.1}ms)", .{ status, 1000000.0 / avg, avg / 1000.0 });
             if (self.config.performance_overlay == .Detailed) {
                 const max_count = @TypeOf(self.renderer.last_n_frametimes).MaxCount;
                 var values: [max_count]f32 = undefined;
@@ -1356,6 +1357,34 @@ pub fn draw_ui(self: *@This()) !void {
                     });
                     zgui.plot.endPlot();
                 }
+            }
+        } else {
+            const static = struct {
+                var state: union(enum) { None, Fading: f64, Hidden } = .None;
+            };
+            if (self.running and self.realtime) {
+                // Fade it out during gameplay.
+                const HoldDuration = 1.0;
+                const FadeDuration = 1.0;
+                switch (static.state) {
+                    .None => static.state = .{ .Fading = zglfw.getTime() },
+                    .Fading => |start_time| {
+                        const now = zglfw.getTime();
+                        const diff: f32 = @floatCast(now - start_time);
+                        if (diff > HoldDuration + FadeDuration) {
+                            static.state = .Hidden;
+                        } else if (diff > HoldDuration) {
+                            const opacity = std.math.clamp(1.0 - (diff - HoldDuration) / FadeDuration, 0.0, 1.0);
+                            zgui.textColored(.{ 1.0, 1.0, 1.0, opacity }, "{s}", .{status});
+                        } else {
+                            zgui.text("{s}", .{status});
+                        }
+                    },
+                    .Hidden => {},
+                }
+            } else {
+                static.state = .None;
+                zgui.text("{s}", .{status});
             }
         }
         zgui.end();
