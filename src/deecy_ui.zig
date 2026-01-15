@@ -177,6 +177,7 @@ pub fn draw_vmus(self: *@This(), editable: bool) void {
         .no_background = !editable,
         .no_docking = true,
         .no_scrollbar = true,
+        .no_collapse = true,
     } })) {
         if (!editable) zgui.dummy(.{ .w = 0, .h = 18.0 });
         const win_width = zgui.getWindowSize()[0];
@@ -688,7 +689,7 @@ pub fn draw(self: *@This()) !void {
 
     zgui.setNextWindowSize(.{ .w = 290, .h = 800, .cond = .first_use_ever });
     zgui.setNextWindowPos(.{ .x = 1408, .y = 32, .cond = .first_use_ever });
-    if (zgui.begin("Settings", .{})) {
+    if (zgui.begin("Settings", .{ .flags = .{ .no_collapse = true } })) {
         if (zgui.beginTabBar("SettingsTabBar", .{})) {
             if (zgui.beginTabItem("Renderer", .{})) {
                 var fullscreen = self.deecy.config.fullscreen;
