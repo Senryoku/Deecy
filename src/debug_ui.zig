@@ -1354,6 +1354,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             d.renderer.on_inner_resolution_change(@intCast(fb_size[0]), @intCast(fb_size[1]), d.config.renderer.display_mode, d.config.renderer.scaling_filter);
         }
         zgui.separator();
+        zgui.text("Guest Framebuffer: {d}x{d}", .{ d.renderer.guest_framebuffer_size.width, d.renderer.guest_framebuffer_size.height });
         zgui.text("Min Depth: {d: >4.2}", .{d.renderer.min_depth});
         zgui.text("Max Depth: {d: >4.2}", .{d.renderer.max_depth});
         zgui.text("PT_ALPHA_REF: {d: >4.2}", .{d.renderer.pt_alpha_ref});

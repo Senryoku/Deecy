@@ -400,6 +400,10 @@ pub const TA_GLOB_TILE_CLIP = packed struct(u32) {
     /// This field specifies the Tile number in the Y direction (0 to 14) for the lower right corner of the Global Tile Clip. (default = 0x0) Set [the number of Tiles in the Y direction in the valid area] - 1. "15" (0xF) must not be specified.
     tile_y_num: u6,
     _1: u10,
+
+    pub fn pixel_size(self: @This()) struct { x: u32, y: u32 } {
+        return .{ .x = 32 * @as(u32, self.tile_x_num + 1), .y = 32 * @as(u32, self.tile_y_num + 1) };
+    }
 };
 
 /// This register must be set before the lists are initialized through the TA_LIST_INIT register.

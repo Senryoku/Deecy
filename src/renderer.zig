@@ -2013,24 +2013,9 @@ pub const Renderer = struct {
             self.fog_lut[i] = gpu.get_fog_table()[i] & 0x0000FFFF;
         }
 
-        // NOTE: The renderer will scale whatever the DC outputs to the host framebuffer size.
-        //       This isn't the correct behaviour, but I expect a limited set of correct configurations:
-        //         ta_glob_tile_clip.tile_x_num = 19 for a 640 pixels wide framebuffer.
-        //         ta_glob_tile_clip.tile_x_num = 39 with 0.5 scaling (see SCALER_CTL) still for a 640 pixels wide framebuffer.
-        //       A varity of combinations for the vertical resolution (depending on interlacing, line doubling...) that I don't
-        //       currently handle, but always resulting in a 480 pixels high framebuffer.
-        const ta_glob_tile_clip = gpu.read_register(HollyModule.TA_GLOB_TILE_CLIP, .TA_GLOB_TILE_CLIP);
-        if (ta_glob_tile_clip.tile_x_num != 19 and ta_glob_tile_clip.tile_x_num != 39)
-            if (Once(@src())) log.warn(termcolor.yellow("Unusual TA_GLOB_TILE_CLIP: tile_x_num={d}, tile_y_num={d}."), .{ ta_glob_tile_clip.tile_x_num, ta_glob_tile_clip.tile_y_num });
-        self.guest_framebuffer_size = .{
-            .width = 32 * @as(u32, ta_glob_tile_clip.tile_x_num + 1),
-            .height = 32 * @as(u32, ta_glob_tile_clip.tile_y_num + 1),
-        };
-
         self.fb_r_ctrl = gpu.read_register(HollyModule.FB_R_CTRL, .FB_R_CTRL);
         self.write_back_parameters = gpu.get_write_back_parameters();
         const vo_control = self.write_back_parameters.video_out_ctrl;
-
         // I suspect I'll have to come back to this: Printing some information to help detect unusual configurations.
         if (vo_control.pixel_double)
             if (Once(@src())) log.warn(termcolor.yellow("VO_CONTROL.pixel_double is set: {any}"), .{vo_control});
@@ -2039,9 +2024,32 @@ pub const Renderer = struct {
         if (self.fb_r_ctrl.line_double) // Not handled: Emit a warning.
             if (Once(@src())) log.warn(termcolor.yellow("FB_R_CTRL.line_double is set: {any}"), .{self.fb_r_ctrl});
 
-        const horizontal_scaling: u16 = if (vo_control.pixel_double) 2 else 1;
         // vclk_div == 0 for halved pixel clock (480i or 240p); vclk_div == 1 for VGA mode (480p)
-        const vertical_scaling: u16 = if (self.fb_r_ctrl.vclk_div == 0) 2 else 1;
+        const vga = self.fb_r_ctrl.vclk_div == 1;
+        const interlace = gpu.read_register(HollyModule.SPG_CONTROL, .SPG_CONTROL).interlace;
+        const render_to_texture = gpu.render_to_texture();
+
+        // NOTE: The renderer will scale whatever the DC outputs to the host framebuffer size.
+        //       This isn't the correct behaviour, but I expect a limited set of correct configurations, resulting in a 640x480 or 320x240 framebuffer:
+        //         ta_glob_tile_clip.tile_x_num = 19 for a 640 pixels wide framebuffer.
+        //         ta_glob_tile_clip.tile_x_num = 39 with 0.5 scaling still for a 640 pixels wide framebuffer.
+        //         ta_glob_tile_clip.tile_x_num = 9 with pixel doubling still for a 640 pixels wide framebuffer.
+        //       A varity of combinations for the vertical resolution (depending on VGA, interlacing, line doubling...),
+        //       but always resulting in a 480 or 240 pixels high framebuffer.
+        const ta_glob_tile_clip = gpu.read_register(HollyModule.TA_GLOB_TILE_CLIP, .TA_GLOB_TILE_CLIP);
+        if (ta_glob_tile_clip.tile_x_num != 19 and ta_glob_tile_clip.tile_x_num != 39)
+            if (Once(@src())) log.warn(termcolor.yellow("Unusual TA_GLOB_TILE_CLIP: tile_x_num={d}, tile_y_num={d}."), .{ ta_glob_tile_clip.tile_x_num, ta_glob_tile_clip.tile_y_num });
+        const ta_clip = ta_glob_tile_clip.pixel_size();
+        // Actual output size might not be a multiple of 32, can't only rely on the TA clip.
+        // TODO: Involve SCALER_CTL in this? (Still need to find a test case)
+        const output_height: u32 = if (!render_to_texture and !vga and !interlace) 240 else 480;
+        self.guest_framebuffer_size = .{
+            .width = ta_clip.x,
+            .height = @min(ta_clip.y, output_height),
+        };
+
+        const horizontal_scaling: u16 = if (vo_control.pixel_double) 2 else 1;
+        const vertical_scaling: u16 = if (!render_to_texture and !vga and !interlace) 2 else 1;
 
         self.global_clip.x.min = horizontal_scaling * self.write_back_parameters.x_clip.min;
         self.global_clip.x.max = horizontal_scaling * (@as(u16, self.write_back_parameters.x_clip.max) + 1);
