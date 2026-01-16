@@ -258,11 +258,10 @@ const MaplePort = struct {
                     }
                 },
                 .BlockRead => {
-                    std.debug.assert(function_type == @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })));
                     const partition: u8 = @truncate((data[3] >> 0) & 0xFF);
                     const phase: u8 = @truncate((data[3] >> 8) & 0xFF);
                     const block_num: u16 = @truncate(((data[3] >> 24) & 0xFF) | ((data[3] >> 8) & 0xFF00));
-                    log.warn(termcolor.yellow("BlockRead! Partition: {d} Block: {d}, Phase: {d} (data[3]: {X:0>8})"), .{ partition, block_num, phase, data[3] });
+                    log.warn(termcolor.yellow("BlockRead({f}) Partition: {d}, Block: {d}, Phase: {d} ({X:0>8})"), .{ @as(FunctionCodesMask, @bitCast(function_type)), partition, block_num, phase, data[3] });
 
                     const dest = @as([*]u8, @ptrCast(dc._get_memory(return_addr + 12)))[0..];
                     const payload_size = target.block_read(dest, function_type, partition, block_num, phase);
