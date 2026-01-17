@@ -1347,11 +1347,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             while (d.renderer.oit_horizontal_slices > 1 and d.renderer.resolution.height % (8 * d.renderer.oit_horizontal_slices) != 0) {
                 d.renderer.oit_horizontal_slices -= 1;
             }
-            // FIXME: Stupid workaround, on_inner_resolution_change locks the mutex internally
-            d.gctx_queue_mutex.unlock();
-            defer d.gctx_queue_mutex.lock();
-            const fb_size = d.window.getFramebufferSize();
-            d.renderer.on_inner_resolution_change(@intCast(fb_size[0]), @intCast(fb_size[1]), d.config.renderer.display_mode, d.config.renderer.scaling_filter);
+            d.renderer.on_inner_resolution_change(d.config.renderer.scaling_filter);
         }
         zgui.separator();
         zgui.text("Guest Framebuffer: {d}x{d}", .{ d.renderer.guest_framebuffer_size.width, d.renderer.guest_framebuffer_size.height });

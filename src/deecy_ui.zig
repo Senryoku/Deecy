@@ -700,26 +700,17 @@ pub fn draw(self: *@This()) !void {
                 zgui.setNextItemWidth(128.0);
                 var resolution: enum(u8) { Native = 1, x2 = 2, x3 = 3, x4 = 4, x5 = 5 } = @enumFromInt(d.renderer.resolution.width / Deecy.Renderer.NativeResolution.width);
                 if (zgui.comboFromEnum("Resolution", &resolution)) {
-                    // We're currently holding the rendering lock so it shouldn't really be needed, but in practice this crashes when rendering to a texture is used and the emulation thread is let running.
-                    // I don't understand why, but I guess it's safer this way anyway.
-                    const was_running = d.running;
-                    if (was_running) d.pause();
+                    d.gctx_queue_mutex.lock();
+                    defer d.gctx_queue_mutex.unlock();
                     d.config.renderer.internal_resolution_factor = @intFromEnum(resolution);
                     d.renderer.resolution = .{ .width = Deecy.Renderer.NativeResolution.width * @intFromEnum(resolution), .height = Deecy.Renderer.NativeResolution.height * @intFromEnum(resolution) };
-                    const fb_size = d.window.getFramebufferSize();
-                    d.renderer.on_inner_resolution_change(@intCast(fb_size[0]), @intCast(fb_size[1]), d.config.renderer.display_mode, d.config.renderer.scaling_filter);
-                    if (was_running) {
-                        d.start();
-                    } else {
-                        // Force a re-render if we're paused
+                    d.renderer.on_inner_resolution_change(d.config.renderer.scaling_filter);
+                    //  Force a re-render if we're paused
+                    if (d.running)
                         try d.renderer.render(&d.dc.gpu, false);
-                    }
                 }
                 zgui.setNextItemWidth(128.0);
-                if (zgui.comboFromEnum("Display Mode", &d.config.renderer.display_mode)) {
-                    const fb_size = d.window.getFramebufferSize();
-                    d.renderer.update_blit_to_screen_vertex_buffer(@intCast(fb_size[0]), @intCast(fb_size[1]), d.config.renderer.display_mode);
-                }
+                _ = zgui.comboFromEnum("Display Mode", &d.config.renderer.display_mode);
                 zgui.setNextItemWidth(128.0);
                 if (zgui.comboFromEnum("Scaling Filter", &d.config.renderer.scaling_filter)) {
                     d.renderer.set_scaling_filter(d.config.renderer.scaling_filter);

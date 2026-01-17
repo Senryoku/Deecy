@@ -119,6 +119,60 @@ pub const HollyRegister = enum(u32) {
 
 pub const HollyRegisterStart: u32 = 0x005F8000;
 
+const VideoModeDefaultRegisters = struct { spg_load: SPG_LOAD, spg_hblank: SPG_HBLANK, spg_vblank: SPG_VBLANK, spg_width: SPG_WIDTH, spg_control: SPG_CONTROL, vo_startx: VO_STARTX, vo_starty: VO_STARTY, vo_control: VO_CONTROL };
+pub const VideoModes = struct {
+    pub const NTSC = VideoModeDefaultRegisters{
+        .spg_load = @bitCast(@as(u32, 0x01060359)),
+        .spg_hblank = @bitCast(@as(u32, 0x007E0345)),
+        .spg_vblank = @bitCast(@as(u32, 0x00120102)),
+        .spg_width = @bitCast(@as(u32, 0x03F1933F)),
+        .spg_control = @bitCast(@as(u32, 0x00000140)),
+        .vo_startx = @bitCast(@as(u32, 0x000000A4)),
+        .vo_starty = @bitCast(@as(u32, 0x00120011)),
+        .vo_control = @bitCast(@as(u32, 0x00160000)), // 320p: 0x00160100
+    };
+    pub const NTSCInterlace = VideoModeDefaultRegisters{
+        .spg_load = @bitCast(@as(u32, 0x020C0359)),
+        .spg_hblank = @bitCast(@as(u32, 0x007E0345)),
+        .spg_vblank = @bitCast(@as(u32, 0x00240204)),
+        .spg_width = @bitCast(@as(u32, 0x07D6C63F)),
+        .spg_control = @bitCast(@as(u32, 0x00000150)),
+        .vo_startx = @bitCast(@as(u32, 0x000000A4)),
+        .vo_starty = @bitCast(@as(u32, 0x00120012)),
+        .vo_control = @bitCast(@as(u32, 0x00160000)), // 320p: 0x00160100
+    };
+    pub const PAL = VideoModeDefaultRegisters{
+        .spg_load = @bitCast(@as(u32, 0x0138035F)),
+        .spg_hblank = @bitCast(@as(u32, 0x008D034B)),
+        .spg_vblank = @bitCast(@as(u32, 0x002C026C)),
+        .spg_width = @bitCast(@as(u32, 0x07F1F53F)),
+        .spg_control = @bitCast(@as(u32, 0x00000180)),
+        .vo_startx = @bitCast(@as(u32, 0x000000AE)),
+        .vo_starty = @bitCast(@as(u32, 0x002E002E)),
+        .vo_control = @bitCast(@as(u32, 0x00160000)), // 320p: 0x00160100
+    };
+    pub const PALInterlace = VideoModeDefaultRegisters{
+        .spg_load = @bitCast(@as(u32, 0x0270035F)),
+        .spg_hblank = @bitCast(@as(u32, 0x008D034B)),
+        .spg_vblank = @bitCast(@as(u32, 0x002C026C)),
+        .spg_width = @bitCast(@as(u32, 0x07D6A53F)),
+        .spg_control = @bitCast(@as(u32, 0x00000190)),
+        .vo_startx = @bitCast(@as(u32, 0x000000AE)),
+        .vo_starty = @bitCast(@as(u32, 0x002E002D)),
+        .vo_control = @bitCast(@as(u32, 0x00160000)), // 320p: 0x00160100
+    };
+    pub const VGA = VideoModeDefaultRegisters{
+        .spg_load = @bitCast(@as(u32, 0x020C0359)),
+        .spg_hblank = @bitCast(@as(u32, 0x007E0345)),
+        .spg_vblank = @bitCast(@as(u32, 0x00280208)),
+        .spg_width = @bitCast(@as(u32, 0x03F1933F)),
+        .spg_control = @bitCast(@as(u32, 0x00000100)),
+        .vo_startx = @bitCast(@as(u32, 0x000000A8)),
+        .vo_starty = @bitCast(@as(u32, 0x00280028)),
+        .vo_control = @bitCast(@as(u32, 0x00160000)),
+    };
+};
+
 pub const SOFT_RESET = packed struct(u32) {
     TASoftReset: bool = false,
     PipelineSoftReset: bool = false,
@@ -391,6 +445,18 @@ pub const VO_CONTROL = packed struct(u32) {
     /// This field specifies the delay for the PCLK signal to the DAC.
     pclk_delay: u6,
     _r1: u10,
+};
+
+pub const VO_STARTX = packed struct(u32) {
+    horizontal_start_position: u10,
+    _: u22,
+};
+
+pub const VO_STARTY = packed struct(u32) {
+    vertical_start_position_on_field1: u10,
+    _r0: u6,
+    vertical_start_position_on_field2: u10,
+    _r1: u6,
 };
 
 pub const TA_GLOB_TILE_CLIP = packed struct(u32) {

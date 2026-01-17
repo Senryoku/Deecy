@@ -810,6 +810,9 @@ pub const Renderer = struct {
     global_clip: struct { x: struct { min: u16, max: u16 }, y: struct { min: u16, max: u16 } } = .{ .x = .{ .min = 0, .max = 0 }, .y = .{ .min = 0, .max = 0 } },
     fb_r_ctrl: HollyModule.FB_R_CTRL = undefined,
     write_back_parameters: HollyModule.Holly.WritebackParameters = undefined,
+    spg_control: HollyModule.SPG_CONTROL = undefined,
+    vo_startx: HollyModule.VO_STARTX = undefined,
+    vo_starty: HollyModule.VO_STARTY = undefined,
     palette_bgra: []u32,
 
     // Some memory to avoid repeated allocations accross frames.
@@ -888,7 +891,7 @@ pub const Renderer = struct {
         });
     }
 
-    pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, gctx_queue_mutex: *std.Thread.Mutex, window_width: u32, window_height: u32, config: Configuration) !*Renderer {
+    pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, gctx_queue_mutex: *std.Thread.Mutex, config: Configuration) !*Renderer {
         const start = std.time.milliTimestamp();
         defer log.info("Renderer initialized in {d}ms", .{std.time.milliTimestamp() - start});
 
@@ -1506,7 +1509,7 @@ pub const Renderer = struct {
             for (renderer.texture_metadata[i]) |*tm| tm.* = .{};
         }
 
-        renderer.on_inner_resolution_change(window_width, window_height, config.display_mode, config.scaling_filter);
+        renderer.on_inner_resolution_change(config.scaling_filter);
 
         return renderer;
     }
@@ -1634,6 +1637,9 @@ pub const Renderer = struct {
         }
 
         self.on_render_start_param_base = dc.gpu.read_register(u32, .PARAM_BASE);
+        self.spg_control = dc.gpu.read_register(HollyModule.SPG_CONTROL, .SPG_CONTROL);
+        self.vo_startx = dc.gpu.read_register(HollyModule.VO_STARTX, .VO_STARTX);
+        self.vo_starty = dc.gpu.read_register(HollyModule.VO_STARTY, .VO_STARTY);
 
         // Clear the previous used TA lists and swap it with the one submitted by the game.
         // NOTE: Clearing the lists here means the game cannot render lists more than once (i.e. starting a render without
@@ -1933,7 +1939,7 @@ pub const Renderer = struct {
     /// Uploads framebuffer from guest VRAM to host texture.
     /// Locks gctx_queue_mutex.
     pub fn update_framebuffer_texture(self: *@This(), holly: *const HollyModule.Holly) void {
-        const SPG_CONTROL = holly.read_register(HollyModule.SPG_CONTROL, .SPG_CONTROL);
+        const SPG_CONTROL = self.spg_control;
         const FB_R_CTRL = holly.read_register(HollyModule.FB_R_CTRL, .FB_R_CTRL);
         const FB_R_SOF1 = holly.read_register(u32, .FB_R_SOF1);
         const FB_R_SOF2 = holly.read_register(u32, .FB_R_SOF2);
@@ -2042,7 +2048,7 @@ pub const Renderer = struct {
 
         // vclk_div == 0 for halved pixel clock (480i or 240p); vclk_div == 1 for VGA mode (480p)
         const vga = self.fb_r_ctrl.vclk_div == 1;
-        const interlace = gpu.read_register(HollyModule.SPG_CONTROL, .SPG_CONTROL).interlace;
+        const interlace = self.spg_control.interlace;
         const render_to_texture = gpu.render_to_texture();
 
         // NOTE: The renderer will scale whatever the DC outputs to the host framebuffer size.
@@ -3703,9 +3709,11 @@ pub const Renderer = struct {
 
     /// Blit the last rendered frame to the window surface.
     /// Locks _gctx_queue_mutex.
-    pub fn draw(self: *const @This()) void {
+    pub fn draw(self: *const @This(), display_mode: DisplayMode, window_width: u32, window_height: u32) void {
         self._gctx_queue_mutex.lock();
         defer self._gctx_queue_mutex.unlock();
+
+        self.update_blit_to_screen_vertex_buffer(window_width, window_height, display_mode);
 
         if (self._gctx.lookupResource(self.blit_pipeline)) |pipeline| {
             var surface: zgpu.wgpu.SurfaceTexture = undefined;
@@ -3873,7 +3881,7 @@ pub const Renderer = struct {
     }
 
     /// Creates all resources that depends on the render size
-    pub fn on_inner_resolution_change(self: *@This(), width: u32, height: u32, display_mode: DisplayMode, scaling_filter: Filter) void {
+    pub fn on_inner_resolution_change(self: *@This(), scaling_filter: Filter) void {
         self.deinit_screen_textures();
 
         // This is currently the largest buffer whose size is dependent on the resolution. Make sure we can allocate it.
@@ -3913,8 +3921,6 @@ pub const Renderer = struct {
         self.create_translucent_modvol_bind_group();
         self.create_translucent_modvol_merge_bind_group();
         self.create_blend_bind_groups();
-
-        self.update_blit_to_screen_vertex_buffer(width, height, display_mode);
     }
 
     /// Returns the rendered frame as RGBA pixels.
@@ -3987,7 +3993,7 @@ pub const Renderer = struct {
         } else return error.WaitFailed;
     }
 
-    // Locks gctx_queue_mutex.
+    // Assumes gctx_queue_mutex is locked.
     pub fn update_blit_to_screen_vertex_buffer(self: *const @This(), width: u32, height: u32, display_mode: DisplayMode) void {
         const iw: f32 = @floatFromInt(self.resolution.width);
         const ih: f32 = @floatFromInt(self.resolution.height);
@@ -3999,7 +4005,7 @@ pub const Renderer = struct {
             .Fit
         else
             display_mode;
-        const blit_vertex_data = switch (actual_dm) {
+        var blit_vertex_data = switch (actual_dm) {
             .Center => [_]f32{
                 // x    y     u    v
                 -@min(1.0, iw / tw), @min(1.0, ih / th),  0.0, 0.0,
@@ -4028,8 +4034,23 @@ pub const Renderer = struct {
                 -1.0, -1.0, 0.0, 1.0,
             },
         };
-        self._gctx_queue_mutex.lock();
-        defer self._gctx_queue_mutex.unlock();
+        const defaults =
+            if (self.spg_control.PAL == 1)
+                if (self.spg_control.interlace) HollyModule.VideoModes.PALInterlace else HollyModule.VideoModes.PAL
+            else if (self.spg_control.NTSC == 1)
+                if (self.spg_control.interlace) HollyModule.VideoModes.NTSCInterlace else HollyModule.VideoModes.NTSC
+            else
+                HollyModule.VideoModes.VGA;
+        const pixel_shifts: [2]f32 = .{
+            @as(f32, @floatFromInt(self.vo_startx.horizontal_start_position)) - @as(f32, @floatFromInt(defaults.vo_startx.horizontal_start_position)),
+            @as(f32, @floatFromInt(self.vo_starty.vertical_start_position_on_field1)) - @as(f32, @floatFromInt(defaults.vo_starty.vertical_start_position_on_field1)),
+        };
+        const native_horizontal_resolution: f32 = if (self.write_back_parameters.video_out_ctrl.pixel_double) 320 else 640;
+        const native_vertical_resolution: f32 = if ((self.spg_control.NTSC == 1 or self.spg_control.PAL == 1) and !self.spg_control.interlace) 240 else 480;
+        for (0..4) |i| {
+            blit_vertex_data[i * 4 + 0] += 2.0 * pixel_shifts[0] / native_horizontal_resolution;
+            blit_vertex_data[i * 4 + 1] -= 2.0 * pixel_shifts[1] / native_vertical_resolution; // Coordinates are [-1, 1], with -1 being up.
+        }
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.blit_to_window_vertex_buffer).?, 0, f32, blit_vertex_data[0..]);
     }
 

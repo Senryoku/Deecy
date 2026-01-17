@@ -496,8 +496,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         self.dc.cable_type = config.video_cable.to_dreamcast();
     }
 
-    const fb_size = self.window.getFramebufferSize();
-    self.renderer = try .create(self._allocator, self.gctx, &self.gctx_queue_mutex, @intCast(fb_size[0]), @intCast(fb_size[1]), config.renderer);
+    self.renderer = try .create(self._allocator, self.gctx, &self.gctx_queue_mutex, config.renderer);
     self.dc.on_render_start = .{
         .function = @ptrCast(&Renderer.on_render_start),
         .context = self.renderer,
@@ -1255,14 +1254,12 @@ pub fn dc_thread_loop_realtime(self: *@This()) void {
     }
 }
 
-/// Locks gctx_queue_mutex (via Renderer.update_blit_to_screen_vertex_buffer).
 pub fn on_resize(self: *@This()) void {
     const fb_size = self.window.getFramebufferSize();
     if (!self.config.fullscreen) {
         self.config.window_size.width = @intCast(fb_size[0]);
         self.config.window_size.height = @intCast(fb_size[1]);
     }
-    self.renderer.update_blit_to_screen_vertex_buffer(@intCast(fb_size[0]), @intCast(fb_size[1]), self.config.renderer.display_mode);
 }
 
 /// Locks gctx_queue_mutex.
