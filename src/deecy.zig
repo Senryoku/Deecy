@@ -213,6 +213,7 @@ const Configuration = struct {
     per_game_vmu: bool = true,
     performance_overlay: enum { Off, Simple, Detailed } = .Simple,
     display_vmus: bool = true,
+    display_settings: bool = false,
     game_directory: ?[]const u8 = null,
     display_debug_ui: bool = false,
 

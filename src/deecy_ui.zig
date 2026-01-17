@@ -160,14 +160,14 @@ pub fn upload_vmu_texture(self: *@This(), controller: u8) void {
 }
 
 pub fn draw_vmus(self: *@This(), editable: bool) void {
-    if ((editable and self.deecy.config.display_debug_ui) or (!editable and !self.deecy.config.display_vmus)) return;
+    if (!self.deecy.config.display_vmus) return;
 
     zgui.setNextWindowSize(.{ .w = 4 * 48, .h = 2 * (4 * 32 + 8), .cond = .first_use_ever });
     zgui.setNextWindowPos(.{ .x = 32, .y = 32, .cond = .first_use_ever });
 
     zgui.pushStyleVar2f(.{ .idx = .window_padding, .v = .{ 0.0, 0.0 } });
 
-    if (zgui.begin("VMUs", .{ .flags = .{
+    if (zgui.begin("VMUs", .{ .popen = &self.deecy.config.display_vmus, .flags = .{
         .no_resize = !editable,
         .no_move = !editable,
         .no_title_bar = !editable,
@@ -661,10 +661,13 @@ pub fn draw(self: *@This()) !void {
             }
             zgui.endMenu();
         }
-        if (zgui.beginMenu("Settings", true)) {
+        if (zgui.beginMenu("Windows", true)) {
             _ = menu_from_enum("Performance Overlay", &d.config.performance_overlay, .{});
-            if (zgui.menuItem("Display VMUs", .{ .selected = d.config.display_vmus })) {
+            if (zgui.menuItem("VMUs", .{ .selected = d.config.display_vmus })) {
                 d.config.display_vmus = !d.config.display_vmus;
+            }
+            if (zgui.menuItem("Settings", .{ .selected = d.config.display_settings })) {
+                d.config.display_settings = !d.config.display_settings;
             }
             zgui.separator();
             if (zgui.menuItem("Debug Menu", .{ .selected = d.config.display_debug_ui, .shortcut = "D" })) {
@@ -687,375 +690,377 @@ pub fn draw(self: *@This()) !void {
             }
         };
 
-    zgui.setNextWindowSize(.{ .w = 290, .h = 800, .cond = .first_use_ever });
-    zgui.setNextWindowPos(.{ .x = 1408, .y = 32, .cond = .first_use_ever });
-    if (zgui.begin("Settings", .{ .flags = .{ .no_collapse = true } })) {
-        if (zgui.beginTabBar("SettingsTabBar", .{})) {
-            if (zgui.beginTabItem("Renderer", .{})) {
-                var fullscreen = self.deecy.config.fullscreen;
-                if (zgui.checkbox("Fullscreen", .{ .v = &fullscreen })) {
-                    self.deecy.toggle_fullscreen();
-                }
-                zgui.text("Curent Resolution: {d}x{d}", .{ d.renderer.resolution.width, d.renderer.resolution.height });
-                zgui.setNextItemWidth(128.0);
-                var resolution: enum(u8) { Native = 1, x2 = 2, x3 = 3, x4 = 4, x5 = 5 } = @enumFromInt(d.renderer.resolution.width / Deecy.Renderer.NativeResolution.width);
-                if (zgui.comboFromEnum("Resolution", &resolution)) {
-                    d.gctx_queue_mutex.lock();
-                    defer d.gctx_queue_mutex.unlock();
-                    d.config.renderer.internal_resolution_factor = @intFromEnum(resolution);
-                    d.renderer.resolution = .{ .width = Deecy.Renderer.NativeResolution.width * @intFromEnum(resolution), .height = Deecy.Renderer.NativeResolution.height * @intFromEnum(resolution) };
-                    d.renderer.on_inner_resolution_change(d.config.renderer.scaling_filter);
-                    //  Force a re-render if we're paused
-                    if (d.running)
-                        try d.renderer.render(&d.dc.gpu, false);
-                }
-                zgui.setNextItemWidth(128.0);
-                _ = zgui.comboFromEnum("Display Mode", &d.config.renderer.display_mode);
-                zgui.setNextItemWidth(128.0);
-                if (zgui.comboFromEnum("Scaling Filter", &d.config.renderer.scaling_filter)) {
-                    d.renderer.set_scaling_filter(d.config.renderer.scaling_filter);
-                }
-                zgui.separator();
-
-                {
-                    const static = struct {
-                        var available_modes_buffer: [@typeInfo(zgpu.wgpu.PresentMode).@"enum".fields.len]zgpu.wgpu.PresentMode = @splat(.undefined);
-                        var available_modes_count: u32 = 0;
-                        var present_modes: []const zgpu.wgpu.PresentMode = &.{};
-                        pub fn init(deecy: *Deecy) !void {
-                            const capabilities = try deecy.gctx.surface.getCapabilities(deecy.gctx.adapter);
-                            defer capabilities.deinit();
-                            available_modes_count = @intCast(capabilities.getPresentModes().len);
-                            for (capabilities.getPresentModes(), 0..) |present_mode, idx|
-                                available_modes_buffer[idx] = present_mode;
-                            present_modes = available_modes_buffer[0..available_modes_count];
-                        }
-                    };
-                    if (Once(@src())) try static.init(d);
-
+    if (self.deecy.config.display_settings) {
+        zgui.setNextWindowSize(.{ .w = 290, .h = 800, .cond = .first_use_ever });
+        zgui.setNextWindowPos(.{ .x = 1408, .y = 32, .cond = .first_use_ever });
+        if (zgui.begin("Settings", .{ .popen = &self.deecy.config.display_settings, .flags = .{ .no_collapse = true } })) {
+            if (zgui.beginTabBar("SettingsTabBar", .{})) {
+                if (zgui.beginTabItem("Renderer", .{})) {
+                    var fullscreen = self.deecy.config.fullscreen;
+                    if (zgui.checkbox("Fullscreen", .{ .v = &fullscreen })) {
+                        self.deecy.toggle_fullscreen();
+                    }
+                    zgui.text("Curent Resolution: {d}x{d}", .{ d.renderer.resolution.width, d.renderer.resolution.height });
                     zgui.setNextItemWidth(128.0);
-                    if (zgui.beginCombo("Present Mode", .{ .preview_value = @tagName(Deecy.PresentMode.fromWGPU(d.gctx.present_mode)) })) {
-                        for (static.present_modes) |present_mode| {
-                            if (zgui.selectable(@tagName(Deecy.PresentMode.fromWGPU(present_mode)), .{ .selected = d.gctx.present_mode == present_mode })) {
-                                d.gctx.present_mode = present_mode;
-                                d.config.present_mode = Deecy.PresentMode.fromWGPU(d.gctx.present_mode);
-                                const fb_size = d.window.getFramebufferSize();
-                                d.gctx.surface.configure(.{
-                                    .device = d.gctx.device,
-                                    .format = zgpu.GraphicsContext.surface_texture_format,
-                                    .usage = .{ .render_attachment = true },
-                                    .width = @intCast(fb_size[0]),
-                                    .height = @intCast(fb_size[1]),
-                                    .present_mode = d.gctx.present_mode,
-                                });
-                            }
-                        }
-                        zgui.endCombo();
+                    var resolution: enum(u8) { Native = 1, x2 = 2, x3 = 3, x4 = 4, x5 = 5 } = @enumFromInt(d.renderer.resolution.width / Deecy.Renderer.NativeResolution.width);
+                    if (zgui.comboFromEnum("Resolution", &resolution)) {
+                        d.gctx_queue_mutex.lock();
+                        defer d.gctx_queue_mutex.unlock();
+                        d.config.renderer.internal_resolution_factor = @intFromEnum(resolution);
+                        d.renderer.resolution = .{ .width = Deecy.Renderer.NativeResolution.width * @intFromEnum(resolution), .height = Deecy.Renderer.NativeResolution.height * @intFromEnum(resolution) };
+                        d.renderer.on_inner_resolution_change(d.config.renderer.scaling_filter);
+                        //  Force a re-render if we're paused
+                        if (d.running)
+                            try d.renderer.render(&d.dc.gpu, false);
+                    }
+                    zgui.setNextItemWidth(128.0);
+                    _ = zgui.comboFromEnum("Display Mode", &d.config.renderer.display_mode);
+                    zgui.setNextItemWidth(128.0);
+                    if (zgui.comboFromEnum("Scaling Filter", &d.config.renderer.scaling_filter)) {
+                        d.renderer.set_scaling_filter(d.config.renderer.scaling_filter);
                     }
                     zgui.separator();
-                }
 
-                zgui.text("Experimental settings", .{});
-                zgui.setNextItemWidth(128.0);
-                _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
-                _ = zgui.checkbox("Framebuffer Emulation", .{ .v = &d.renderer.ExperimentalFramebufferEmulation });
-                _ = zgui.checkbox("Render to Texture", .{ .v = &d.renderer.ExperimentalRenderToTexture });
-                _ = zgui.checkbox("Render to Guest VRAM", .{ .v = &d.renderer.ExperimentalRenderToVRAM });
-                _ = zgui.checkbox("Clamp Sprites UVs", .{ .v = &d.renderer.ExperimentalClampSpritesUVs });
-                _ = zgui.checkbox("Render on Emulation Thread", .{ .v = &d.renderer.ExperimentalRenderOnEmulationThread });
-                _ = zgui.checkbox("Use Pipeline Cache (Restart Required)", .{ .v = &d.config.enable_dawn_pipeline_cache });
-                if (builtin.mode == .Debug) {
-                    if (zgui.button("Reset Pipeline Cache", .{})) {
-                        try @import("pipeline_cache.zig").clear(d._allocator);
-                    }
-                }
-                zgui.endTabItem();
-            }
-
-            if (zgui.beginTabItem("Controls", .{})) {
-                var per_game_vmu = d.config.per_game_vmu;
-                if (zgui.checkbox("Per-Game VMU", .{ .v = &per_game_vmu })) {
-                    try d.set_per_game_vmu(per_game_vmu);
-                }
-
-                var available_controllers: std.ArrayList(struct { id: ?zglfw.Joystick, name: [:0]const u8 }) = try .initCapacity(self.allocator, zglfw.Joystick.maximum_supported + 1);
-                defer available_controllers.deinit(self.allocator);
-
-                available_controllers.appendAssumeCapacity(.{ .id = null, .name = "None" });
-
-                for (0..zglfw.Joystick.maximum_supported) |idx| {
-                    const joystick: zglfw.Joystick = @enumFromInt(idx);
-                    if (joystick.isPresent()) {
-                        if (joystick.asGamepad()) |gamepad| {
-                            available_controllers.appendAssumeCapacity(.{ .id = joystick, .name = gamepad.getName() });
-                        }
-                    }
-                }
-
-                const static = struct {
-                    var VMUFilenamesInputBuffers: [4][2][64]u8 = @splat(@splat(@splat(0)));
-                };
-                if (Once(@src())) {
-                    for (0..4) |i| {
-                        for (0..2) |slot| {
-                            if (d.config.controllers[i].subperipherals[slot] == .VMU) {
-                                const vmu_config = d.config.controllers[i].subperipherals[slot].VMU;
-                                const filename_length = @min(vmu_config.filename.len, static.VMUFilenamesInputBuffers[i][slot].len - 1);
-                                @memcpy(static.VMUFilenamesInputBuffers[i][slot][0..filename_length], vmu_config.filename[0..filename_length]);
-                            } else {
-                                @memcpy(static.VMUFilenamesInputBuffers[i][slot][0..Deecy.DefaultVMUPaths[i][slot].len], Deecy.DefaultVMUPaths[i][slot]);
+                    {
+                        const static = struct {
+                            var available_modes_buffer: [@typeInfo(zgpu.wgpu.PresentMode).@"enum".fields.len]zgpu.wgpu.PresentMode = @splat(.undefined);
+                            var available_modes_count: u32 = 0;
+                            var present_modes: []const zgpu.wgpu.PresentMode = &.{};
+                            pub fn init(deecy: *Deecy) !void {
+                                const capabilities = try deecy.gctx.surface.getCapabilities(deecy.gctx.adapter);
+                                defer capabilities.deinit();
+                                available_modes_count = @intCast(capabilities.getPresentModes().len);
+                                for (capabilities.getPresentModes(), 0..) |present_mode, idx|
+                                    available_modes_buffer[idx] = present_mode;
+                                present_modes = available_modes_buffer[0..available_modes_count];
                             }
-                        }
-                    }
-                }
-                if (zgui.beginTabBar("Ports TabBar", .{})) {
-                    inline for (0..4) |port| {
-                        if (zgui.beginTabItem("Port " ++ &[1]u8{'A' + port}, .{})) {
-                            zgui.pushIntId(port);
-                            defer zgui.popId();
+                        };
+                        if (Once(@src())) try static.init(d);
 
-                            var connected: bool = d.dc.maple.ports[port].main != null;
-                            if (zgui.checkbox("Plugged in", .{ .v = &connected })) {
-                                try d.enable_controller(port, connected);
-                            }
-                            if (d.dc.maple.ports[port].main) |*peripheral| {
-                                var gamepad_id: ?zglfw.Gamepad = null;
-                                if (d.controllers[port]) |j| {
-                                    if (j.id.isPresent())
-                                        gamepad_id = j.id.asGamepad();
+                        zgui.setNextItemWidth(128.0);
+                        if (zgui.beginCombo("Present Mode", .{ .preview_value = @tagName(Deecy.PresentMode.fromWGPU(d.gctx.present_mode)) })) {
+                            for (static.present_modes) |present_mode| {
+                                if (zgui.selectable(@tagName(Deecy.PresentMode.fromWGPU(present_mode)), .{ .selected = d.gctx.present_mode == present_mode })) {
+                                    d.gctx.present_mode = present_mode;
+                                    d.config.present_mode = Deecy.PresentMode.fromWGPU(d.gctx.present_mode);
+                                    const fb_size = d.window.getFramebufferSize();
+                                    d.gctx.surface.configure(.{
+                                        .device = d.gctx.device,
+                                        .format = zgpu.GraphicsContext.surface_texture_format,
+                                        .usage = .{ .render_attachment = true },
+                                        .width = @intCast(fb_size[0]),
+                                        .height = @intCast(fb_size[1]),
+                                        .present_mode = d.gctx.present_mode,
+                                    });
                                 }
-                                const name = if (gamepad_id) |gamepad| gamepad.getName() else "None";
-                                if (zgui.beginCombo("Device", .{ .preview_value = name })) {
-                                    for (available_controllers.items, 0..) |item, index| {
-                                        if (available_controllers.items[index].id) |id| {
-                                            if (zgui.selectable(item.name, .{ .selected = d.controllers[port] != null and d.controllers[port].?.id == id }))
-                                                d.controllers[port] = .{ .id = id };
-                                        } else {
-                                            if (zgui.selectable(item.name, .{ .selected = d.controllers[port] == null }))
-                                                d.controllers[port] = null;
-                                        }
+                            }
+                            zgui.endCombo();
+                        }
+                        zgui.separator();
+                    }
+
+                    zgui.text("Experimental settings", .{});
+                    zgui.setNextItemWidth(128.0);
+                    _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
+                    _ = zgui.checkbox("Framebuffer Emulation", .{ .v = &d.renderer.ExperimentalFramebufferEmulation });
+                    _ = zgui.checkbox("Render to Texture", .{ .v = &d.renderer.ExperimentalRenderToTexture });
+                    _ = zgui.checkbox("Render to Guest VRAM", .{ .v = &d.renderer.ExperimentalRenderToVRAM });
+                    _ = zgui.checkbox("Clamp Sprites UVs", .{ .v = &d.renderer.ExperimentalClampSpritesUVs });
+                    _ = zgui.checkbox("Render on Emulation Thread", .{ .v = &d.renderer.ExperimentalRenderOnEmulationThread });
+                    _ = zgui.checkbox("Use Pipeline Cache (Restart Required)", .{ .v = &d.config.enable_dawn_pipeline_cache });
+                    if (builtin.mode == .Debug) {
+                        if (zgui.button("Reset Pipeline Cache", .{})) {
+                            try @import("pipeline_cache.zig").clear(d._allocator);
+                        }
+                    }
+                    zgui.endTabItem();
+                }
+
+                if (zgui.beginTabItem("Controls", .{})) {
+                    var per_game_vmu = d.config.per_game_vmu;
+                    if (zgui.checkbox("Per-Game VMU", .{ .v = &per_game_vmu })) {
+                        try d.set_per_game_vmu(per_game_vmu);
+                    }
+
+                    var available_controllers: std.ArrayList(struct { id: ?zglfw.Joystick, name: [:0]const u8 }) = try .initCapacity(self.allocator, zglfw.Joystick.maximum_supported + 1);
+                    defer available_controllers.deinit(self.allocator);
+
+                    available_controllers.appendAssumeCapacity(.{ .id = null, .name = "None" });
+
+                    for (0..zglfw.Joystick.maximum_supported) |idx| {
+                        const joystick: zglfw.Joystick = @enumFromInt(idx);
+                        if (joystick.isPresent()) {
+                            if (joystick.asGamepad()) |gamepad| {
+                                available_controllers.appendAssumeCapacity(.{ .id = joystick, .name = gamepad.getName() });
+                            }
+                        }
+                    }
+
+                    const static = struct {
+                        var VMUFilenamesInputBuffers: [4][2][64]u8 = @splat(@splat(@splat(0)));
+                    };
+                    if (Once(@src())) {
+                        for (0..4) |i| {
+                            for (0..2) |slot| {
+                                if (d.config.controllers[i].subperipherals[slot] == .VMU) {
+                                    const vmu_config = d.config.controllers[i].subperipherals[slot].VMU;
+                                    const filename_length = @min(vmu_config.filename.len, static.VMUFilenamesInputBuffers[i][slot].len - 1);
+                                    @memcpy(static.VMUFilenamesInputBuffers[i][slot][0..filename_length], vmu_config.filename[0..filename_length]);
+                                } else {
+                                    @memcpy(static.VMUFilenamesInputBuffers[i][slot][0..Deecy.DefaultVMUPaths[i][slot].len], Deecy.DefaultVMUPaths[i][slot]);
+                                }
+                            }
+                        }
+                    }
+                    if (zgui.beginTabBar("Ports TabBar", .{})) {
+                        inline for (0..4) |port| {
+                            if (zgui.beginTabItem("Port " ++ &[1]u8{'A' + port}, .{})) {
+                                zgui.pushIntId(port);
+                                defer zgui.popId();
+
+                                var connected: bool = d.dc.maple.ports[port].main != null;
+                                if (zgui.checkbox("Plugged in", .{ .v = &connected })) {
+                                    try d.enable_controller(port, connected);
+                                }
+                                if (d.dc.maple.ports[port].main) |*peripheral| {
+                                    var gamepad_id: ?zglfw.Gamepad = null;
+                                    if (d.controllers[port]) |j| {
+                                        if (j.id.isPresent())
+                                            gamepad_id = j.id.asGamepad();
                                     }
-                                    zgui.endCombo();
-                                }
-                                if (d.controllers[port]) |*j| {
-                                    _ = zgui.sliderFloat("Deadzone", .{ .v = &j.deadzone, .min = 0.0, .max = 1.0, .flags = .{} });
-                                }
-                                switch (peripheral.*) {
-                                    .Controller => try @import("ui/controller_settings.zig").draw_controller_settings(d, port),
-                                    else => {},
-                                }
-
-                                if (zgui.collapsingHeader("Expansion slots", .{ .default_open = true })) {
-                                    if (d.dc.maple.ports[port].main) |_| {
-                                        inline for (0..2) |slot| {
-                                            zgui.pushIntId(slot);
-                                            defer zgui.popId();
-                                            var peripheral_type = std.meta.activeTag(d.config.controllers[port].subperipherals[slot]);
-                                            if (zgui.comboFromEnum("#" ++ &[1]u8{'0' + slot}, &peripheral_type)) {
-                                                d.deinit_peripheral(port, slot);
-                                                d.config.controllers[port].subperipherals[slot] = switch (peripheral_type) {
-                                                    .None => .None,
-                                                    .VMU => .{ .VMU = .{ .filename = Deecy.DefaultVMUPaths[port][slot] } },
-                                                    .VibrationPack => .VibrationPack,
-                                                };
-                                                try d.init_peripheral(port, slot);
+                                    const name = if (gamepad_id) |gamepad| gamepad.getName() else "None";
+                                    if (zgui.beginCombo("Device", .{ .preview_value = name })) {
+                                        for (available_controllers.items, 0..) |item, index| {
+                                            if (available_controllers.items[index].id) |id| {
+                                                if (zgui.selectable(item.name, .{ .selected = d.controllers[port] != null and d.controllers[port].?.id == id }))
+                                                    d.controllers[port] = .{ .id = id };
+                                            } else {
+                                                if (zgui.selectable(item.name, .{ .selected = d.controllers[port] == null }))
+                                                    d.controllers[port] = null;
                                             }
-                                            zgui.indent(.{});
-                                            defer zgui.unindent(.{});
-                                            if (d.dc.maple.ports[port].subperipherals[slot]) |*s| {
-                                                switch (s.*) {
-                                                    .VMU => |vmu| {
-                                                        zgui.textDisabled("Loaded: {s}", .{vmu.backing_file_path});
-                                                        if (d.config.controllers[port].subperipherals[slot] == .VMU) {
-                                                            const vmu_config = &d.config.controllers[port].subperipherals[slot].VMU;
-                                                            if (vmu_config.filename.len < static.VMUFilenamesInputBuffers[port][slot].len - 1) {
-                                                                const c_str: [:0]u8 = static.VMUFilenamesInputBuffers[port][slot][0 .. static.VMUFilenamesInputBuffers[port][slot].len - 1 :0];
-                                                                _ = zgui.inputText("##Filename", .{ .buf = c_str });
-                                                                zgui.sameLine(.{});
-                                                                if (zgui.button("Load", .{})) {
-                                                                    d.deinit_peripheral(port, slot);
-                                                                    vmu_config.filename = static.VMUFilenamesInputBuffers[port][slot][0..std.mem.indexOfSentinel(u8, 0, c_str)];
-                                                                    try d.init_peripheral(port, slot);
+                                        }
+                                        zgui.endCombo();
+                                    }
+                                    if (d.controllers[port]) |*j| {
+                                        _ = zgui.sliderFloat("Deadzone", .{ .v = &j.deadzone, .min = 0.0, .max = 1.0, .flags = .{} });
+                                    }
+                                    switch (peripheral.*) {
+                                        .Controller => try @import("ui/controller_settings.zig").draw_controller_settings(d, port),
+                                        else => {},
+                                    }
+
+                                    if (zgui.collapsingHeader("Expansion slots", .{ .default_open = true })) {
+                                        if (d.dc.maple.ports[port].main) |_| {
+                                            inline for (0..2) |slot| {
+                                                zgui.pushIntId(slot);
+                                                defer zgui.popId();
+                                                var peripheral_type = std.meta.activeTag(d.config.controllers[port].subperipherals[slot]);
+                                                if (zgui.comboFromEnum("#" ++ &[1]u8{'0' + slot}, &peripheral_type)) {
+                                                    d.deinit_peripheral(port, slot);
+                                                    d.config.controllers[port].subperipherals[slot] = switch (peripheral_type) {
+                                                        .None => .None,
+                                                        .VMU => .{ .VMU = .{ .filename = Deecy.DefaultVMUPaths[port][slot] } },
+                                                        .VibrationPack => .VibrationPack,
+                                                    };
+                                                    try d.init_peripheral(port, slot);
+                                                }
+                                                zgui.indent(.{});
+                                                defer zgui.unindent(.{});
+                                                if (d.dc.maple.ports[port].subperipherals[slot]) |*s| {
+                                                    switch (s.*) {
+                                                        .VMU => |vmu| {
+                                                            zgui.textDisabled("Loaded: {s}", .{vmu.backing_file_path});
+                                                            if (d.config.controllers[port].subperipherals[slot] == .VMU) {
+                                                                const vmu_config = &d.config.controllers[port].subperipherals[slot].VMU;
+                                                                if (vmu_config.filename.len < static.VMUFilenamesInputBuffers[port][slot].len - 1) {
+                                                                    const c_str: [:0]u8 = static.VMUFilenamesInputBuffers[port][slot][0 .. static.VMUFilenamesInputBuffers[port][slot].len - 1 :0];
+                                                                    _ = zgui.inputText("##Filename", .{ .buf = c_str });
+                                                                    zgui.sameLine(.{});
+                                                                    if (zgui.button("Load", .{})) {
+                                                                        d.deinit_peripheral(port, slot);
+                                                                        vmu_config.filename = static.VMUFilenamesInputBuffers[port][slot][0..std.mem.indexOfSentinel(u8, 0, c_str)];
+                                                                        try d.init_peripheral(port, slot);
+                                                                    }
                                                                 }
                                                             }
-                                                        }
-                                                    },
-                                                    else => {},
+                                                        },
+                                                        else => {},
+                                                    }
                                                 }
                                             }
                                         }
                                     }
                                 }
+                                zgui.endTabItem();
                             }
-                            zgui.endTabItem();
                         }
-                    }
 
+                        zgui.endTabItem();
+                    }
+                    zgui.endTabBar();
+                }
+
+                if (zgui.beginTabItem("Audio", .{})) {
+                    if (zgui.sliderFloat("Volume", .{ .v = &d.config.audio_volume, .min = 0.0, .max = 1.0, .flags = .{} })) {
+                        try d.audio_device.setMasterVolume(d.config.audio_volume);
+                    }
+                    var dsp_emulation = d.dc.aica.dsp_emulation;
+                    if (zgui.comboFromEnum("DSP", &dsp_emulation)) {
+                        const was_running = d.running;
+                        if (was_running) d.pause();
+                        defer if (was_running) d.start();
+                        d.dc.aica.dsp_emulation = dsp_emulation;
+                    }
                     zgui.endTabItem();
                 }
-                zgui.endTabBar();
-            }
 
-            if (zgui.beginTabItem("Audio", .{})) {
-                if (zgui.sliderFloat("Volume", .{ .v = &d.config.audio_volume, .min = 0.0, .max = 1.0, .flags = .{} })) {
-                    try d.audio_device.setMasterVolume(d.config.audio_volume);
-                }
-                var dsp_emulation = d.dc.aica.dsp_emulation;
-                if (zgui.comboFromEnum("DSP", &dsp_emulation)) {
-                    const was_running = d.running;
-                    if (was_running) d.pause();
-                    defer if (was_running) d.start();
-                    d.dc.aica.dsp_emulation = dsp_emulation;
-                }
-                zgui.endTabItem();
-            }
+                if (zgui.beginTabItem("Shortcuts", .{})) {
+                    const Shortcuts = @import("ui/shortcuts.zig");
+                    if (zgui.beginTable("Shortcuts##Table", .{ .column = 4, .flags = .{ .sortable = true, .sort_multi = true, .sizing = .fixed_fit } })) {
+                        const Column = enum(u32) { Type = 0, Key, Action };
 
-            if (zgui.beginTabItem("Shortcuts", .{})) {
-                const Shortcuts = @import("ui/shortcuts.zig");
-                if (zgui.beginTable("Shortcuts##Table", .{ .column = 4, .flags = .{ .sortable = true, .sort_multi = true, .sizing = .fixed_fit } })) {
-                    const Column = enum(u32) { Type = 0, Key, Action };
+                        zgui.tableSetupColumn("Type", .{ .user_id = @intFromEnum(Column.Type) });
+                        zgui.tableSetupColumn("Key/Button", .{ .user_id = @intFromEnum(Column.Key) });
+                        zgui.tableSetupColumn("Action", .{ .user_id = @intFromEnum(Column.Action) });
+                        zgui.tableSetupColumn("", .{ .user_id = 4, .flags = .{ .no_sort = true } });
+                        zgui.tableHeadersRow();
 
-                    zgui.tableSetupColumn("Type", .{ .user_id = @intFromEnum(Column.Type) });
-                    zgui.tableSetupColumn("Key/Button", .{ .user_id = @intFromEnum(Column.Key) });
-                    zgui.tableSetupColumn("Action", .{ .user_id = @intFromEnum(Column.Action) });
-                    zgui.tableSetupColumn("", .{ .user_id = 4, .flags = .{ .no_sort = true } });
-                    zgui.tableHeadersRow();
+                        const SortedShortcut = struct {
+                            var sort_spec: ?zgui.TableSortSpecs = null;
+                            key: Shortcuts.Key,
+                            action: Shortcuts.Action.Name,
 
-                    const SortedShortcut = struct {
-                        var sort_spec: ?zgui.TableSortSpecs = null;
-                        key: Shortcuts.Key,
-                        action: Shortcuts.Action.Name,
-
-                        fn column_order(col: Column, a: @This(), b: @This()) std.math.Order {
-                            switch (col) {
-                                .Type => return std.ascii.orderIgnoreCase(@tagName(std.meta.activeTag(a.key)), @tagName(std.meta.activeTag(b.key))),
-                                .Key => {
-                                    if (std.meta.activeTag(a.key) != std.meta.activeTag(b.key)) return column_order(.Type, a, b);
-                                    return switch (a.key) {
-                                        .keyboard => std.ascii.orderIgnoreCase(@tagName(a.key.keyboard.key), @tagName(b.key.keyboard.key)),
-                                        .controller => std.ascii.orderIgnoreCase(@tagName(a.key.controller), @tagName(b.key.controller)),
-                                    };
-                                },
-                                .Action => return std.ascii.orderIgnoreCase(@tagName(a.action), @tagName(b.action)),
+                            fn column_order(col: Column, a: @This(), b: @This()) std.math.Order {
+                                switch (col) {
+                                    .Type => return std.ascii.orderIgnoreCase(@tagName(std.meta.activeTag(a.key)), @tagName(std.meta.activeTag(b.key))),
+                                    .Key => {
+                                        if (std.meta.activeTag(a.key) != std.meta.activeTag(b.key)) return column_order(.Type, a, b);
+                                        return switch (a.key) {
+                                            .keyboard => std.ascii.orderIgnoreCase(@tagName(a.key.keyboard.key), @tagName(b.key.keyboard.key)),
+                                            .controller => std.ascii.orderIgnoreCase(@tagName(a.key.controller), @tagName(b.key.controller)),
+                                        };
+                                    },
+                                    .Action => return std.ascii.orderIgnoreCase(@tagName(a.action), @tagName(b.action)),
+                                }
                             }
-                        }
 
-                        pub fn order(_: void, a: @This(), b: @This()) std.math.Order {
-                            if (sort_spec) |s| {
-                                for (0..@intCast(s.count)) |sort_order| {
-                                    for (s.specs[0..@intCast(s.count)]) |spec| {
-                                        if (spec.sort_direction != .none and spec.sort_order == sort_order) {
-                                            const ord = column_order(@enumFromInt(spec.user_id), a, b);
-                                            if (ord != .eq) return switch (spec.sort_direction) {
-                                                .ascending => ord,
-                                                .descending => ord.invert(),
-                                                .none => unreachable,
-                                            };
-                                            break;
+                            pub fn order(_: void, a: @This(), b: @This()) std.math.Order {
+                                if (sort_spec) |s| {
+                                    for (0..@intCast(s.count)) |sort_order| {
+                                        for (s.specs[0..@intCast(s.count)]) |spec| {
+                                            if (spec.sort_direction != .none and spec.sort_order == sort_order) {
+                                                const ord = column_order(@enumFromInt(spec.user_id), a, b);
+                                                if (ord != .eq) return switch (spec.sort_direction) {
+                                                    .ascending => ord,
+                                                    .descending => ord.invert(),
+                                                    .none => unreachable,
+                                                };
+                                                break;
+                                            }
                                         }
                                     }
                                 }
+                                return std.math.Order.lt;
                             }
-                            return std.math.Order.lt;
-                        }
 
-                        pub fn less_than(_: void, a: @This(), b: @This()) bool {
-                            return order({}, a, b) == .lt;
-                        }
-                    };
-                    SortedShortcut.sort_spec = zgui.tableGetSortSpecs();
-                    var sorted_list = try std.ArrayList(SortedShortcut).initCapacity(d._allocator, d.shortcuts.shortcuts.count());
-                    defer sorted_list.deinit(d._allocator);
+                            pub fn less_than(_: void, a: @This(), b: @This()) bool {
+                                return order({}, a, b) == .lt;
+                            }
+                        };
+                        SortedShortcut.sort_spec = zgui.tableGetSortSpecs();
+                        var sorted_list = try std.ArrayList(SortedShortcut).initCapacity(d._allocator, d.shortcuts.shortcuts.count());
+                        defer sorted_list.deinit(d._allocator);
 
-                    var it = d.shortcuts.shortcuts.iterator();
-                    while (it.next()) |entry| {
-                        sorted_list.appendAssumeCapacity(.{ .key = entry.key_ptr.*, .action = entry.value_ptr.name });
+                        var it = d.shortcuts.shortcuts.iterator();
+                        while (it.next()) |entry| {
+                            sorted_list.appendAssumeCapacity(.{ .key = entry.key_ptr.*, .action = entry.value_ptr.name });
+                        }
+                        std.mem.sortUnstable(SortedShortcut, sorted_list.items, {}, SortedShortcut.less_than);
+
+                        var idx: i32 = 0;
+                        for (sorted_list.items) |*entry| {
+                            zgui.pushIntId(@intCast(idx));
+                            defer zgui.popId();
+                            idx += 1;
+
+                            zgui.tableNextRow(.{});
+                            _ = zgui.tableSetColumnIndex(0);
+                            zgui.alignTextToFramePadding();
+                            zgui.text("{s}", .{switch (entry.key) {
+                                .keyboard => Icons.Keyboard ++ " Keyboard",
+                                .controller => Icons.Gamepad ++ " Controller",
+                            }});
+                            _ = zgui.tableSetColumnIndex(1);
+                            if (zgui.button(Icons.Pen, .{})) {
+                                const maybe_key = wait_for.any_button(d);
+                                if (maybe_key) |key| {
+                                    d.shortcuts.remove(entry.key);
+                                    entry.key = switch (key) {
+                                        .keyboard => Shortcuts.Key{ .keyboard = .{ .key = key.keyboard.key, .mods = .from_glfw(key.keyboard.modifiers) } },
+                                        .controller => Shortcuts.Key{ .controller = key.controller },
+                                    };
+                                    try d.shortcuts.put(entry.key, entry.action);
+                                }
+                            }
+                            zgui.sameLine(.{});
+                            zgui.alignTextToFramePadding();
+                            zgui.text("{f}", .{entry.key});
+                            _ = zgui.tableSetColumnIndex(2);
+                            zgui.setNextItemWidth(200.0);
+                            if (zgui.comboFromEnum("##Action", &entry.action))
+                                try d.shortcuts.put(entry.key, entry.action);
+                            _ = zgui.tableSetColumnIndex(3);
+                            common.push_red_button_style();
+                            defer common.pop_red_button_style();
+                            if (zgui.button(Icons.Trash, .{}))
+                                d.shortcuts.remove(entry.key);
+                        }
+                        zgui.endTable();
                     }
-                    std.mem.sortUnstable(SortedShortcut, sorted_list.items, {}, SortedShortcut.less_than);
-
-                    var idx: i32 = 0;
-                    for (sorted_list.items) |*entry| {
-                        zgui.pushIntId(@intCast(idx));
-                        defer zgui.popId();
-                        idx += 1;
-
-                        zgui.tableNextRow(.{});
-                        _ = zgui.tableSetColumnIndex(0);
-                        zgui.alignTextToFramePadding();
-                        zgui.text("{s}", .{switch (entry.key) {
-                            .keyboard => Icons.Keyboard ++ " Keyboard",
-                            .controller => Icons.Gamepad ++ " Controller",
-                        }});
-                        _ = zgui.tableSetColumnIndex(1);
+                    zgui.separator();
+                    {
+                        zgui.textDisabled("Add shortcut:", .{});
+                        const static = struct {
+                            var action = Shortcuts.Action.Name.Screenshot;
+                            var key: ?Shortcuts.Key = null;
+                        };
                         if (zgui.button(Icons.Pen, .{})) {
                             const maybe_key = wait_for.any_button(d);
                             if (maybe_key) |key| {
-                                d.shortcuts.remove(entry.key);
-                                entry.key = switch (key) {
+                                static.key = switch (key) {
                                     .keyboard => Shortcuts.Key{ .keyboard = .{ .key = key.keyboard.key, .mods = .from_glfw(key.keyboard.modifiers) } },
                                     .controller => Shortcuts.Key{ .controller = key.controller },
                                 };
-                                try d.shortcuts.put(entry.key, entry.action);
                             }
                         }
                         zgui.sameLine(.{});
-                        zgui.alignTextToFramePadding();
-                        zgui.text("{f}", .{entry.key});
-                        _ = zgui.tableSetColumnIndex(2);
+                        if (static.key) |key| {
+                            zgui.text("{f}", .{key});
+                        } else {
+                            zgui.textUnformatted("(None)");
+                        }
+                        zgui.sameLine(.{});
                         zgui.setNextItemWidth(200.0);
-                        if (zgui.comboFromEnum("##Action", &entry.action))
-                            try d.shortcuts.put(entry.key, entry.action);
-                        _ = zgui.tableSetColumnIndex(3);
-                        common.push_red_button_style();
-                        defer common.pop_red_button_style();
-                        if (zgui.button(Icons.Trash, .{}))
-                            d.shortcuts.remove(entry.key);
-                    }
-                    zgui.endTable();
-                }
-                zgui.separator();
-                {
-                    zgui.textDisabled("Add shortcut:", .{});
-                    const static = struct {
-                        var action = Shortcuts.Action.Name.Screenshot;
-                        var key: ?Shortcuts.Key = null;
-                    };
-                    if (zgui.button(Icons.Pen, .{})) {
-                        const maybe_key = wait_for.any_button(d);
-                        if (maybe_key) |key| {
-                            static.key = switch (key) {
-                                .keyboard => Shortcuts.Key{ .keyboard = .{ .key = key.keyboard.key, .mods = .from_glfw(key.keyboard.modifiers) } },
-                                .controller => Shortcuts.Key{ .controller = key.controller },
-                            };
+                        _ = zgui.comboFromEnum("##NewAction", &static.action);
+                        zgui.sameLine(.{});
+                        zgui.beginDisabled(.{ .disabled = static.key == null });
+                        defer zgui.endDisabled();
+                        if (zgui.button("Add", .{})) {
+                            if (static.key) |key|
+                                try d.shortcuts.put(key, static.action);
                         }
                     }
-                    zgui.sameLine(.{});
-                    if (static.key) |key| {
-                        zgui.text("{f}", .{key});
-                    } else {
-                        zgui.textUnformatted("(None)");
-                    }
-                    zgui.sameLine(.{});
-                    zgui.setNextItemWidth(200.0);
-                    _ = zgui.comboFromEnum("##NewAction", &static.action);
-                    zgui.sameLine(.{});
-                    zgui.beginDisabled(.{ .disabled = static.key == null });
-                    defer zgui.endDisabled();
-                    if (zgui.button("Add", .{})) {
-                        if (static.key) |key|
-                            try d.shortcuts.put(key, static.action);
-                    }
+                    zgui.separator();
+                    if (zgui.button(Icons.ArrowRotateLeft ++ " Reset to default", .{}))
+                        try d.shortcuts.load_default_shortcuts();
+                    zgui.endTabItem();
                 }
-                zgui.separator();
-                if (zgui.button(Icons.ArrowRotateLeft ++ " Reset to default", .{}))
-                    try d.shortcuts.load_default_shortcuts();
-                zgui.endTabItem();
-            }
 
-            zgui.endTabBar();
+                zgui.endTabBar();
+            }
         }
+        zgui.end();
     }
-    zgui.end();
 
     // NOTE: Modals have to be in the same ID stack as the openPopup call :(
     //       Hence the weird workaround.
