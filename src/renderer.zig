@@ -3402,8 +3402,8 @@ pub const Renderer = struct {
                                     }
                                     const group_size = .{ 8, 8 };
                                     const num_groups = .{
-                                        @min(std.mem.alignForward(u32, render_area.width, group_size[0]), self.resolution.width) / group_size[0],
-                                        @min(std.mem.alignForward(u32, render_area.height, self.oit_horizontal_slices * group_size[1]), self.resolution.height) / (self.oit_horizontal_slices * group_size[1]),
+                                        (@min(render_area.width, self.resolution.width) - 1) / group_size[0] + 1,
+                                        (@min(render_area.height, self.resolution.height) - 1) / (self.oit_horizontal_slices * group_size[1]) + 1,
                                     };
                                     pass.setPipeline(translucent_modvol_merge_pipeline);
 
@@ -3476,8 +3476,8 @@ pub const Renderer = struct {
                                 }
                                 const group_size = .{ 8, 4 };
                                 const num_groups = .{
-                                    @min(std.mem.alignForward(u32, render_area.width, group_size[0]), self.resolution.width) / group_size[0],
-                                    @min(std.mem.alignForward(u32, render_area.height, self.oit_horizontal_slices * group_size[1]), self.resolution.height) / (self.oit_horizontal_slices * group_size[1]),
+                                    (@min(render_area.width, self.resolution.width) - 1) / group_size[0] + 1,
+                                    (@min(render_area.height, self.resolution.height) - 1) / (self.oit_horizontal_slices * group_size[1]) + 1,
                                 };
                                 pass.setPipeline(pipeline);
                                 pass.setBindGroup(0, blend_bind_group, &.{oit_uniform_mem.offset});
