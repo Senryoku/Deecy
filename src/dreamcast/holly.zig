@@ -2419,24 +2419,19 @@ pub const Holly = struct {
         };
     }
 
-    pub fn write_framebuffer(self: *@This(), parameters: WritebackParameters, pixels: []const u8) void {
+    pub fn write_framebuffer(self: *@This(), parameters: WritebackParameters, size: struct { width: u32, height: u32 }, pixels: []const u8) void {
         const interlaced = parameters.scaler_ctl.interlace;
         const field = if (interlaced) parameters.scaler_ctl.field_select else 0;
         const fb_addr = if (field == 0) parameters.fb_w_sof1 else parameters.fb_w_sof2;
         const access_32bit = fb_addr & 0x1000000 == 0;
 
-        const resolution = struct {
-            const width = 640;
-            const height = 480;
-        };
-
         const stride = 8 * (parameters.fb_w_linestride & 0x1FF);
         const line_offset = field;
         const line_stride: u32 = if (interlaced) 2 else 1;
-        const height = resolution.height / line_stride;
-        for (parameters.y_clip.min..@min(height, parameters.y_clip.max + 1)) |y| {
-            for (parameters.x_clip.min..@min(resolution.width, parameters.x_clip.max + 1)) |x| {
-                const idx = ((line_stride * y + line_offset) * resolution.width + x) * 4;
+        const line_count = size.height / line_stride;
+        for (parameters.y_clip.min..@min(line_count, parameters.y_clip.max + 1)) |y| {
+            for (parameters.x_clip.min..@min(size.width, parameters.x_clip.max + 1)) |x| {
+                const idx = ((line_stride * y + line_offset) * size.width + x) * 4;
                 switch (parameters.w_ctrl.fb_packmode) {
                     .RGB565 => {
                         var addr: u32 = (fb_addr & VRAMMask) + @as(u32, @intCast(y)) * stride + 2 * @as(u32, @intCast(x));

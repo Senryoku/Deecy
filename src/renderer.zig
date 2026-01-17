@@ -273,6 +273,7 @@ const wgsl_modifier_volume_fs = @embedFile("./shaders/modifier_volume_fs.wgsl");
 const wgsl_modifier_volume_apply_fs = @embedFile("./shaders/modifier_volume_apply_fs.wgsl");
 const blit_vs = @embedFile("./shaders/blit_vs.wgsl");
 const blit_fs = @embedFile("./shaders/blit_fs.wgsl");
+const blit_opaque_fs = @embedFile("./shaders/blit_opaque_fs.wgsl");
 
 const TextureStatus = enum {
     Invalid, // Has never been written to.
@@ -634,6 +635,12 @@ const ModifierVolumeVertexBufferLayout = [_]wgpu.VertexBufferLayout{.{
 const BlitBindGroupLayout = [_]wgpu.BindGroupLayoutEntry{
     zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
     zgpu.samplerEntry(1, .{ .fragment = true }, .filtering),
+    zgpu.bufferEntry(2, .{ .vertex = true }, .uniform, true, 0),
+};
+
+const ModifierVolumeApplyBindGroupLayout = [_]wgpu.BindGroupLayoutEntry{
+    zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
+    zgpu.bufferEntry(2, .{ .vertex = true }, .uniform, true, 0),
 };
 
 const TextureAndView = struct {
@@ -683,6 +690,7 @@ pub const Renderer = struct {
 
     const OITUniforms = packed struct { max_fragments: u32, target_width: u32, start_y: u32 };
     const OITTMVUniforms = packed struct { square_size: u32, pixels_per_slice: u32, target_width: u32, start_y: u32 };
+    const BlitUniforms = extern struct { min: [2]f32, max: [2]f32 };
 
     const FirstVertex: u32 = 4; // The 4 first vertices are reserved for the background.
     const FirstIndex: u32 = 5; // The 5 first indices are reserved for the background.
@@ -711,6 +719,7 @@ pub const Renderer = struct {
     framebuffer_resize_bind_group: zgpu.BindGroupHandle = .nil,
 
     blit_pipeline: zgpu.RenderPipelineHandle = .{},
+    blit_opaque_pipeline: zgpu.RenderPipelineHandle = .{},
     blit_bind_group: zgpu.BindGroupHandle = .nil,
     blit_bind_group_render_to_texture: zgpu.BindGroupHandle = .nil,
     blit_vertex_buffer: zgpu.BufferHandle,
@@ -796,7 +805,8 @@ pub const Renderer = struct {
     fog_col_vert: fRGBA = .{},
     fog_density: f32 = 0,
     fog_lut: [0x80]u32 = @splat(0),
-    guest_framebuffer_size: struct { width: u32, height: u32 } = .{ .width = 640, .height = 480 },
+    guest_framebuffer_size: Resolution = .{ .width = 640, .height = 480 },
+    output_size: Resolution = .{ .width = 640, .height = 480 },
     global_clip: struct { x: struct { min: u16, max: u16 }, y: struct { min: u16, max: u16 } } = .{ .x = .{ .min = 0, .max = 0 }, .y = .{ .min = 0, .max = 0 } },
     fb_r_ctrl: HollyModule.FB_R_CTRL = undefined,
     write_back_parameters: HollyModule.Holly.WritebackParameters = undefined,
@@ -894,6 +904,7 @@ pub const Renderer = struct {
             },
             .format = zgpu.GraphicsContext.surface_texture_format,
             .mip_level_count = 1,
+            .label = .init("Framebuffer Texture"),
         });
         const framebuffer_texture_view = gctx.createTextureView(framebuffer_texture, .{});
 
@@ -906,21 +917,23 @@ pub const Renderer = struct {
             },
             .format = zgpu.GraphicsContext.surface_texture_format,
             .mip_level_count = 1,
+            .label = .init("Render to Texture Target"),
         });
 
         const framebuffer_copy_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .map_read = true },
             .size = 4 * NativeResolution.width * NativeResolution.height,
+            .label = .init("Framebuffer Copy Buffer"),
         });
 
         const textures_bind_group_layout = create_textures_bind_group_layout(gctx);
         defer gctx.releaseResource(textures_bind_group_layout);
         const sampler_bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.samplerEntry(0, .{ .fragment = true }, .filtering),
-        }, .{ .label = "SamplerBindGroupLayout" });
+        }, .{ .label = "Sampler Bind Group Layout" });
         defer gctx.releaseResource(sampler_bind_group_layout);
 
-        const blit_bind_group_layout = gctx.createBindGroupLayout(&BlitBindGroupLayout, .{ .label = "BlitBindGroupLayout" });
+        const blit_bind_group_layout = gctx.createBindGroupLayout(&BlitBindGroupLayout, .{ .label = "Blit Bind Group Layout" });
         defer gctx.releaseResource(blit_bind_group_layout);
 
         const blit_vs_module = zgpu.createWgslShaderModule(gctx.device, blit_vs, "blit_vs");
@@ -1330,6 +1343,31 @@ pub const Renderer = struct {
                 },
             };
             _ = try gctx.createRenderPipelineAsync(allocator, blit_pipeline_layout, pipeline_descriptor, &renderer.blit_pipeline);
+
+            const blit_opaque_fs_module = zgpu.createWgslShaderModule(gctx.device, blit_opaque_fs, "blit_opaque_fs");
+            defer blit_opaque_fs_module.release();
+            const opaque_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+                .vertex = .{
+                    .module = blit_vs_module,
+                    .entry_point = .init("main"),
+                    .buffer_count = blit_vertex_buffers.len,
+                    .buffers = &blit_vertex_buffers,
+                },
+                .primitive = .{
+                    .front_face = .ccw,
+                    .cull_mode = .none,
+                    .topology = .triangle_strip,
+                    .strip_index_format = .uint32,
+                },
+                .depth_stencil = null,
+                .fragment = &.{
+                    .module = blit_opaque_fs_module,
+                    .entry_point = .init("main"),
+                    .target_count = blit_color_targets.len,
+                    .targets = &blit_color_targets,
+                },
+            };
+            _ = try gctx.createRenderPipelineAsync(allocator, blit_pipeline_layout, opaque_pipeline_descriptor, &renderer.blit_opaque_pipeline);
         }
 
         _ = try gctx.createComputePipelineAsync(allocator, blend_pipeline_layout, blend_pipeline_descriptor, &renderer.blend_pipeline);
@@ -1344,12 +1382,8 @@ pub const Renderer = struct {
             const mv_apply_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_modifier_volume_apply_fs, "fs");
             defer mv_apply_fragment_shader_module.release();
 
-            const mv_apply_bind_group_layout = gctx.createBindGroupLayout(&.{
-                zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
-            }, .{ .label = "ModifierVolumeApplyBindGroupLayout" });
-            const mv_apply_pipeline_layout = gctx.createPipelineLayout(&.{
-                mv_apply_bind_group_layout,
-            });
+            const mv_apply_bind_group_layout = gctx.createBindGroupLayout(&ModifierVolumeApplyBindGroupLayout, .{ .label = "ModifierVolumeApplyBindGroupLayout" });
+            const mv_apply_pipeline_layout = gctx.createPipelineLayout(&.{mv_apply_bind_group_layout});
 
             const mv_apply_color_targets = [_]wgpu.ColorTargetState{.{
                 .format = zgpu.GraphicsContext.surface_texture_format,
@@ -1484,22 +1518,9 @@ pub const Renderer = struct {
         self.render_passes.deinit(self._allocator);
 
         // Wait for async pipeline creation to finish (prevents crashing on exit).
-        // FIXME: Update
-        // while (self._gctx.lookupResource(self.closed_modifier_volume_pipeline) == null or
-        //     self._gctx.lookupResource(self.shift_stencil_buffer_modifier_volume_pipeline) == null or
-        //     self._gctx.lookupResource(self.open_modifier_volume_pipeline) == null or
-        //     self._gctx.lookupResource(self.modifier_volume_apply_pipeline) == null or
-        //     self._gctx.lookupResource(self.translucent_pipeline) == null or
-        //     self._gctx.lookupResource(self.translucent_modvol_pipeline) == null or
-        //     self._gctx.lookupResource(self.translucent_modvol_merge_pipeline) == null or
-        //     self._gctx.lookupResource(self.blend_pipeline) == null)
-        // {
-        //     self._gctx.device.tick();
-        // }
         var async_pipeline_creation = true;
         while (async_pipeline_creation) {
             async_pipeline_creation = false;
-            // self._gctx.device.tick();
             var it = self.opaque_pipelines.iterator();
             while (it.next()) |pipeline| {
                 if (self._gctx.lookupResource(pipeline.value_ptr.*) == null) {
@@ -1890,12 +1911,6 @@ pub const Renderer = struct {
         return texture_index;
     }
 
-    fn reset_texture_usage(self: *@This()) void {
-        for (self.texture_metadata) |arr| {
-            for (arr) |*tm| tm.usage = 0;
-        }
-    }
-
     fn check_texture_usage(self: *@This()) void {
         for (self.texture_metadata) |arr| {
             for (arr) |*tm| {
@@ -1910,6 +1925,7 @@ pub const Renderer = struct {
                     .Outdated => tm.age +|= 1,
                     .Invalid => {},
                 }
+                tm.usage = 0;
             }
         }
     }
@@ -2042,19 +2058,21 @@ pub const Renderer = struct {
         const ta_clip = ta_glob_tile_clip.pixel_size();
         // Actual output size might not be a multiple of 32, can't only rely on the TA clip.
         // TODO: Involve SCALER_CTL in this? (Still need to find a test case)
-        const output_height: u32 = if (!render_to_texture and !vga and !interlace) 240 else 480;
+        const output_height: u32 = if (render_to_texture) 1024 else if (!vga and !interlace) 240 else 480;
         self.guest_framebuffer_size = .{
             .width = ta_clip.x,
             .height = @min(ta_clip.y, output_height),
         };
 
-        const horizontal_scaling: u16 = if (vo_control.pixel_double) 2 else 1;
-        const vertical_scaling: u16 = if (!render_to_texture and !vga and !interlace) 2 else 1;
+        self.global_clip.x.min = self.write_back_parameters.x_clip.min;
+        self.global_clip.x.max = (@as(u16, self.write_back_parameters.x_clip.max) + 1);
+        self.global_clip.y.min = self.write_back_parameters.y_clip.min;
+        self.global_clip.y.max = (@as(u16, self.write_back_parameters.y_clip.max) + 1);
 
-        self.global_clip.x.min = horizontal_scaling * self.write_back_parameters.x_clip.min;
-        self.global_clip.x.max = horizontal_scaling * (@as(u16, self.write_back_parameters.x_clip.max) + 1);
-        self.global_clip.y.min = vertical_scaling * self.write_back_parameters.y_clip.min;
-        self.global_clip.y.max = vertical_scaling * (@as(u16, self.write_back_parameters.y_clip.max) + 1);
+        self.output_size = if (render_to_texture) .{
+            .width = self.global_clip.x.max - self.global_clip.x.min,
+            .height = self.global_clip.y.max - self.global_clip.y.min,
+        } else self.guest_framebuffer_size;
     }
 
     /// Assumes gctx_queue_mutex is locked: Modifies parameters used in rendering.
@@ -2255,7 +2273,6 @@ pub const Renderer = struct {
             }
         }
 
-        self.reset_texture_usage();
         defer self.check_texture_usage();
 
         self.min_depth = std.math.floatMax(f32);
@@ -2878,7 +2895,7 @@ pub const Renderer = struct {
         };
     }
 
-    /// Convert framebuffer from internal resolution to window resolution
+    /// Convert framebuffer from internal resolution to upscaled resolution, copying from framebuffer to resized_framebuffer.
     /// Locks _gctx_queue_mutex.
     pub fn blit_framebuffer(self: *const @This()) void {
         const gctx = self._gctx;
@@ -2911,12 +2928,18 @@ pub const Renderer = struct {
                         pass.release();
                     }
 
+                    const blit_uniform_mem = self._gctx.uniformsAllocate(BlitUniforms, 1);
+                    blit_uniform_mem.slice[0] = .{
+                        .min = .{ 0, 0 },
+                        .max = .{ 1.0, 1.0 },
+                    };
+
                     pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
                     pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
 
                     pass.setPipeline(pipeline);
 
-                    pass.setBindGroup(0, framebuffer_resize_bind_group, &.{});
+                    pass.setBindGroup(0, framebuffer_resize_bind_group, &.{blit_uniform_mem.offset});
                     pass.drawIndexed(4, 1, 0, 0, 0);
                 }
 
@@ -2933,6 +2956,13 @@ pub const Renderer = struct {
     ///       Also protects concurrent access to `ta_lists` and `render_passes`.
     pub fn render(self: *@This(), holly: *HollyModule.Holly, render_to_texture: bool) !void {
         const gctx = self._gctx;
+        const target_size = Resolution{ .width = 640, .height = 480 };
+
+        // We might only use a fraction of the target (320p games and RTT). The following is used as an optimization: Only copy and run computed shaders on the relevant portion of the target.
+        const render_area: Resolution = .{
+            .width = @min(self.output_size.width * self.resolution.width / NativeResolution.width, self.resolution.width), // Assumes resolution is an integer multiplier of the NativeResolution.
+            .height = @min(self.output_size.height * self.resolution.height / NativeResolution.height, self.resolution.height),
+        };
 
         if (render_to_texture) {
             log.info("Rendering to texture! [{d},{d}] to [{d},{d}]", .{ self.global_clip.x.min, self.global_clip.y.min, self.global_clip.x.max, self.global_clip.y.max });
@@ -2962,8 +2992,8 @@ pub const Renderer = struct {
             uniform_mem.slice[0] = .{
                 .depth_min = self.min_depth,
                 .depth_max = self.max_depth,
-                .framebuffer_width = @floatFromInt(self.guest_framebuffer_size.width),
-                .framebuffer_height = @floatFromInt(self.guest_framebuffer_size.height),
+                .framebuffer_width = @floatFromInt(target_size.width),
+                .framebuffer_height = @floatFromInt(target_size.height),
                 .fpu_shad_scale = self.fpu_shad_scale,
                 .fog_density = self.fog_density,
                 .pt_alpha_ref = self.pt_alpha_ref,
@@ -3092,7 +3122,7 @@ pub const Renderer = struct {
                     encoder.copyTextureToTexture(
                         .{ .texture = target.resized.texture },
                         .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy.texture).? },
-                        .{ .width = self.resolution.width, .height = self.resolution.height },
+                        .{ .width = render_area.width, .height = render_area.height },
                     );
 
                     if (!render_pass.opaque_modifier_volume_pointer.empty and ta_lists.opaque_modifier_volumes.items.len > 0) skip_mv: {
@@ -3108,8 +3138,8 @@ pub const Renderer = struct {
                             vs_uniform_mem.slice[0] = .{
                                 .min_depth = self.min_depth,
                                 .max_depth = self.max_depth,
-                                .framebuffer_width = @floatFromInt(self.guest_framebuffer_size.width),
-                                .framebuffer_height = @floatFromInt(self.guest_framebuffer_size.height),
+                                .framebuffer_width = @floatFromInt(target_size.width),
+                                .framebuffer_height = @floatFromInt(target_size.height),
                             };
 
                             const pass = encoder.beginRenderPass(.{
@@ -3193,10 +3223,16 @@ pub const Renderer = struct {
                                 pass.release();
                             }
 
+                            const blit_uniform_mem = gctx.uniformsAllocate(BlitUniforms, 1);
+                            blit_uniform_mem.slice[0] = .{
+                                .min = .{ 0, 0 },
+                                .max = .{ 1.0, 1.0 },
+                            };
+
                             pass.setPipeline(modifier_volume_apply_pipeline);
                             pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
                             pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
-                            pass.setBindGroup(0, mva_bind_group, &.{});
+                            pass.setBindGroup(0, mva_bind_group, &.{blit_uniform_mem.offset});
 
                             pass.setStencilReference(0x02);
                             pass.drawIndexed(4, 1, 0, 0, 0);
@@ -3206,7 +3242,7 @@ pub const Renderer = struct {
                         encoder.copyTextureToTexture(
                             .{ .texture = target.resized.texture },
                             .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy.texture).? },
-                            .{ .width = self.resolution.width, .height = self.resolution.height },
+                            .{ .width = render_area.width, .height = render_area.height },
                         );
                     }
                 }
@@ -3295,11 +3331,11 @@ pub const Renderer = struct {
                         vs_mv_uniform_mem.slice[0] = .{
                             .min_depth = self.min_depth,
                             .max_depth = self.max_depth,
-                            .framebuffer_width = @floatFromInt(self.guest_framebuffer_size.width),
-                            .framebuffer_height = @floatFromInt(self.guest_framebuffer_size.height),
+                            .framebuffer_width = @floatFromInt(target_size.width),
+                            .framebuffer_height = @floatFromInt(target_size.height),
                         };
 
-                        const slice_size = self.resolution.height / self.oit_horizontal_slices;
+                        const slice_size = render_area.height / self.oit_horizontal_slices;
                         for (0..self.oit_horizontal_slices) |i| {
                             const start_y: u32 = @as(u32, @intCast(i)) * slice_size;
 
@@ -3309,7 +3345,7 @@ pub const Renderer = struct {
                                 oit_mv_uniform_mem.slice[0] = .{
                                     .square_size = @intCast(self.translucent_modvol_dimensions().square_size),
                                     .pixels_per_slice = @intCast(self.translucent_modvol_dimensions().pixels_per_slice),
-                                    .target_width = self.resolution.width,
+                                    .target_width = render_area.width,
                                     .start_y = start_y,
                                 };
 
@@ -3331,7 +3367,7 @@ pub const Renderer = struct {
                                     pass.setPipeline(translucent_modvol_pipeline);
                                     pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
                                     pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_mv_uniform_mem.offset});
-                                    pass.setScissorRect(0, start_y, self.resolution.width, slice_size);
+                                    pass.setScissorRect(0, start_y, render_area.width, slice_size);
 
                                     // Close volume pass.
                                     var volume_index: u32 = 0;
@@ -3358,7 +3394,11 @@ pub const Renderer = struct {
                                         pass.end();
                                         pass.release();
                                     }
-                                    const num_groups = .{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, self.oit_horizontal_slices * 8) };
+                                    const group_size = .{ 8, 8 };
+                                    const num_groups = .{
+                                        @min(std.mem.alignForward(u32, render_area.width, group_size[0]), self.resolution.width) / group_size[0],
+                                        @min(std.mem.alignForward(u32, render_area.height, self.oit_horizontal_slices * group_size[1]), self.resolution.height) / (self.oit_horizontal_slices * group_size[1]),
+                                    };
                                     pass.setPipeline(translucent_modvol_merge_pipeline);
 
                                     pass.setBindGroup(0, translucent_modvol_merge_bind_group, &.{oit_mv_uniform_mem.offset});
@@ -3369,7 +3409,7 @@ pub const Renderer = struct {
                             const oit_uniform_mem = gctx.uniformsAllocate(OITUniforms, 1);
                             oit_uniform_mem.slice[0] = .{
                                 .max_fragments = @intCast(self.get_fragments_list_size() / OITLinkedListNodeSize),
-                                .target_width = self.resolution.width,
+                                .target_width = render_area.width,
                                 .start_y = start_y,
                             };
 
@@ -3428,7 +3468,11 @@ pub const Renderer = struct {
                                     pass.end();
                                     pass.release();
                                 }
-                                const num_groups = .{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, self.oit_horizontal_slices * 4) };
+                                const group_size = .{ 8, 4 };
+                                const num_groups = .{
+                                    @min(std.mem.alignForward(u32, render_area.width, group_size[0]), self.resolution.width) / group_size[0],
+                                    @min(std.mem.alignForward(u32, render_area.height, self.oit_horizontal_slices * group_size[1]), self.resolution.height) / (self.oit_horizontal_slices * group_size[1]),
+                                };
                                 pass.setPipeline(pipeline);
                                 pass.setBindGroup(0, blend_bind_group, &.{oit_uniform_mem.offset});
                                 pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
@@ -3439,7 +3483,16 @@ pub const Renderer = struct {
             }
 
             // Blit to native resolution framebuffer texture
-            if (gctx.lookupResource(self.blit_pipeline)) |pipeline| {
+            //   opaque_blit: Don't copy the alpha channel if write back is in a format that doesn't support it.
+            //   Rendering to a texture normally involves converting to the specified "packmode". When "RenderToVRAM" is disabled,
+            //   this conversion is skipped entirely. This is an issue in Virtua Tennis 2 where the replay are visibly darker when avoiding the roundtrip via guest VRAM.
+            //   Loosing the alpha channel is enough in this case, but *technically* a proper fix would be to perform the conversion in a compute shader and back to BGRA.
+            //   This seems a bit pointless when avoiding writing to guest VRAM is only an optimization.
+            const opaque_blit = switch (self.write_back_parameters.w_ctrl.fb_packmode) {
+                .KRGB0555, .RGB565, .RGB888, .KRGB0888 => true,
+                .ARGB4444, .ARGB1555, .ARGB8888, .Reserved => false,
+            };
+            if (gctx.lookupResource(if (opaque_blit) self.blit_opaque_pipeline else self.blit_pipeline)) |pipeline| {
                 const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
                 const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
                 const blit_bind_group = gctx.lookupResource(if (render_to_texture) self.blit_bind_group_render_to_texture else self.blit_bind_group).?;
@@ -3459,16 +3512,26 @@ pub const Renderer = struct {
                     pass.release();
                 }
 
+                const blit_uniform_mem = gctx.uniformsAllocate(BlitUniforms, 1);
+                blit_uniform_mem.slice[0] = .{
+                    .min = .{ 0, 0 },
+                    .max = .{ 1.0, 1.0 },
+                };
+
                 pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
                 pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
 
                 pass.setPipeline(pipeline);
 
-                pass.setBindGroup(0, blit_bind_group, &.{});
+                pass.setBindGroup(0, blit_bind_group, &.{blit_uniform_mem.offset});
                 pass.drawIndexed(4, 1, 0, 0, 0);
             }
 
             if (self.ExperimentalFramebufferEmulation or render_to_texture) {
+                // FIXME: Could technically go up to 1024 when rendering to a texture... Don't know if any game actualy does it.
+                //        Using the framebuffer size allow reusing some textures and buffers from the regular pipeline.
+                const width: u32 = @min(self.global_clip.x.max, NativeResolution.width);
+                const height: u32 = @min(self.global_clip.y.max, NativeResolution.height);
                 // Skips the CPU writeback and copy directly to a host texture slot.
                 if (!self.ExperimentalRenderToVRAM) {
                     // TODO: How is the minimum value of the global_clip used exactly? (Find a game where it isn't just [0, 0].)
@@ -3482,8 +3545,6 @@ pub const Renderer = struct {
                     const FB_W_SOF = if (field == 0) self.write_back_parameters.fb_w_sof1 else self.write_back_parameters.fb_w_sof2;
                     const addr = FB_W_SOF & HollyModule.Holly.VRAMMask;
                     const pixel_size: u32 = 2;
-                    const width = @min(self.global_clip.x.max, NativeResolution.width);
-                    const height = @min(self.global_clip.y.max, NativeResolution.height);
                     const end_address = addr + pixel_size * width * height;
 
                     var texture_index: TextureIndex = InvalidTextureIndex;
@@ -3494,8 +3555,7 @@ pub const Renderer = struct {
                                 texture_index = @as(TextureIndex, @intCast(i));
                         } else {
                             // Replace texture slot previously used by this mechanism.
-                            if (self.texture_metadata[size_index][i].start_address == addr and self.texture_metadata[size_index][i].end_address == end_address) {
-                                self.texture_metadata[size_index][i].status = .Invalid;
+                            if (self.texture_metadata[size_index][i].start_address == addr) {
                                 texture_index = @as(TextureIndex, @intCast(i));
                                 break;
                             }
@@ -3526,7 +3586,7 @@ pub const Renderer = struct {
                         );
                         // FIXME: All of these settings are those used by Virtual Tennis 2 during replay.
                         //        I need to find a better way to find them at runtime.
-                        //        (Wait the next frame, look for this speficic address, and update them 'JIT'?
+                        //        (Wait the next frame, look for this specific address, and update them 'just in time'?
                         //          Add a flag to the slot to bypass all settings except the address?).
                         const texture_control_word = HollyModule.TextureControlWord{
                             .address = @intCast(addr >> 3),
@@ -3565,7 +3625,7 @@ pub const Renderer = struct {
                             .control_word = texture_control_word,
                             .tsp_instruction = tsp_instruction,
                             .index = texture_index,
-                            .usage = 0,
+                            .usage = 1,
                             .size = .{ u_size, v_size },
                             .start_address = addr,
                             .end_address = end_address,
@@ -3584,14 +3644,14 @@ pub const Renderer = struct {
                         .{
                             .layout = .{
                                 .offset = 0,
-                                .bytes_per_row = 4 * NativeResolution.width,
-                                .rows_per_image = NativeResolution.height,
+                                .bytes_per_row = 4 * width,
+                                .rows_per_image = height,
                             },
                             .buffer = gctx.lookupResource(self.framebuffer_copy_buffer).?,
                         },
                         .{
-                            .width = NativeResolution.width,
-                            .height = NativeResolution.height,
+                            .width = width,
+                            .height = height,
                             .depth_or_array_layers = 1,
                         },
                     );
@@ -3615,17 +3675,20 @@ pub const Renderer = struct {
                 }
             };
 
+            const width: u32 = @min(self.global_clip.x.max, NativeResolution.width);
+            const height: u32 = @min(self.global_clip.y.max, NativeResolution.height);
+
             const copy_buffer = gctx.lookupResource(self.framebuffer_copy_buffer).?;
-            const future = copy_buffer.mapAsync(.{ .read = true }, 0, 4 * NativeResolution.width * NativeResolution.height, .{ .callback = &static.signal_fb_mapped, .mode = .wait_any_only });
+            const future = copy_buffer.mapAsync(.{ .read = true }, 0, 4 * width * height, .{ .callback = &static.signal_fb_mapped, .mode = .wait_any_only });
             // Wait for mapping to be available. There's no synchronous way to do that AFAIK.
             // It needs to be unmapped before the next frame.
             var wait_info = [_]wgpu.FutureWaitInfo{.{ .future = future }};
             if (gctx.instance.waitAny(&wait_info, std.math.maxInt(u64)) == .success) {
                 if (static.result == .success) {
                     defer copy_buffer.unmap();
-                    const mapped_pixels = copy_buffer.getConstMappedRange(u8, 0, 4 * NativeResolution.width * NativeResolution.height);
+                    const mapped_pixels = copy_buffer.getConstMappedRange(u8, 0, 4 * width * height);
                     if (mapped_pixels) |pixels| {
-                        holly.write_framebuffer(self.write_back_parameters, pixels);
+                        holly.write_framebuffer(self.write_back_parameters, .{ .width = width, .height = height }, pixels);
                     } else log.err(termcolor.red("Failed to map framebuffer"), .{});
                 } // Error logged in the callback
             } else log.err("Failed to wait for framebuffer mapping to be available.", .{});
@@ -3638,6 +3701,7 @@ pub const Renderer = struct {
         }
     }
 
+    /// Blit the last rendered frame to the window surface.
     /// Locks _gctx_queue_mutex.
     pub fn draw(self: *const @This()) void {
         self._gctx_queue_mutex.lock();
@@ -3675,12 +3739,18 @@ pub const Renderer = struct {
                         pass.release();
                     }
 
+                    const blit_uniform_mem = self._gctx.uniformsAllocate(BlitUniforms, 1);
+                    blit_uniform_mem.slice[0] = .{
+                        .min = .{ 0, 0 },
+                        .max = .{ @as(f32, @floatFromInt(self.guest_framebuffer_size.width)) / NativeResolution.width, @as(f32, @floatFromInt(self.guest_framebuffer_size.height)) / NativeResolution.height },
+                    };
+
                     pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
                     pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
 
                     pass.setPipeline(pipeline);
 
-                    pass.setBindGroup(0, blit_bind_group, &.{});
+                    pass.setBindGroup(0, blit_bind_group, &.{blit_uniform_mem.offset});
                     pass.drawIndexed(4, 1, 0, 0, 0);
                 }
 
@@ -3830,13 +3900,12 @@ pub const Renderer = struct {
 
         self.create_blit_bind_groups(scaling_filter);
 
-        const mv_apply_bind_group_layout = self._gctx.createBindGroupLayout(&.{
-            zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
-        }, .{ .label = "ModifierVolumeApplyBindGroupLayout" });
+        const mv_apply_bind_group_layout = self._gctx.createBindGroupLayout(&ModifierVolumeApplyBindGroupLayout, .{ .label = "ModifierVolumeApplyBindGroupLayout" });
         defer self._gctx.releaseResource(mv_apply_bind_group_layout);
 
         self.modifier_volume_apply_bind_group = self._gctx.createBindGroup(mv_apply_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .texture_view_handle = self.resized_framebuffer_area1.view },
+            .{ .binding = 2, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(BlitUniforms) },
         });
 
         self.create_oit_buffers();
@@ -3983,6 +4052,7 @@ pub const Renderer = struct {
             .format = .depth32_float_stencil8,
             .mip_level_count = 1,
             .sample_count = 1,
+            .label = .init("Depth Texture"),
         });
         const view = gctx.createTextureView(texture, .{});
         const depth_only_view = gctx.createTextureView(texture, .{ .aspect = .depth_only });
@@ -4005,6 +4075,7 @@ pub const Renderer = struct {
             },
             .format = .bgra8_unorm,
             .mip_level_count = @intCast(4 + size_index),
+            .label = .init("Texture Cache Array"),
         });
         const view = gctx.createTextureView(texture, .{});
         return .{ .texture = texture, .view = view };
@@ -4026,6 +4097,7 @@ pub const Renderer = struct {
             },
             .format = zgpu.GraphicsContext.surface_texture_format,
             .mip_level_count = 1,
+            .label = .init("Resized Framebuffer Texture"),
         });
         const resized_framebuffer_texture_view = gctx.createTextureView(resized_framebuffer_texture, .{});
 
@@ -4038,8 +4110,8 @@ pub const Renderer = struct {
                 .usage = .{ .storage = true },
                 .size = self.get_linked_list_heads_size(),
                 .mapped_at_creation = .true,
+                .label = .init("OIT List Heads Buffer"),
             });
-            self._gctx.lookupResource(self.list_heads_buffer).?.setLabel("OIT List Heads Buffer");
             const init_buffer = self._gctx.lookupResourceInfo(self.list_heads_buffer).?.gpuobj.?;
             const mapped = init_buffer.getMappedRange(u32, 0, self.get_linked_list_heads_size() / @sizeOf(u32));
             @memset(mapped.?, 0xFFFFFFFF); // Set heads to invalid (or 'end-of-list')
@@ -4059,8 +4131,8 @@ pub const Renderer = struct {
                 .usage = .{ .storage = true },
                 .size = self.translucent_modvol_dimensions().fragment_counts_buffer_size,
                 .mapped_at_creation = .true,
+                .label = .init("Translucent ModVol Fragment Counts Buffer"),
             });
-            self._gctx.lookupResource(self.translucent_modvol_fragment_counts_buffer).?.setLabel("Translucent ModVol Fragment Counts Buffer");
             {
                 const init_buffer = self._gctx.lookupResourceInfo(self.translucent_modvol_fragment_counts_buffer).?.gpuobj.?;
                 const mapped = init_buffer.getMappedRange(u32, 0, self.translucent_modvol_dimensions().pixels_per_slice);
@@ -4071,15 +4143,15 @@ pub const Renderer = struct {
             self.translucent_modvol_fragment_list_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .copy_dst = true, .storage = true },
                 .size = self.translucent_modvol_dimensions().fragment_list_buffer_size,
+                .label = .init("Translucent ModVol Fragment List Buffer"),
             });
-            self._gctx.lookupResource(self.translucent_modvol_fragment_list_buffer).?.setLabel("Translucent ModVol Fragments Buffer");
 
             self.translucent_modvol_volumes_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .copy_dst = true, .storage = true },
                 .size = self.translucent_modvol_dimensions().volumes_buffer_size,
                 .mapped_at_creation = .true,
+                .label = .init("Translucent ModVol Volumes Buffer"),
             });
-            self._gctx.lookupResource(self.translucent_modvol_volumes_buffer).?.setLabel("Translucent ModVol Volumes Buffer");
             {
                 const init_buffer = self._gctx.lookupResourceInfo(self.translucent_modvol_volumes_buffer).?.gpuobj.?;
                 const mapped = init_buffer.getMappedRange(u8, 0, self.translucent_modvol_dimensions().volumes_buffer_size);
@@ -4109,15 +4181,18 @@ pub const Renderer = struct {
         self.framebuffer_resize_bind_group = self._gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .texture_view_handle = self.framebuffer.view },
             .{ .binding = 1, .sampler_handle = sampler },
+            .{ .binding = 2, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(BlitUniforms) },
         });
 
         self.blit_bind_group = self._gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .texture_view_handle = self.resized_framebuffer.view },
             .{ .binding = 1, .sampler_handle = sampler },
+            .{ .binding = 2, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(BlitUniforms) },
         });
         self.blit_bind_group_render_to_texture = self._gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .texture_view_handle = self.resized_render_to_texture_target.view },
             .{ .binding = 1, .sampler_handle = sampler },
+            .{ .binding = 2, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(BlitUniforms) },
         });
     }
 

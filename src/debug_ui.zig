@@ -1412,9 +1412,16 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(fb_tex_id)) }, .{ .w = 640, .h = 480 });
         }
         if (zgui.collapsingHeader("Resized Framebuffer Texture", .{})) {
-            const fb_size = d.window.getFramebufferSize();
             const fb_tex_id = d.gctx.lookupResource(d.renderer.resized_framebuffer.view).?;
-            zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(fb_tex_id)) }, .{ .w = @floatFromInt(fb_size[0]), .h = @floatFromInt(fb_size[1]) });
+            zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(fb_tex_id)) }, .{ .w = @floatFromInt(d.renderer.resolution.width), .h = @floatFromInt(d.renderer.resolution.height) });
+        }
+        if (zgui.collapsingHeader("Render to Texture Target", .{})) {
+            const fb_tex_id = d.gctx.lookupResource(d.renderer.render_to_texture_target.view).?;
+            zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(fb_tex_id)) }, .{ .w = 640, .h = 480 });
+        }
+        if (zgui.collapsingHeader("Resized Render to Texture Target", .{})) {
+            const fb_tex_id = d.gctx.lookupResource(d.renderer.resized_render_to_texture_target.view).?;
+            zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(fb_tex_id)) }, .{ .w = @floatFromInt(d.renderer.resolution.width), .h = @floatFromInt(d.renderer.resolution.height) });
         }
     }
     zgui.end();
