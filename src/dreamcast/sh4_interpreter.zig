@@ -21,11 +21,6 @@ const sign_extension_u12 = bit_manip.sign_extension_u12;
 const sign_extension_u16 = bit_manip.sign_extension_u16;
 const as_i32 = bit_manip.as_i32;
 
-const Experimental = struct {
-    // https://godbolt.org/#g:!((g:!((g:!((h:codeEditor,i:(filename:'1',fontScale:14,fontUsePx:'0',j:1,lang:zig,selection:(endColumn:2,endLineNumber:13,positionColumn:2,positionLineNumber:13,selectionStartColumn:2,selectionStartLineNumber:13,startColumn:2,startLineNumber:13),source:'const+std+%3D+@import(%22std%22)%3B%0A%0Aexport+fn+fpir_fma(FVn:+@Vector(4,+f32),+FVm:+@Vector(4,+f32))+f32+%7B%0A++++var+tmp:+f32+%3D+FVn%5B0%5D+*+FVm%5B0%5D%3B%0A++++tmp+%3D+@mulAdd(f32,+FVn%5B1%5D,+FVm%5B1%5D,+tmp)%3B%0A++++tmp+%3D+@mulAdd(f32,+FVn%5B2%5D,+FVm%5B2%5D,+tmp)%3B%0A++++tmp+%3D+@mulAdd(f32,+FVn%5B3%5D,+FVm%5B3%5D,+tmp)%3B%0A++++return+tmp%3B%0A%7D%0A%0Aexport+fn+fpir_reduce(FVn:+@Vector(4,+f32),+FVm:+@Vector(4,+f32))+f32+%7B%0A++++return+@reduce(.Add,+FVn+*+FVm)%3B%0A%7D'),l:'5',n:'1',o:'Zig+source+%231',t:'0')),header:(),k:50,l:'4',m:100,n:'0',o:'',s:0,t:'0'),(g:!((g:!((h:compiler,i:(compiler:ztrunk,filters:(b:'0',binary:'1',binaryObject:'1',commentOnly:'0',debugCalls:'1',demangle:'0',directives:'0',execute:'1',intel:'0',libraryCode:'0',trim:'1',verboseDemangling:'0'),flagsViewOpen:'1',fontScale:14,fontUsePx:'0',j:1,lang:zig,libs:!(),options:'-OReleaseSafe',overrides:!(),selection:(endColumn:1,endLineNumber:1,positionColumn:1,positionLineNumber:1,selectionStartColumn:1,selectionStartLineNumber:1,startColumn:1,startLineNumber:1),source:1),l:'5',n:'0',o:'+zig+trunk+(Editor+%231)',t:'0')),header:(),k:50,l:'4',m:87.26851851851852,n:'0',o:'',s:0,t:'0'),(g:!((h:output,i:(compilerName:'zig+trunk',editorid:1,fontScale:14,fontUsePx:'0',j:1,wrap:'1'),l:'5',n:'0',o:'Output+of+zig+trunk+(Compiler+%231)',t:'0')),l:'4',m:12.731481481481477,n:'0',o:'',s:0,t:'0')),k:50,l:'3',n:'0',o:'',t:'0')),l:'2',n:'0',o:'',t:'0')),version:4
-    const fpir: enum { FMA, Reduce } = .FMA;
-};
-
 pub fn execute(self: *SH4, max_instructions: u8) u32 {
     self.handle_interrupts();
 
@@ -1964,31 +1959,6 @@ pub fn fipr_FVm_FVn(cpu: *SH4, opcode: Instr) !void {
     const FVn: @Vector(4, f32) = @as([*]f32, @ptrCast(cpu.FR(n)))[0..4].*;
     const FVm: @Vector(4, f32) = @as([*]f32, @ptrCast(cpu.FR(m)))[0..4].*;
     cpu.FR(n + 3).* = @reduce(.Add, FVn * FVm);
-}
-
-pub fn test_fipr(n: [4]f32, m: [4]f32) !void {
-    var cpu = try SH4.init(std.testing.allocator, null);
-    defer cpu.deinit();
-    cpu.fpscr.pr = 0;
-
-    for (0..4) |i| {
-        cpu.FR(@intCast(i)).* = n[i];
-    }
-
-    for (0..4) |i| {
-        cpu.FR(@intCast(4 + i)).* = m[i];
-    }
-
-    fipr_FVm_FVn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0b0001, .m = undefined, .d = undefined } });
-
-    try std.testing.expect(cpu.FR(3).* == n[0] * m[0] + n[1] * m[1] + n[2] * m[2] + n[3] * m[3]);
-}
-
-test "fipr" {
-    try test_fipr(.{ 1, 2, 3, 4 }, .{ 4, 3, 2, 1 });
-    try test_fipr(.{ 0, 0, 0, 0 }, .{ 0, 0, 0, 0 });
-    try test_fipr(.{ 1.5, 2.5, 3.5, 4.5 }, .{ 4.5, 3.5, 2.5, 1.5 });
-    try test_fipr(.{ 1, 2, 3, 4 }, .{ 0, 0, 0, 0 });
 }
 
 pub fn ftrv_XMTRX_FVn(cpu: *SH4, opcode: Instr) !void {
