@@ -2883,14 +2883,17 @@ pub const Renderer = struct {
         if (user_clip) |uc| {
             // FIXME: Handle other usages.
             //        Use Stencil for OutsideEnabled
-            if (uc.usage == .InsideEnabled)
+            if (uc.usage == .InsideEnabled) {
+                const scaled_x = @max(factor *| uc.x, x);
+                const scaled_y = @max(factor *| uc.y, y);
                 return .{
                     .usage = .InsideEnabled,
-                    .x = @max(factor *| uc.x, x),
-                    .y = @max(factor *| uc.y, y),
-                    .width = @min(factor *| uc.width, width),
-                    .height = @min(factor *| uc.height, height),
+                    .x = scaled_x,
+                    .y = scaled_y,
+                    .width = @min(@min(factor *| uc.width, width), self.resolution.width -| scaled_x),
+                    .height = @min(@min(factor *| uc.height, height), self.resolution.height -| scaled_y),
                 };
+            }
         }
         return .{
             .usage = .InsideEnabled,
@@ -2964,7 +2967,7 @@ pub const Renderer = struct {
         const gctx = self._gctx;
         const target_size = Resolution{ .width = 640, .height = 480 };
 
-        // We might only use a fraction of the target (320p games and RTT). The following is used as an optimization: Only copy and run computed shaders on the relevant portion of the target.
+        // We might only use a fraction of the target (240p games and RTT). The following is used as an optimization: Only copy and run computed shaders on the relevant portion of the target.
         const render_area: Resolution = .{
             .width = @min(self.output_size.width * self.resolution.width / NativeResolution.width, self.resolution.width), // Assumes resolution is an integer multiplier of the NativeResolution.
             .height = @min(self.output_size.height * self.resolution.height / NativeResolution.height, self.resolution.height),

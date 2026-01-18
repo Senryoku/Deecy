@@ -129,7 +129,7 @@ pub const VideoModes = struct {
         .spg_control = @bitCast(@as(u32, 0x00000140)),
         .vo_startx = @bitCast(@as(u32, 0x000000A4)),
         .vo_starty = @bitCast(@as(u32, 0x00120011)),
-        .vo_control = @bitCast(@as(u32, 0x00160000)), // 320p: 0x00160100
+        .vo_control = @bitCast(@as(u32, 0x00160000)), // 240p: 0x00160100
     };
     pub const NTSCInterlace = VideoModeDefaultRegisters{
         .spg_load = @bitCast(@as(u32, 0x020C0359)),
@@ -139,7 +139,7 @@ pub const VideoModes = struct {
         .spg_control = @bitCast(@as(u32, 0x00000150)),
         .vo_startx = @bitCast(@as(u32, 0x000000A4)),
         .vo_starty = @bitCast(@as(u32, 0x00120012)),
-        .vo_control = @bitCast(@as(u32, 0x00160000)), // 320p: 0x00160100
+        .vo_control = @bitCast(@as(u32, 0x00160000)), // 240p: 0x00160100
     };
     pub const PAL = VideoModeDefaultRegisters{
         .spg_load = @bitCast(@as(u32, 0x0138035F)),
@@ -149,7 +149,7 @@ pub const VideoModes = struct {
         .spg_control = @bitCast(@as(u32, 0x00000180)),
         .vo_startx = @bitCast(@as(u32, 0x000000AE)),
         .vo_starty = @bitCast(@as(u32, 0x002E002E)),
-        .vo_control = @bitCast(@as(u32, 0x00160000)), // 320p: 0x00160100
+        .vo_control = @bitCast(@as(u32, 0x00160000)), // 240p: 0x00160100
     };
     pub const PALInterlace = VideoModeDefaultRegisters{
         .spg_load = @bitCast(@as(u32, 0x0270035F)),
@@ -159,7 +159,7 @@ pub const VideoModes = struct {
         .spg_control = @bitCast(@as(u32, 0x00000190)),
         .vo_startx = @bitCast(@as(u32, 0x000000AE)),
         .vo_starty = @bitCast(@as(u32, 0x002E002D)),
-        .vo_control = @bitCast(@as(u32, 0x00160000)), // 320p: 0x00160100
+        .vo_control = @bitCast(@as(u32, 0x00160000)), // 240p: 0x00160100
     };
     pub const VGA = VideoModeDefaultRegisters{
         .spg_load = @bitCast(@as(u32, 0x020C0359)),
