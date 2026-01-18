@@ -180,6 +180,8 @@ pub const SOFT_RESET = packed struct(u32) {
     _: u29 = 0,
 };
 
+pub const FOG_CLAMP = PackedColor;
+
 pub const SPG_STATUS = packed struct(u32) {
     scanline: u10 = 0,
     fieldnum: u1 = 0,

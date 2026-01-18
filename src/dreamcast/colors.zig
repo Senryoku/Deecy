@@ -119,6 +119,10 @@ pub const PackedColor = packed struct(u32) {
     pub fn with_alpha(self: @This(), use_alpha: bool) @This() {
         return .{ .r = self.r, .g = self.g, .b = self.b, .a = if (use_alpha) self.a else 255 };
     }
+
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
+        try writer.print("#{X:0>2}{X:0>2}{X:0>2}{X:0>2}", .{ self.r, self.g, self.b, self.a });
+    }
 };
 
 pub const fARGB = packed struct {

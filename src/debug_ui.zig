@@ -1088,6 +1088,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         }
         if (zgui.collapsingHeader("TEXT_CONTROL", .{ .default_open = false }))
             display(dc.gpu.read_register(Holly.TEXT_CONTROL, .TEXT_CONTROL));
+        zgui.text("FOG_CLAMP_MIN: {f}", .{dc.gpu.read_register(Holly.FOG_CLAMP, .FOG_CLAMP_MIN)});
+        zgui.text("FOG_CLAMP_MAX: {f}", .{dc.gpu.read_register(Holly.FOG_CLAMP, .FOG_CLAMP_MAX)});
 
         if (zgui.collapsingHeader("Half Offset", .{ .frame_padding = true })) {
             const HALF_OFFSET = dc.gpu.read_register(Holly.HALF_OFFSET, .HALF_OFFSET);
@@ -1357,8 +1359,14 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.text("FPU_SHAD_SCALE: {d: >4.2}", .{d.renderer.fpu_shad_scale});
         if (zgui.collapsingHeader("Fog", .{})) {
             zgui.text("Fog Density: {d: >4.2}", .{d.renderer.fog_density});
-            _ = zgui.colorEdit4("Fog Pal", .{ .col = @as([*]f32, @ptrCast(&d.renderer.fog_col_pal))[0..4] });
-            _ = zgui.colorEdit4("Fog Vert", .{ .col = @as([*]f32, @ptrCast(&d.renderer.fog_col_vert))[0..4] });
+            var fog_col_pal = Colors.fRGBA.from_packed(d.renderer.fog_col_pal, true);
+            var fog_col_vert = Colors.fRGBA.from_packed(d.renderer.fog_col_vert, true);
+            var fog_clamp_min = Colors.fRGBA.from_packed(d.renderer.fog_clamp_min, true);
+            var fog_clamp_max = Colors.fRGBA.from_packed(d.renderer.fog_clamp_max, true);
+            _ = zgui.colorEdit4("Fog Pal", .{ .col = @as([*]f32, @ptrCast(&fog_col_pal))[0..4] });
+            _ = zgui.colorEdit4("Fog Vert", .{ .col = @as([*]f32, @ptrCast(&fog_col_vert))[0..4] });
+            _ = zgui.colorEdit4("Fog Clamp Min", .{ .col = @as([*]f32, @ptrCast(&fog_clamp_min))[0..4] });
+            _ = zgui.colorEdit4("Fog Clamp Max", .{ .col = @as([*]f32, @ptrCast(&fog_clamp_max))[0..4] });
             for (0..128) |i| {
                 zgui.text("Fog {d: >3}: {X:0>4}", .{ i, d.renderer.fog_lut[i] });
             }

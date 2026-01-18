@@ -91,20 +91,20 @@ fn fog_alpha_lut(z: f32) -> f32 {
     return mix(low, high, f32((uval >> 11) & 0xFF) / 255.0); // Residual fractional part
 }
 
-fn apply_fog(shading_instructions: u32, z: f32, color: vec4<f32>, offset_alpha: f32) -> vec4<f32> {
-    // TODO: Color Clamping
+fn apply_fog(shading_instructions: u32, z: f32, in_color: vec4<f32>, offset_alpha: f32) -> vec4<f32> {
+    let color = select(in_color, clamp(in_color, unpack4x8unorm(uniforms.fog_clamp_min), unpack4x8unorm(uniforms.fog_clamp_max)), extractBits(shading_instructions, 27, 1) == 1);
     switch(extractBits(shading_instructions, 19, 2)) {
         case 0x0u: {
             // Lookup table mode
             let fog_alpha = fog_alpha_lut(z);
-            return vec4<f32>(mix(color.rgb, uniforms.fog_col_pal.rgb, fog_alpha), color.a);
+            return vec4<f32>(mix(color.rgb, unpack4x8unorm(uniforms.fog_col_pal).bgr, fog_alpha), color.a);
         }
         case 0x1u: {
             // Per vertex mode
             let offset_color = extractBits(shading_instructions, 21, 1) == 1;
             let bump_mapping = extractBits(shading_instructions, 26, 1) == 1;
             if offset_color && !bump_mapping { // Using Offset color?
-                return vec4<f32>(mix(color.rgb, uniforms.fog_col_vert.rgb, offset_alpha), color.a);
+                return vec4<f32>(mix(color.rgb, unpack4x8unorm(uniforms.fog_col_vert).bgr, offset_alpha), color.a);
             } else {
                 // If the polygon is not set up to use an Offset Color, Fog processing is not performed.
                 return color;
@@ -119,7 +119,7 @@ fn apply_fog(shading_instructions: u32, z: f32, color: vec4<f32>, offset_alpha: 
             // Substitutes the polygon color for the Fog Color, and the polygon α value for the Fog α value.
             let fog_alpha = fog_alpha_lut(z);
             return vec4<f32>(1.0, 0.0, 0.0, 1.0); // FIXME: This is untested, output a solid red to identify some places where it's used.
-            //return vec4<f32>(uniforms.fog_col_pal.rgb, fog_alpha);
+            //return vec4<f32>(unpack4x8unorm(uniforms.fog_col_pal).rgb, fog_alpha);
         }
         default: { return color; }
     }

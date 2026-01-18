@@ -186,7 +186,8 @@ const ShadingInstructions = packed struct(u32) {
     volume_bit: u1,
     mipmap_bit: u1,
     bump_mapping_bit: u1,
-    _: u5 = 0,
+    color_clamp: u1,
+    _: u4 = 0,
 };
 
 fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mipmap_filter: wgpu.MipmapFilterMode, address_mode_u: wgpu.AddressMode, address_mode_v: wgpu.AddressMode) u8 {
@@ -220,8 +221,11 @@ const Uniforms = extern struct {
     fpu_shad_scale: f32,
     fog_density: f32, // Should be a f16?
     pt_alpha_ref: f32,
-    fog_col_pal: fRGBA align(16),
-    fog_col_vert: fRGBA align(16),
+    fog_col_pal: PackedColor,
+    fog_col_vert: PackedColor,
+    fog_clamp_min: PackedColor,
+    fog_clamp_max: PackedColor,
+    _padding: u32 = 0,
     fog_lut: [0x80]u32 align(16), // actually 2 * 8bits per entry.
 };
 
@@ -801,8 +805,10 @@ pub const Renderer = struct {
     max_depth: f32 = 0.0,
     pt_alpha_ref: f32 = 1.0,
     fpu_shad_scale: f32 = 1.0,
-    fog_col_pal: fRGBA = .{},
-    fog_col_vert: fRGBA = .{},
+    fog_col_pal: PackedColor = .{},
+    fog_col_vert: PackedColor = .{},
+    fog_clamp_min: PackedColor = .{},
+    fog_clamp_max: PackedColor = .{},
     fog_density: f32 = 0,
     fog_lut: [0x80]u32 = @splat(0),
     guest_framebuffer_size: Resolution = .{ .width = 640, .height = 480 },
@@ -2022,10 +2028,12 @@ pub const Renderer = struct {
 
         self.fpu_shad_scale = gpu.read_register(HollyModule.FPU_SHAD_SCALE, .FPU_SHAD_SCALE).get_factor();
 
-        const col_pal = gpu.read_register(PackedColor, .FOG_COL_RAM);
-        const col_vert = gpu.read_register(PackedColor, .FOG_COL_VERT);
-        self.fog_col_pal = fRGBA.from_packed(col_pal, true);
-        self.fog_col_vert = fRGBA.from_packed(col_vert, true);
+        self.fog_col_pal = gpu.read_register(PackedColor, .FOG_COL_RAM);
+        self.fog_col_pal.a = 0; // Reserved
+        self.fog_col_vert = gpu.read_register(PackedColor, .FOG_COL_VERT);
+        self.fog_col_vert.a = 0; // Reserved
+        self.fog_clamp_min = gpu.read_register(PackedColor, .FOG_CLAMP_MIN);
+        self.fog_clamp_max = gpu.read_register(PackedColor, .FOG_CLAMP_MAX);
 
         const fog_density = gpu.read_register(u16, .FOG_DENSITY);
         const fog_density_mantissa = (fog_density >> 8) & 0xFF;
@@ -2163,6 +2171,7 @@ pub const Renderer = struct {
                 .volume_bit = 0,
                 .mipmap_bit = 0,
                 .bump_mapping_bit = 0,
+                .color_clamp = tsp_instruction.color_clamp,
             },
         };
 
@@ -2679,6 +2688,7 @@ pub const Renderer = struct {
                             .volume_bit = parameter_control_word.obj_control.volume,
                             .mipmap_bit = texture_control.mip_mapped,
                             .bump_mapping_bit = if (texture_control.pixel_format == .BumpMap) 1 else 0,
+                            .color_clamp = tsp_instruction.color_clamp,
                         },
                     };
 
@@ -2705,6 +2715,7 @@ pub const Renderer = struct {
                             .volume_bit = parameter_control_word.obj_control.volume,
                             .mipmap_bit = if (area1_texture_control) |tc| tc.mip_mapped else 0,
                             .bump_mapping_bit = if (area1_texture_control) |tc| (if (tc.pixel_format == .BumpMap) 1 else 0) else 0,
+                            .color_clamp = atspi.color_clamp,
                         },
                     } else .invalid;
 
@@ -3008,6 +3019,8 @@ pub const Renderer = struct {
                 .pt_alpha_ref = self.pt_alpha_ref,
                 .fog_col_pal = self.fog_col_pal,
                 .fog_col_vert = self.fog_col_vert,
+                .fog_clamp_min = self.fog_clamp_min,
+                .fog_clamp_max = self.fog_clamp_max,
                 .fog_lut = self.fog_lut,
             };
 
