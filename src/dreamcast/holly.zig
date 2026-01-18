@@ -1574,6 +1574,7 @@ pub const Holly = struct {
         for (&self._ta_lists) |*ta_lists| {
             for (ta_lists.items) |*list|
                 list.deinit(self._allocator);
+            ta_lists.deinit(self._allocator);
         }
         self._allocator.free(self.registers);
     }

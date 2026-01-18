@@ -261,11 +261,6 @@ const Configuration = struct {
 
     audio_volume: f32 = 0.3,
     dsp_emulation: DreamcastModule.AICAModule.DSPEmulation = .JIT,
-
-    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-        if (self.game_directory) |game_directory|
-            allocator.free(game_directory);
-    }
 };
 
 pub const ConfigFile = "/config.zon";
@@ -357,7 +352,8 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
             defer allocator.free(conf_str);
             @setEvalBranchQuota(2000);
             var diagnostics: std.zon.parse.Diagnostics = .{};
-            const zon = std.zon.parse.fromSlice(helpers.Partial(Configuration), allocator, conf_str, &diagnostics, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
+            defer diagnostics.deinit(allocator);
+            const zon = std.zon.parse.fromSlice(helpers.Partial(Configuration), allocator, conf_str, null, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
                 deecy_log.err("Failed to parse config file: {t}.\n{f}", .{ err, diagnostics });
                 break :config .{};
             };
@@ -523,7 +519,8 @@ pub fn destroy(self: *@This()) void {
     self.wait_async_jobs();
 
     self.save_config() catch |err| deecy_log.err("Error writing config: {t}", .{err});
-    self.config.deinit(self._allocator);
+    std.zon.parse.free(self._allocator, self.config);
+
     self.shortcuts.deinit(self._allocator);
 
     self.breakpoints.deinit(self._allocator);

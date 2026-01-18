@@ -171,12 +171,13 @@ fn deserialize(self: *@This(), allocator: std.mem.Allocator) !void {
     defer allocator.free(data);
 
     var diagnostics: std.zon.parse.Diagnostics = .{};
+    defer diagnostics.deinit(allocator);
     const zon = std.zon.parse.fromSlice([]const SerializedShortcut, allocator, data, &diagnostics, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
         log.err(termcolor.red("Failed to parse shortcuts file: {t}."), .{err});
         log.err("{f}", .{diagnostics});
         return err;
     };
-    defer allocator.free(zon);
+    defer std.zon.parse.free(allocator, zon);
     self.shortcuts.clearRetainingCapacity();
     for (zon) |shortcut|
         try self.shortcuts.put(shortcut.key, get_action(shortcut.action));

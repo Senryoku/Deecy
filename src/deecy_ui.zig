@@ -323,6 +323,7 @@ const GameInfoCache = struct {
         try self.deserialize(data);
     }
 
+    /// Thread safe
     pub fn add(self: *@This(), path: []const u8, image_size: struct { width: u32, height: u32 }, image: ?[]const u8) !void {
         self._mutex.lock();
         defer self._mutex.unlock();
@@ -878,7 +879,8 @@ pub fn draw(self: *@This()) !void {
                                                                     zgui.sameLine(.{});
                                                                     if (zgui.button("Load", .{})) {
                                                                         d.deinit_peripheral(port, slot);
-                                                                        vmu_config.filename = static.VMUFilenamesInputBuffers[port][slot][0..std.mem.indexOfSentinel(u8, 0, c_str)];
+                                                                        d._allocator.free(vmu_config.filename);
+                                                                        vmu_config.filename = try d._allocator.dupe(u8, static.VMUFilenamesInputBuffers[port][slot][0..std.mem.indexOfSentinel(u8, 0, c_str)]);
                                                                         try d.init_peripheral(port, slot);
                                                                     }
                                                                 }

@@ -129,6 +129,7 @@ pub extern "kernel32" fn timeEndPeriod(
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var allocator = gpa.allocator();
+    defer _ = gpa.deinit();
 
     var d = try Deecy.create(allocator);
     defer d.destroy();
