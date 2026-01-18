@@ -1,9 +1,9 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const config = @import("config");
-const log_file = @import("log_file.zig");
 
 const termcolor = @import("termcolor");
+const custom_log = @import("custom_log.zig");
 
 const DreamcastModule = @import("dreamcast");
 const Holly = DreamcastModule.HollyModule;
@@ -15,81 +15,9 @@ const zglfw = @import("zglfw");
 const Deecy = @import("deecy.zig");
 const ELF = @import("elf.zig");
 
-pub fn customLog(
-    comptime message_level: std.log.Level,
-    comptime scope: @Type(.enum_literal),
-    comptime format: []const u8,
-    args: anytype,
-) void {
-    log_file.lock();
-    defer log_file.unlock();
-
-    const static = struct {
-        var last_message: struct {
-            message_level: std.log.Level,
-            // scope: @Type(.enum_literal),
-            format: []const u8,
-            args_hash: u64,
-        } = undefined;
-        var count: u32 = 0;
-    };
-    var buffer: [128]u8 = undefined;
-
-    const args_hash = std.hash.CityHash64.hash(std.mem.asBytes(&args));
-
-    if (message_level == static.last_message.message_level and
-        //  scope == static.last_message.scope and
-        std.mem.eql(u8, format, static.last_message.format) and
-        args_hash == static.last_message.args_hash)
-    {
-        static.count +|= 1;
-
-        if (!log_file.enabled()) {
-            const stderr = std.debug.lockStderrWriter(&buffer);
-            defer std.debug.unlockStderrWriter();
-            nosuspend stderr.print(termcolor.grey("\r  (...x{d})"), .{static.count}) catch return;
-        }
-        return;
-    }
-
-    if (static.count > 1) {
-        if (!log_file.enabled()) {
-            const stderr = std.debug.lockStderrWriter(&buffer);
-            defer std.debug.unlockStderrWriter();
-            nosuspend stderr.print("\n", .{}) catch return;
-        } else {
-            log_file.writer.print("(...x{d})\n", .{static.count}) catch return;
-            log_file.writer.flush() catch return;
-        }
-    }
-
-    static.last_message = .{
-        .message_level = message_level,
-        //.scope = scope,
-        .format = format,
-        .args_hash = args_hash,
-    };
-    static.count = 1;
-
-    const level_txt = comptime message_level.asText();
-    const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
-    if (!log_file.enabled()) {
-        const stderr = std.debug.lockStderrWriter(&buffer);
-        defer std.debug.unlockStderrWriter();
-        nosuspend stderr.print(comptime switch (message_level) {
-            inline .debug, .info => level_txt ++ prefix2,
-            inline .warn => termcolor.yellow(level_txt ++ prefix2),
-            inline .err => termcolor.red(level_txt ++ prefix2),
-        } ++ format ++ "\n", args) catch return;
-    } else {
-        log_file.writer.print(level_txt ++ prefix2 ++ format ++ "\n", args) catch return;
-        log_file.writer.flush() catch return;
-    }
-}
-
 pub const std_options: std.Options = .{
     .log_level = .info,
-    .logFn = customLog,
+    .logFn = custom_log.log,
     .log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .elf, .level = .warn },
         .{ .scope = .dc, .level = .info },
@@ -150,6 +78,8 @@ pub extern "kernel32" fn timeEndPeriod(
 ) callconv(.winapi) std.os.windows.UINT; // MMRESULT
 
 pub fn main() !void {
+    defer custom_log.deinit();
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var allocator = gpa.allocator();
     defer _ = gpa.deinit();

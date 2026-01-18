@@ -389,7 +389,7 @@ const PipelineKey = struct {
     culling_mode: HollyModule.CullingMode,
 
     pub fn format(self: @This(), writer: *std.Io.Writer) !void {
-        try writer.print("PipelineKey{{ .translucent = {}, .src_blend_factor = {t}, .dst_blend_factor = {t}, .depth_compare = {t}, .depth_write_enabled = {}, .culling_mode = {t} }}", .{
+        try writer.print("[Translucent: {}, Blend SRC: {t}, DST: {t}, Depth Compare: {t}, Depth Write: {}, Culling Mode: {t}]", .{
             self.translucent,
             self.src_blend_factor,
             self.dst_blend_factor,

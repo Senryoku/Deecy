@@ -2,7 +2,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 const comptime_config = @import("config");
 const Self = @This();
-const log_file = @import("log_file.zig");
+
+const custom_log = @import("custom_log.zig");
 
 const zglfw = @import("zglfw");
 const zgpu = @import("zgpu");
@@ -211,7 +212,7 @@ pub const PresentMode = enum(u32) {
 };
 
 const Configuration = struct {
-    log_to_file: bool = false,
+    log_output: custom_log.Output = if (!comptime_config.no_console) .Console else .None,
     per_game_vmu: bool = true,
     performance_overlay: enum { Off, Simple, Detailed } = .Simple,
     display_vmus: bool = true,
@@ -365,8 +366,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         }
     };
 
-    if (config.log_to_file)
-        try log_file.open(allocator);
+    custom_log.set_output(config.log_output);
 
     try zglfw.init();
 
@@ -547,8 +547,6 @@ pub fn destroy(self: *@This()) void {
 
     self.window.destroy();
     zglfw.terminate();
-
-    log_file.close();
 
     self._allocator.destroy(self);
 }

@@ -7,10 +7,11 @@ var file: std.fs.File = undefined;
 var file_writer: std.fs.File.Writer = undefined;
 var buffer: [128]u8 = undefined;
 var mutex: std.Thread.Mutex = .{};
-var _enabled: bool = false;
+var _opened: bool = false;
 
+/// Noop if already open
 pub fn open(allocator: std.mem.Allocator) !void {
-    if (!enabled()) {
+    if (!opened()) {
         mutex.lock();
         defer mutex.unlock();
         const path = try get_path(allocator);
@@ -18,30 +19,33 @@ pub fn open(allocator: std.mem.Allocator) !void {
         file = try std.fs.cwd().createFile(path, .{});
         file_writer = file.writer(&buffer);
         writer = &file_writer.interface;
-        _enabled = true;
+        _opened = true;
     }
 }
 
+/// Noop if not open
 pub fn close() void {
-    if (enabled()) {
+    if (opened()) {
         mutex.lock();
         defer mutex.unlock();
-        _enabled = false;
+        _opened = false;
         writer.flush() catch {};
         file.close();
     }
 }
 
-pub fn enabled() bool {
-    return _enabled;
+pub fn opened() bool {
+    return _opened;
 }
 
+/// Noop if disabled
 pub fn lock() void {
-    if (enabled()) mutex.lock();
+    if (opened()) mutex.lock();
 }
 
+/// Noop if disabled
 pub fn unlock() void {
-    if (enabled()) mutex.unlock();
+    if (opened()) mutex.unlock();
 }
 
 pub fn get_path(allocator: std.mem.Allocator) ![]const u8 {
