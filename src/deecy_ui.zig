@@ -324,6 +324,13 @@ const GameInfoCache = struct {
     }
 
     /// Thread safe
+    pub fn get(self: *@This(), path: []const u8) ?Entry {
+        self._mutex.lock();
+        defer self._mutex.unlock();
+        return self.map.get(path);
+    }
+
+    /// Thread safe
     pub fn add(self: *@This(), path: []const u8, image_size: struct { width: u32, height: u32 }, image: ?[]const u8) !void {
         self._mutex.lock();
         defer self._mutex.unlock();
@@ -485,7 +492,7 @@ pub fn refresh_games(self: *@This()) !void {
 
         for (0..self.disc_files.items.len) |file_idx| { // NOTE: I want to prioritize the first items on the list, and spawning jobs in the reverse order seem to do the trick for some reason ¯\_(ツ)_/¯
             const idx = self.disc_files.items.len - 1 - file_idx;
-            if (cache.map.get(self.disc_files.items[idx].path)) |entry| {
+            if (cache.get(self.disc_files.items[idx].path)) |entry| {
                 if (entry.image) |image|
                     self.update_game_info(entry.path, entry.image_size.width, entry.image_size.height, image);
             } else {
