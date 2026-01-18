@@ -91,6 +91,8 @@ pub fn destroy(self: *@This()) void {
         self.deecy.gctx.releaseResource(texture.view);
     }
 
+    self.notifications.deinit();
+
     self.allocator.destroy(self);
 }
 

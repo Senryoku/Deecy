@@ -37,7 +37,7 @@ pub fn deinit(self: *@This()) void {
     defer self._mutex.unlock();
 
     for (self.notifications.items) |*notification| notification.deinit(self._allocator);
-    self.notifications.deinit();
+    self.notifications.deinit(self._allocator);
 }
 
 pub fn push(self: *@This(), comptime title_fmt: []const u8, title_args: anytype, comptime text_fmt: []const u8, text_args: anytype) void {

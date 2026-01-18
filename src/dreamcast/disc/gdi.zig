@@ -56,8 +56,7 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
 
         const track_file_path = try std.fs.path.join(allocator, &[_][]const u8{ folder, filename });
         defer allocator.free(track_file_path);
-        var track_file = try MemoryMappedFile.init(allocator, track_file_path);
-        try self._files.append(allocator, track_file);
+        try self._files.append(allocator, try MemoryMappedFile.init(allocator, track_file_path));
 
         self.tracks.items[num - 1] = .{
             .num = num,
@@ -65,7 +64,7 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
             .track_type = @enumFromInt(track_type_int),
             .format = format,
             .pregap = pregap,
-            .data = try track_file.create_full_view(),
+            .data = try self._files.items[self._files.items.len - 1].create_full_view(),
         };
     }
 
