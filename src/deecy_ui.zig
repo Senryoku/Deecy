@@ -717,12 +717,13 @@ pub fn draw(self: *@This()) !void {
         if (zgui.begin("Settings", .{ .popen = &self.deecy.config.display_settings, .flags = .{ .no_collapse = true } })) {
             if (zgui.beginTabBar("SettingsTabBar", .{})) {
                 if (zgui.beginTabItem("Renderer", .{})) {
+                    const dropdown_size = 196.0;
                     var fullscreen = self.deecy.config.fullscreen;
                     if (zgui.checkbox("Fullscreen", .{ .v = &fullscreen })) {
                         self.deecy.toggle_fullscreen();
                     }
                     zgui.text("Curent Resolution: {d}x{d}", .{ d.renderer.resolution.width, d.renderer.resolution.height });
-                    zgui.setNextItemWidth(128.0);
+                    zgui.setNextItemWidth(dropdown_size);
                     var resolution: enum(u8) { Native = 1, x2 = 2, x3 = 3, x4 = 4, x5 = 5 } = @enumFromInt(d.renderer.resolution.width / Deecy.Renderer.NativeResolution.width);
                     if (zgui.comboFromEnum("Resolution", &resolution)) {
                         d.gctx_queue_mutex.lock();
@@ -734,11 +735,15 @@ pub fn draw(self: *@This()) !void {
                         if (d.running)
                             try d.renderer.render(&d.dc.gpu, false);
                     }
-                    zgui.setNextItemWidth(128.0);
+                    zgui.setNextItemWidth(dropdown_size);
                     _ = zgui.comboFromEnum("Display Mode", &d.config.renderer.display_mode);
-                    zgui.setNextItemWidth(128.0);
+                    zgui.setNextItemWidth(dropdown_size);
                     if (zgui.comboFromEnum("Scaling Filter", &d.config.renderer.scaling_filter)) {
                         d.renderer.set_scaling_filter(d.config.renderer.scaling_filter);
+                    }
+                    zgui.setNextItemWidth(dropdown_size);
+                    if (zgui.comboFromEnum("Texture Filter", &d.config.renderer.texture_filter)) {
+                        d.renderer.texture_filter = d.config.renderer.texture_filter;
                     }
                     zgui.separator();
 
@@ -758,7 +763,7 @@ pub fn draw(self: *@This()) !void {
                         };
                         if (Once(@src())) try static.init(d);
 
-                        zgui.setNextItemWidth(128.0);
+                        zgui.setNextItemWidth(dropdown_size);
                         if (zgui.beginCombo("Present Mode", .{ .preview_value = @tagName(Deecy.PresentMode.fromWGPU(d.gctx.present_mode)) })) {
                             for (static.present_modes) |present_mode| {
                                 if (zgui.selectable(@tagName(Deecy.PresentMode.fromWGPU(present_mode)), .{ .selected = d.gctx.present_mode == present_mode })) {
@@ -781,7 +786,7 @@ pub fn draw(self: *@This()) !void {
                     }
 
                     zgui.text("Experimental settings", .{});
-                    zgui.setNextItemWidth(128.0);
+                    zgui.setNextItemWidth(dropdown_size);
                     _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
                     _ = zgui.checkbox("Framebuffer Emulation", .{ .v = &d.renderer.ExperimentalFramebufferEmulation });
                     _ = zgui.checkbox("Render to Texture", .{ .v = &d.renderer.ExperimentalRenderToTexture });
@@ -1227,9 +1232,12 @@ pub fn draw_game_library(self: *@This()) !void {
                         }
                     }
 
-                    if (zgui.isItemHovered(.{ .for_tooltip = true }) and zgui.beginTooltip()) {
-                        zgui.text("{s}", .{entry.name});
-                        zgui.endTooltip();
+                    if (zgui.isItemHovered(.{})) {
+                        zgui.setMouseCursor(.hand);
+                        if (zgui.beginTooltip()) {
+                            zgui.text("{s}", .{entry.name});
+                            zgui.endTooltip();
+                        }
                     }
 
                     if (displayed_count % 4 != 3) zgui.sameLine(.{});

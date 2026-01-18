@@ -667,7 +667,7 @@ const TextureAndView = struct {
 pub const Filter = enum { Nearest, Linear };
 
 pub const Renderer = struct {
-    // Max texture count for each size (8x8 to 1024x1024). Not sure what are good values.
+    // Initial max texture count for each size (8x8 to 1024x1024).
     // FIXME: Not sure what are good values.
     //        As a good stress test, Fatal Fury: Mark of the Wolves can use more than 1024 16x16 textures in a single frame right in the character select screen with the current system.
     //        In matches, I've also seen it exceed 2048 8x8 textures (!) and the current limit of 8 1024x1024 textures by using a lot of 16x1024. This might be the limit of the current solution.
@@ -680,9 +680,12 @@ pub const Renderer = struct {
     pub const NativeResolution: Resolution = .{ .width = 640, .height = 480 };
 
     pub const Configuration = struct {
+        pub const TextureFilter = enum { @"Application Driven", @"Force Nearest", @"Force Linear" };
+
         internal_resolution_factor: u32 = 2,
-        display_mode: Renderer.DisplayMode = .Center,
+        display_mode: DisplayMode = .Center,
         scaling_filter: Filter = .Linear,
+        texture_filter: TextureFilter = .@"Application Driven",
     };
 
     const MaxFragmentsPerPixel = 24;
@@ -777,6 +780,7 @@ pub const Renderer = struct {
     palette_buffer: zgpu.BufferHandle,
 
     resolution: Resolution,
+    texture_filter: Configuration.TextureFilter,
 
     /// Intermediate texture to upload framebuffer from VRAM at native resolution
     framebuffer: TextureAndView,
@@ -1264,6 +1268,7 @@ pub const Renderer = struct {
         var renderer = try allocator.create(Renderer);
         renderer.* = .{
             .resolution = .{ .width = config.internal_resolution_factor * NativeResolution.width, .height = config.internal_resolution_factor * NativeResolution.height },
+            .texture_filter = config.texture_filter,
 
             .blit_vertex_buffer = blit_vertex_buffer,
             .blit_index_buffer = blit_index_buffer,
@@ -2336,8 +2341,20 @@ pub const Renderer = struct {
                     const isp_tsp_instruction = polygon.isp_tsp_instruction();
                     var tsp_instruction = polygon.tsp_instruction();
                     const texture_control = polygon.texture_control();
-                    const area1_tsp_instruction = polygon.area1_tsp_instruction();
+                    var area1_tsp_instruction = polygon.area1_tsp_instruction();
                     const area1_texture_control = polygon.area1_texture_control();
+
+                    switch (self.texture_filter) {
+                        .@"Application Driven" => {},
+                        .@"Force Nearest" => {
+                            tsp_instruction.filter_mode = .Point;
+                            if (area1_tsp_instruction) |*a1ti| a1ti.filter_mode = .Point;
+                        },
+                        .@"Force Linear" => {
+                            tsp_instruction.filter_mode = .Bilinear;
+                            if (area1_tsp_instruction) |*a1ti| a1ti.filter_mode = .Bilinear;
+                        },
+                    }
 
                     if (tsp_instruction.src_select != 0 or tsp_instruction.dst_select != 0) {
                         // NOTE: Ideas on how to suppport the Secondary Accumulation Buffer:
