@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const config = @import("config");
+const log_file = @import("log_file.zig");
 
 const termcolor = @import("termcolor");
 
@@ -20,6 +21,9 @@ pub fn customLog(
     comptime format: []const u8,
     args: anytype,
 ) void {
+    log_file.lock();
+    defer log_file.unlock();
+
     const static = struct {
         var last_message: struct {
             message_level: std.log.Level,
@@ -29,6 +33,7 @@ pub fn customLog(
         } = undefined;
         var count: u32 = 0;
     };
+    var buffer: [128]u8 = undefined;
 
     const args_hash = std.hash.CityHash64.hash(std.mem.asBytes(&args));
 
@@ -39,18 +44,23 @@ pub fn customLog(
     {
         static.count +|= 1;
 
-        var buffer: [64]u8 = undefined;
-        const stderr = std.debug.lockStderrWriter(&buffer);
-        defer std.debug.unlockStderrWriter();
-        nosuspend stderr.print(termcolor.grey("\r  (...x{d})"), .{static.count}) catch return;
+        if (!log_file.enabled()) {
+            const stderr = std.debug.lockStderrWriter(&buffer);
+            defer std.debug.unlockStderrWriter();
+            nosuspend stderr.print(termcolor.grey("\r  (...x{d})"), .{static.count}) catch return;
+        }
         return;
     }
 
     if (static.count > 1) {
-        var buffer: [64]u8 = undefined;
-        const stderr = std.debug.lockStderrWriter(&buffer);
-        defer std.debug.unlockStderrWriter();
-        nosuspend stderr.print("\n", .{}) catch return;
+        if (!log_file.enabled()) {
+            const stderr = std.debug.lockStderrWriter(&buffer);
+            defer std.debug.unlockStderrWriter();
+            nosuspend stderr.print("\n", .{}) catch return;
+        } else {
+            log_file.writer.print("(...x{d})\n", .{static.count}) catch return;
+            log_file.writer.flush() catch return;
+        }
     }
 
     static.last_message = .{
@@ -61,7 +71,20 @@ pub fn customLog(
     };
     static.count = 1;
 
-    std.log.defaultLog(message_level, scope, format, args);
+    const level_txt = comptime message_level.asText();
+    const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
+    if (!log_file.enabled()) {
+        const stderr = std.debug.lockStderrWriter(&buffer);
+        defer std.debug.unlockStderrWriter();
+        nosuspend stderr.print(comptime switch (message_level) {
+            inline .debug, .info => level_txt ++ prefix2,
+            inline .warn => termcolor.yellow(level_txt ++ prefix2),
+            inline .err => termcolor.red(level_txt ++ prefix2),
+        } ++ format ++ "\n", args) catch return;
+    } else {
+        log_file.writer.print(level_txt ++ prefix2 ++ format ++ "\n", args) catch return;
+        log_file.writer.flush() catch return;
+    }
 }
 
 pub const std_options: std.Options = .{

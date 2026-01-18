@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const termcolor = @import("termcolor");
+const log_file = @import("log_file.zig");
 const Once = @import("helpers").Once;
 
 const zglfw = @import("zglfw");
@@ -553,6 +554,21 @@ pub fn draw(self: *@This()) !void {
                         }
                     };
                 }
+            }
+            zgui.separator();
+            if (zgui.menuItem("Log to File", .{ .selected = d.config.log_to_file })) {
+                if (d.config.log_to_file) {
+                    log_file.close();
+                } else {
+                    try log_file.open(d._allocator);
+                }
+                d.config.log_to_file = !d.config.log_to_file;
+            }
+            if (zgui.isItemHovered(.{ .for_tooltip = true }) and zgui.beginTooltip()) {
+                const path = try log_file.get_path(d._allocator);
+                defer d._allocator.free(path);
+                zgui.text("Logs will be written to: '{s}'", .{path});
+                zgui.endTooltip();
             }
             zgui.separator();
             if (zgui.menuItem("Exit", .{})) {
