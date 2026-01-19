@@ -612,9 +612,7 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
                 });
             }
         },
-        else => {
-            gdrom_log.warn(termcolor.yellow("  Unhandled GDROM Write to @{X:0>8} = 0x{X:0>8}"), .{ addr, value });
-        },
+        else => gdrom_log.warn(termcolor.yellow("  Unhandled GDROM Write to @{X:0>8} = 0x{X:0>8}"), .{ addr, value }),
     }
 }
 
@@ -998,10 +996,8 @@ fn cd_read_fetch(self: *@This(), data_queue: *fifo.LinearFifo(u8, .Dynamic), dat
             const bytes_written = disc.load_sectors(start_addr, transfer_length, try data_queue.writableWithSize(2352 * transfer_length));
             data_queue.update(bytes_written);
 
-            if (bytes_written != transfer_length * expected_sector_size) {
+            if (bytes_written != transfer_length * expected_sector_size)
                 gdrom_log.err(termcolor.red("  Unexpected sector size: {d} written out of {d} * {d} = {d} expected."), .{ bytes_written, transfer_length, expected_sector_size, transfer_length * expected_sector_size });
-            }
-
             gdrom_log.debug("First 0x20 bytes read: {X}", .{data_queue.readableSlice(0)[0..0x20]});
         }
     }

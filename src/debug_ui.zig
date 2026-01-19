@@ -417,6 +417,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         text_highlighted(dc.cpu.fpscr.pr == 1, " [PR]", .{});
         zgui.sameLine(.{});
         text_highlighted(dc.cpu.fpscr.sz == 1, " [SZ]", .{});
+        zgui.sameLine(.{});
         zgui.text(" - {X:0>8}", .{@as(u32, @bitCast(dc.cpu.fpscr))});
         zgui.beginGroup();
         for (0..8) |i| {

@@ -967,15 +967,13 @@ pub const Dreamcast = struct {
             const len = self.read_hw_register(u32, .SB_GDLEN) & 0x01FFFFE0;
             const direction = self.read_hw_register(u32, .SB_GDDIR);
 
-            if (direction == 0) {
-                dc_log.err(termcolor.red("DMA to GD-ROM not implemented."), .{});
-                return;
-            }
+            if (direction == 0) return dc_log.err(termcolor.red("DMA to GD-ROM not implemented."), .{});
 
             self.hw_register(u32, .SB_GDST).* = 1;
-            // FIXME: Contrary to what I've said in 30cc565, it is clearly stated in the docs that SB_GDLEND does counts up...
             self.hw_register(u32, .SB_GDLEND).* = 0;
-            self.hw_register(u32, .SB_GDLEND).* = len; // FIXME: This should start at 0 and count up, but for some reason Jet Set Radio has issues when I try to do this properly (no music in menu; infinite loading screen...). This is clearly not a proper fix, I just don't know what the actual cause is, and how to properly fix it.
+            // FIXME: This should start at 0 and count up, but for some reason Jet Set Radio has issues when I try to do this properly (no music in menu; infinite loading screen...).
+            //        This is clearly not a proper fix, I just don't know what the actual cause is, and how to properly fix it.
+            self.hw_register(u32, .SB_GDLEND).* = len;
             self.hw_register(u32, .SB_GDSTARD).* = dst_addr;
 
             dc_log.debug("GD-ROM-DMA! {X:0>8} ({X:0>8} bytes / {X:0>8} in queue)", .{ dst_addr, len, self.gdrom.dma_data_queue.count });
@@ -1024,7 +1022,10 @@ pub const Dreamcast = struct {
 
     pub fn abort_gd_dma(self: *@This()) void {
         if (self.read_hw_register(u32, .SB_GDST) != 0) {
+            dc_log.debug("Aborting GD DMA", .{});
             self.hw_register(u32, .SB_GDST).* = 0;
+            // FIXME: This should probably clear the EndGDDMA event, but it breaks everything :D
+            // self.clear_event(.EndGDDMA);
         }
     }
 
