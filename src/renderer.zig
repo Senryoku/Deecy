@@ -2054,8 +2054,6 @@ pub const Renderer = struct {
         // I suspect I'll have to come back to this: Printing some information to help detect unusual configurations.
         if (vo_control.pixel_double)
             if (Once(@src())) log.warn(termcolor.yellow("VO_CONTROL.pixel_double is set: {any}"), .{vo_control});
-        if (self.write_back_parameters.scaler_ctl.get_x_scale_factor() != 1.0 or self.write_back_parameters.scaler_ctl.get_y_scale_factor() != 1.0)
-            if (Once(@src())) log.warn(termcolor.yellow("Unusual SCALER_CTL: {any}"), .{self.write_back_parameters.scaler_ctl});
         if (self.fb_r_ctrl.line_double) // Not handled: Emit a warning.
             if (Once(@src())) log.warn(termcolor.yellow("FB_R_CTRL.line_double is set: {any}"), .{self.fb_r_ctrl});
 
@@ -2075,18 +2073,31 @@ pub const Renderer = struct {
         if (ta_glob_tile_clip.tile_x_num != 19 and ta_glob_tile_clip.tile_x_num != 39)
             if (Once(@src())) log.warn(termcolor.yellow("Unusual TA_GLOB_TILE_CLIP: tile_x_num={d}, tile_y_num={d}."), .{ ta_glob_tile_clip.tile_x_num, ta_glob_tile_clip.tile_y_num });
         const ta_clip = ta_glob_tile_clip.pixel_size();
+
+        const scale_x: u16 = if (self.write_back_parameters.scaler_ctl.horizontal_scaling_enable) 2 else 1;
+        const scale_y: u16 = switch (self.write_back_parameters.scaler_ctl.vertical_scale_factor) {
+            // NOTE: Technically, this is a floating point number, but I expect only 0x0400 for normal operation or 0x0800 for "flicker-free interlace mode type B".
+            //       I'm afraid of rounding errors, keeping everything integer is simpler for now, we'll see if full support is needed later on.
+            0x0400, 0x401 => 1,
+            0x0800 => 2,
+            else => sy: {
+                if (Once(@src())) log.warn("Unusual vertical factor: {x}.", .{self.write_back_parameters.scaler_ctl.vertical_scale_factor});
+                break :sy 1;
+            },
+        };
+
         // Actual output size might not be a multiple of 32, can't only rely on the TA clip.
-        // TODO: Involve SCALER_CTL in this? (Still need to find a test case)
-        const output_height: u32 = if (render_to_texture) 1024 else if (!vga and !interlace) 240 else 480;
+        const output_height: u32 = if (render_to_texture) 1024 else if (!vga and !interlace) scale_y * 240 else scale_y * 480;
         self.guest_framebuffer_size = .{
             .width = ta_clip.x,
             .height = @min(ta_clip.y, output_height),
         };
 
-        self.global_clip.x.min = self.write_back_parameters.x_clip.min;
-        self.global_clip.x.max = (@as(u16, self.write_back_parameters.x_clip.max) + 1);
-        self.global_clip.y.min = self.write_back_parameters.y_clip.min;
-        self.global_clip.y.max = (@as(u16, self.write_back_parameters.y_clip.max) + 1);
+        // Clip value are pre scaling, convert them to pixel coordinates.
+        self.global_clip.x.min = scale_x * self.write_back_parameters.x_clip.min;
+        self.global_clip.x.max = scale_y * (@as(u16, self.write_back_parameters.x_clip.max) + 1);
+        self.global_clip.y.min = scale_x * self.write_back_parameters.y_clip.min;
+        self.global_clip.y.max = scale_y * (@as(u16, self.write_back_parameters.y_clip.max) + 1);
 
         self.output_size = if (render_to_texture) .{
             .width = self.global_clip.x.max - self.global_clip.x.min,
@@ -3783,7 +3794,10 @@ pub const Renderer = struct {
                     const blit_uniform_mem = self._gctx.uniformsAllocate(BlitUniforms, 1);
                     blit_uniform_mem.slice[0] = .{
                         .min = .{ 0, 0 },
-                        .max = .{ @as(f32, @floatFromInt(self.guest_framebuffer_size.width)) / NativeResolution.width, @as(f32, @floatFromInt(self.guest_framebuffer_size.height)) / NativeResolution.height },
+                        .max = .{
+                            @as(f32, @floatFromInt(self.guest_framebuffer_size.width)) / NativeResolution.width,
+                            @as(f32, @floatFromInt(self.guest_framebuffer_size.height)) / NativeResolution.height,
+                        },
                     };
 
                     pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
