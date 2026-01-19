@@ -815,8 +815,8 @@ pub const Renderer = struct {
     fog_clamp_max: PackedColor = .{},
     fog_density: f32 = 0,
     fog_lut: [0x80]u32 = @splat(0),
-    guest_framebuffer_size: Resolution = .{ .width = 640, .height = 480 },
-    output_size: Resolution = .{ .width = 640, .height = 480 },
+    output_resolution: Resolution = .{ .width = 640, .height = 480 },
+    render_size: Resolution = .{ .width = 640, .height = 480 },
     global_clip: struct { x: struct { min: u16, max: u16 }, y: struct { min: u16, max: u16 } } = .{ .x = .{ .min = 0, .max = 0 }, .y = .{ .min = 0, .max = 0 } },
     fb_r_ctrl: HollyModule.FB_R_CTRL = undefined,
     write_back_parameters: HollyModule.Holly.WritebackParameters = undefined,
@@ -2050,30 +2050,20 @@ pub const Renderer = struct {
 
         self.fb_r_ctrl = gpu.read_register(HollyModule.FB_R_CTRL, .FB_R_CTRL);
         self.write_back_parameters = gpu.get_write_back_parameters();
-        const vo_control = self.write_back_parameters.video_out_ctrl;
         // I suspect I'll have to come back to this: Printing some information to help detect unusual configurations.
-        if (vo_control.pixel_double)
-            if (Once(@src())) log.warn(termcolor.yellow("VO_CONTROL.pixel_double is set: {any}"), .{vo_control});
         if (self.fb_r_ctrl.line_double) // Not handled: Emit a warning.
             if (Once(@src())) log.warn(termcolor.yellow("FB_R_CTRL.line_double is set: {any}"), .{self.fb_r_ctrl});
 
-        // vclk_div == 0 for halved pixel clock (480i or 240p); vclk_div == 1 for VGA mode (480p)
-        const vga = self.fb_r_ctrl.vclk_div == 1;
-        const interlace = self.spg_control.interlace;
         const render_to_texture = gpu.render_to_texture();
 
-        // NOTE: The renderer will scale whatever the DC outputs to the host framebuffer size.
-        //       This isn't the correct behaviour, but I expect a limited set of correct configurations, resulting in a 640x480 or 320x240 framebuffer:
-        //         ta_glob_tile_clip.tile_x_num = 19 for a 640 pixels wide framebuffer.
-        //         ta_glob_tile_clip.tile_x_num = 39 with 0.5 scaling still for a 640 pixels wide framebuffer.
-        //         ta_glob_tile_clip.tile_x_num = 9 with pixel doubling still for a 640 pixels wide framebuffer.
-        //       A varity of combinations for the vertical resolution (depending on VGA, interlacing, line doubling...),
-        //       but always resulting in a 480 or 240 pixels high framebuffer.
         const ta_glob_tile_clip = gpu.read_register(HollyModule.TA_GLOB_TILE_CLIP, .TA_GLOB_TILE_CLIP);
-        if (ta_glob_tile_clip.tile_x_num != 19 and ta_glob_tile_clip.tile_x_num != 39)
-            if (Once(@src())) log.warn(termcolor.yellow("Unusual TA_GLOB_TILE_CLIP: tile_x_num={d}, tile_y_num={d}."), .{ ta_glob_tile_clip.tile_x_num, ta_glob_tile_clip.tile_y_num });
         const ta_clip = ta_glob_tile_clip.pixel_size();
 
+        // NOTE: The scaler isn't currently emulated, only the global_clip is adjusted.
+        //       Rendering should be done as it is currently, but then filtered and scaled up/down.
+        //         - Horizontal: Always scaled down by a factor of 2 (blend 2 neighboring pixels).
+        //         - Vertical: Any value over 0x0400 (scaling down) enable Y filtering (blends 3 scanlines),
+        //                     then scaled by value / 0x0400.
         const scale_x: u16 = if (self.write_back_parameters.scaler_ctl.horizontal_scaling_enable) 2 else 1;
         const scale_y: u16 = switch (self.write_back_parameters.scaler_ctl.vertical_scale_factor) {
             // NOTE: Technically, this is a floating point number, but I expect only 0x0400 for normal operation or 0x0800 for "flicker-free interlace mode type B".
@@ -2086,23 +2076,31 @@ pub const Renderer = struct {
             },
         };
 
-        // Actual output size might not be a multiple of 32, can't only rely on the TA clip.
-        const output_height: u32 = if (render_to_texture) 1024 else if (!vga and !interlace) scale_y * 240 else scale_y * 480;
-        self.guest_framebuffer_size = .{
-            .width = ta_clip.x,
-            .height = @min(ta_clip.y, output_height),
+        // Clip values are pre-scaling, convert them to pixel coordinates.
+        self.global_clip.x.min = scale_x * self.write_back_parameters.x_clip.min;
+        self.global_clip.x.max = scale_y * @min(@as(u16, self.write_back_parameters.x_clip.max) + 1, ta_clip.x);
+        self.global_clip.y.min = scale_x * self.write_back_parameters.y_clip.min;
+        self.global_clip.y.max = scale_y * @min(@as(u16, self.write_back_parameters.y_clip.max) + 1, ta_clip.y);
+
+        self.render_size = .{
+            .width = self.global_clip.x.max,
+            .height = self.global_clip.y.max,
         };
 
-        // Clip value are pre scaling, convert them to pixel coordinates.
-        self.global_clip.x.min = scale_x * self.write_back_parameters.x_clip.min;
-        self.global_clip.x.max = scale_y * (@as(u16, self.write_back_parameters.x_clip.max) + 1);
-        self.global_clip.y.min = scale_x * self.write_back_parameters.y_clip.min;
-        self.global_clip.y.max = scale_y * (@as(u16, self.write_back_parameters.y_clip.max) + 1);
-
-        self.output_size = if (render_to_texture) .{
-            .width = self.global_clip.x.max - self.global_clip.x.min,
-            .height = self.global_clip.y.max - self.global_clip.y.min,
-        } else self.guest_framebuffer_size;
+        if (!render_to_texture) {
+            // vclk_div == 0 for halved pixel clock (480i or 240p); vclk_div == 1 for VGA mode (480p)
+            const vga = self.fb_r_ctrl.vclk_div == 1;
+            const spg_vblank = gpu.read_register(HollyModule.SPG_VBLANK, .SPG_VBLANK);
+            self.output_resolution = .{
+                .width = 640,
+                .height = if (vga) 480 else @intCast(@abs(@as(i32, spg_vblank.vbend) - @as(i32, spg_vblank.vbstart))),
+            };
+            if (self.write_back_parameters.video_out_ctrl.pixel_double) self.output_resolution.width /= 2;
+            // TODO: Same thing for line double?
+            // FIXME: Because scaling isn't implemented (scaling up/down after rendering), output_resolution must be scaled as well.
+            self.output_resolution.width *= scale_x;
+            self.output_resolution.height *= scale_y;
+        }
     }
 
     /// Assumes gctx_queue_mutex is locked: Modifies parameters used in rendering.
@@ -3008,8 +3006,8 @@ pub const Renderer = struct {
 
         // We might only use a fraction of the target (240p games and RTT). The following is used as an optimization: Only copy and run computed shaders on the relevant portion of the target.
         const render_area: Resolution = .{
-            .width = @min(self.output_size.width * self.resolution.width / NativeResolution.width, self.resolution.width), // Assumes resolution is an integer multiplier of the NativeResolution.
-            .height = @min(self.output_size.height * self.resolution.height / NativeResolution.height, self.resolution.height),
+            .width = @min(self.render_size.width * self.resolution.width / NativeResolution.width, self.resolution.width), // Assumes resolution is an integer multiplier of the NativeResolution.
+            .height = @min(self.render_size.height * self.resolution.height / NativeResolution.height, self.resolution.height),
         };
 
         if (render_to_texture) {
@@ -3791,12 +3789,15 @@ pub const Renderer = struct {
                         pass.release();
                     }
 
+                    const width: f32 = @floatFromInt(self.output_resolution.width);
+                    const height: f32 = @floatFromInt(self.output_resolution.height);
+
                     const blit_uniform_mem = self._gctx.uniformsAllocate(BlitUniforms, 1);
                     blit_uniform_mem.slice[0] = .{
                         .min = .{ 0, 0 },
                         .max = .{
-                            @as(f32, @floatFromInt(self.guest_framebuffer_size.width)) / NativeResolution.width,
-                            @as(f32, @floatFromInt(self.guest_framebuffer_size.height)) / NativeResolution.height,
+                            width / NativeResolution.width,
+                            height / NativeResolution.height,
                         },
                     };
 
