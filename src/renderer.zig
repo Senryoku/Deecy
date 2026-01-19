@@ -2121,13 +2121,13 @@ pub const Renderer = struct {
         }
     }
 
-    // Assumes _gctx_queue_mutex is locked.
+    /// Assumes _gctx_queue_mutex is locked.
     pub fn upload_palette(self: *const @This()) void {
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.palette_buffer).?, 0, u8, std.mem.sliceAsBytes(self.palette_bgra));
     }
 
-    // Pulls 3 vertices from the address pointed by ISP_BACKGND_T and places them at the front of the vertex buffer.
-    // Assumes _gctx_queue_mutex is locked.
+    /// Pulls 3 vertices from the address pointed by ISP_BACKGND_T and places them at the front of the vertex buffer.
+    /// Assumes _gctx_queue_mutex is locked.
     pub fn update_background(self: *@This(), gpu: *const HollyModule.Holly) !void {
         const tags = gpu.read_register(HollyModule.ISP_BACKGND_T, .ISP_BACKGND_T);
         const param_base: u32 = self.on_render_start_param_base;

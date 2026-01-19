@@ -85,10 +85,14 @@ fn fog_alpha_lut(z: f32) -> f32 {
     let uval = bitcast<u32>(val);
     // Bit 6-4: Lower 3 bits for the 1/W index
     // Bit 3-0: Upper 4 bits for the 1/W mantissa
-    let index = ((((uval >> 23) + 1) & 0x7) << 4) | ((uval >> 19) & 0xF);
-    let low = f32((uniforms.fog_lut[index / 4][index % 4] >> 8) & 0xFF) / 255.0;
-    let high = f32((uniforms.fog_lut[index / 4][index % 4]) & 0xFF) / 255.0;
-    return mix(low, high, f32((uval >> 11) & 0xFF) / 255.0); // Residual fractional part
+    let exponent = extractBits(uval, 23, 3) + 1;
+    let upper_mantissa = extractBits(uval, 19, 4);
+    let index = ((exponent & 7) << 4) | upper_mantissa;
+    let entry = uniforms.fog_lut[index / 4][index % 4];
+    let low = f32(extractBits(entry, 8, 8));
+    let high = f32(extractBits(entry, 0, 8));
+    let fract = f32(extractBits(uval , 11, 8)) / 255.0; // Residual fractional part
+    return mix(low, high, fract) / 255.0;
 }
 
 fn apply_fog(shading_instructions: u32, z: f32, in_color: vec4<f32>, offset_alpha: f32) -> vec4<f32> {
