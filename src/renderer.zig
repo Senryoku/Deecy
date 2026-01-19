@@ -2091,9 +2091,11 @@ pub const Renderer = struct {
             // vclk_div == 0 for halved pixel clock (480i or 240p); vclk_div == 1 for VGA mode (480p)
             const vga = self.fb_r_ctrl.vclk_div == 1;
             const spg_vblank = gpu.read_register(HollyModule.SPG_VBLANK, .SPG_VBLANK);
+            // I don't know how to reliably detect 240p mode, looking at the number of active scanlines is the best I have for now.
+            const active_scanlines = @abs(@as(i32, spg_vblank.vbend) - @as(i32, spg_vblank.vbstart));
             self.output_resolution = .{
                 .width = 640,
-                .height = if (vga) 480 else @intCast(@abs(@as(i32, spg_vblank.vbend) - @as(i32, spg_vblank.vbstart))),
+                .height = if (!vga and active_scanlines == 240) 240 else 480,
             };
             if (self.write_back_parameters.video_out_ctrl.pixel_double) self.output_resolution.width /= 2;
             // TODO: Same thing for line double?
