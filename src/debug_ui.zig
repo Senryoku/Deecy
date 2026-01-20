@@ -904,13 +904,18 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     if (zgui.begin("AICA - DSP", .{})) {
         const time = std.time.milliTimestamp();
         const MaxSamples = 10_000;
+        if (zgui.collapsingHeader("Program", .{ .default_open = false })) {
+            for (0..128) |idx| {
+                zgui.text("[{d: >3}] {f}", .{ idx, dc.aica.dsp.read_mpro(@intCast(idx)) });
+            }
+        }
         if (zgui.collapsingHeader("Coeff.", .{ .default_open = false })) {
             zgui.indent(.{});
             defer zgui.unindent(.{});
             inline for (0..128) |i| {
                 zgui.pushIntId(i);
                 defer zgui.popId();
-                zgui.text("Coeff #{d}: {d: >6}", .{ i, dc.aica.dsp.read_coef(i) });
+                zgui.text("[{d: >3}] {d: >6}", .{ i, dc.aica.dsp.read_coef(i) });
             }
         }
         if (zgui.collapsingHeader("DSP Inputs (MIXS)", .{ .default_open = false })) {

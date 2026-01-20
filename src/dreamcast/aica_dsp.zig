@@ -55,6 +55,33 @@ const Instruction = packed struct(u64) {
     TWA: u7,
     TWT: bool,
     TRA: u7,
+
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
+        try writer.writeAll(if (self.NXADR) "NXADR " else "      ");
+        try writer.writeAll(if (self.ADREB) "ADREB " else "      ");
+        try writer.print("MASA:{d: >2} ", .{self.MASA});
+        try writer.writeAll(if (self.NOFL) "NOFL " else "     ");
+        try writer.print("BSEL:{d} ", .{self.BSEL});
+        try writer.writeAll(if (self.ZERO) "ZERO " else "     ");
+        try writer.writeAll(if (self.NEGB) "NEGB " else "     ");
+        try writer.writeAll(if (self.YRL) "YRL " else "    ");
+        try writer.print("SHFT:{d} ", .{self.SHFT});
+        try writer.writeAll(if (self.FRCL) "FRCL " else "     ");
+        try writer.writeAll(if (self.ADRL) "ADRL " else "     ");
+        try writer.print("EWA:{d} ", .{self.EWA});
+        try writer.writeAll(if (self.EWT) "EWT " else "    ");
+        try writer.writeAll(if (self.MRD) "MRD " else "    ");
+        try writer.writeAll(if (self.MWT) "MWT " else "    ");
+        try writer.print("TABLE:{d} ", .{self.TABLE});
+        try writer.print("IWA:{d: >2} ", .{self.IWA});
+        try writer.writeAll(if (self.IWT) "IWT " else "    ");
+        try writer.print("IRA:{d: >2} ", .{self.IRA});
+        try writer.print("YSEL:{d} ", .{self.YSEL});
+        try writer.print("XSEL:{d} ", .{self.XSEL});
+        try writer.print("TWA:{d: >3} ", .{self.TWA});
+        try writer.writeAll(if (self.TWT) "TWT " else "    ");
+        try writer.print("TRA:{d: >3} ", .{self.TRA});
+    }
 };
 
 _regs: []u32, // Memory backing for internal registers
@@ -161,7 +188,7 @@ fn _madrs(self: *@This(), idx: usize) *u16 {
 ///                ...
 ///                0x3BFC: bits 15-0 = bits 15-0  of last instruction
 const MPRO_base: u32 = 0x400 / 4;
-fn read_mpro(self: *@This(), idx: usize) Instruction {
+pub fn read_mpro(self: *@This(), idx: usize) Instruction {
     const parts = [4]u16{
         @truncate(self._regs[MPRO_base + 4 * idx + 0]),
         @truncate(self._regs[MPRO_base + 4 * idx + 1]),
