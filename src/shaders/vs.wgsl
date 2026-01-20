@@ -24,7 +24,7 @@ struct VertexOut {
     @location(10) uv: vec2<f32>,
     @location(11) area1_uv: vec2<f32>,
     @location(12) @interpolate(flat) index: u32,
-    @location(13) original_z: f32,
+    @location(13) inverse_z: f32,
  }
 
 @vertex
@@ -66,7 +66,7 @@ fn main(
 
     output.index = vertex_index;
 
-    output.original_z = position.z;
+    output.inverse_z = 1.0 / position.z;
 
     return output;
 }

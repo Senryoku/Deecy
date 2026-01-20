@@ -26,7 +26,7 @@ fn main(
     @location(10) uv: vec2<f32>,
     @location(11) area1_uv: vec2<f32>,
     @location(12) @interpolate(flat) index: u32,
-    @location(13) original_z: f32,
+    @location(13) inverse_z: f32,
 ) {
     let frag_coords = vec2<i32>(position_clip.xy);
     let opaque_depth = textureLoad(opaque_depth_texture, frag_coords, 0);
@@ -50,7 +50,7 @@ fn main(
         area1_uv,
         area1_tex_idx_shading_instr[0],
         area1_tex_idx_shading_instr[1],
-        original_z,
+        1.0 / inverse_z,
         false
     );
 
