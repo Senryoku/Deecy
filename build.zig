@@ -29,7 +29,7 @@ pub fn build(b: *std.Build) !void {
     const data_path = b.option([]const u8, "data_path", "Path to the data directory (Copy your bios and flash files here, default: './data')") orelse "./data";
     const userdata_path = b.option([]const u8, "userdata_path", "Path to the userdata directory (default: './userdata')") orelse "./userdata";
     const use_appdata_dir = b.option(bool, "use_appdata_dir", "Prepend the platform specific AppData directory to data_path and userdata_path (default: false)") orelse false;
-    const no_console = b.option(bool, "no_console", "Do not open the console on Windows (default: false for debug builds, true otherwise)") orelse (optimize != .Debug);
+    const no_console = if (target.result.os.tag == .windows) b.option(bool, "no_console", "Do not open the console on Windows (default: false for debug builds, true otherwise)") orelse (optimize != .Debug) else false;
 
     const dc_options = b.addOptions();
     dc_options.addOption(bool, "mmu", mmu);

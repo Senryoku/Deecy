@@ -291,7 +291,7 @@ fn display_texture_control_word(control_word: Holly.TextureControlWord) void {
 }
 
 fn display_tsp_instruction(tsp_instruction: Holly.TSPInstructionWord) void {
-    if (zgui.beginTable("TSPI", .{ .column = 2 })) {
+    if (zgui.beginTable("TSPI", .{ .column = 2, .flags = .{ .sizing = .fixed_fit } })) {
         _ = zgui.tableNextColumn();
         zgui.text("Size: {d: >4}x{d: <4}", .{ tsp_instruction.get_u_size(), tsp_instruction.get_v_size() });
         zgui.text("Shading: {t: <13}", .{tsp_instruction.texture_shading_instruction});

@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const comptime_config = @import("config");
 const termcolor = @import("termcolor");
 const custom_log = @import("custom_log.zig");
 const Once = @import("helpers").Once;
@@ -558,14 +559,26 @@ pub fn draw(self: *@This()) !void {
                 }
             }
             zgui.separator();
-            if (menu_from_enum("Log Output", &d.config.log_output, .{})) {
-                custom_log.set_output(d.config.log_output);
-            }
-            if (zgui.isItemHovered(.{ .for_tooltip = true }) and zgui.beginTooltip()) {
-                const path = try custom_log.get_path(d._allocator);
-                defer d._allocator.free(path);
-                zgui.text("Log file: '{s}'", .{path});
-                zgui.endTooltip();
+            if (zgui.beginMenu("Log Output", true)) {
+                const initial_value = d.config.log_output;
+                if (zgui.menuItem("None", .{ .selected = d.config.log_output == .None }))
+                    d.config.log_output = .None;
+                if (zgui.menuItem("File", .{ .selected = d.config.log_output == .File }))
+                    d.config.log_output = .File;
+                if (zgui.isItemHovered(.{ .for_tooltip = true }) and zgui.beginTooltip()) {
+                    const path = try custom_log.get_path(d._allocator);
+                    defer d._allocator.free(path);
+                    zgui.text("Logs will be saved in '{s}'", .{path});
+                    zgui.endTooltip();
+                }
+                if (!comptime_config.no_console) {
+                    if (zgui.menuItem("Console", .{ .selected = d.config.log_output == .Console }))
+                        d.config.log_output = .Console;
+                    if (zgui.menuItem("Both", .{ .selected = d.config.log_output == .Both }))
+                        d.config.log_output = .Both;
+                }
+                if (d.config.log_output != initial_value) custom_log.set_output(d.config.log_output);
+                zgui.endMenu();
             }
             zgui.separator();
             if (zgui.menuItem("Exit", .{})) {
