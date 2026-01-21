@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 	<head>
 		<meta charset="UTF-8" />
@@ -285,12 +285,12 @@
 						<div>
 							Unstable builds:
 							<a
-								href="https://nightly.link/Senryoku/Deecy/workflows/publish/main/Deecy-x86_64-windows.zip"
+								href="https://nightly.link/Senryoku/Deecy/workflows/publish/main/Deecy-x86_64_v3-windows.zip"
 							>
 								Windows</a
 							>,
 							<a
-								href="https://nightly.link/Senryoku/Deecy/workflows/publish/main/Deecy-x86_64-linux.zip"
+								href="https://nightly.link/Senryoku/Deecy/workflows/publish/main/Deecy-x86_64_v3-linux.zip"
 							>
 								Linux
 							</a>
@@ -396,7 +396,7 @@
 		<script>
 			function extractPlatform(filename) {
 				const match = filename.match(
-					/deecy(?:-x86_64)?[-_]?([a-z]+)\.zip/i
+					/deecy(?:-x86_64)?[-_]?([a-z]+)\.zip/i,
 				);
 				return match
 					? match[1].charAt(0).toUpperCase() + match[1].slice(1)
@@ -408,13 +408,13 @@
 				return ua.includes("Windows")
 					? "Windows"
 					: ua.includes("Linux")
-					? "Linux"
-					: "Other";
+						? "Linux"
+						: "Other";
 			}
 
 			function populatePreviousVersions(releases) {
 				const tableBody = document.querySelector(
-					"#previous-releases-table tbody"
+					"#previous-releases-table tbody",
 				);
 				releases.slice(1, 4).forEach((release) => {
 					const row = document.createElement("tr");
@@ -424,15 +424,15 @@
               <td>
                 ${release.assets
 					.filter((asset) =>
-						asset.name.toLowerCase().endsWith(".zip")
+						asset.name.toLowerCase().endsWith(".zip"),
 					)
 					.map(
 						(asset) =>
 							`<a href="${
 								asset.browser_download_url
 							}" target="_blank">${extractPlatform(
-								asset.name
-							)}</a>`
+								asset.name,
+							)}</a>`,
 					)
 					.join(" | ")}
               </td>
@@ -460,14 +460,14 @@
 
 					latest.assets
 						.filter((asset) =>
-							asset.name.toLowerCase().endsWith(".zip")
+							asset.name.toLowerCase().endsWith(".zip"),
 						)
 						.sort((a, b) =>
 							extractPlatform(a.name) === userOS
 								? -1
 								: extractPlatform(b.name) === userOS
-								? 1
-								: 0
+									? 1
+									: 0,
 						)
 						.forEach((asset) => {
 							const platform = extractPlatform(asset.name);
