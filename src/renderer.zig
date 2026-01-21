@@ -2102,6 +2102,12 @@ pub const Renderer = struct {
             // FIXME: Because scaling isn't implemented (scaling up/down after rendering), output_resolution must be scaled as well.
             self.output_resolution.width *= scale_x;
             self.output_resolution.height *= scale_y;
+            // FIXME: Hack for games rendering at 1280px wide before horizontal scaling.
+            //        I don't think it's worth the effort to support this rendering mode when we have proper upscaling anyway,
+            //        and because very few games use it afaik (Wacky Races is one of them).
+            if (ta_glob_tile_clip.tile_x_num == 39 and self.write_back_parameters.scaler_ctl.horizontal_scaling_enable) {
+                self.output_resolution.width /= 2;
+            }
         }
     }
 
@@ -3004,7 +3010,13 @@ pub const Renderer = struct {
     ///       Also protects concurrent access to `ta_lists` and `render_passes`.
     pub fn render(self: *@This(), holly: *HollyModule.Holly, render_to_texture: bool) !void {
         const gctx = self._gctx;
-        const target_size = Resolution{ .width = 640, .height = 480 };
+
+        var target_size = Resolution{ .width = 640, .height = 480 };
+        if (holly.read_register(HollyModule.TA_GLOB_TILE_CLIP, .TA_GLOB_TILE_CLIP).tile_x_num == 39 and self.write_back_parameters.scaler_ctl.horizontal_scaling_enable) {
+            // Hack for games rendering at 1280px wide before horizontal scaling:
+            //   We'll actually only render at 640px, scaling vertices coordinates down with the following hack.
+            target_size.width = 1280;
+        }
 
         // We might only use a fraction of the target (240p games and RTT). The following is used as an optimization: Only copy and run computed shaders on the relevant portion of the target.
         const render_area: Resolution = .{
