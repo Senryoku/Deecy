@@ -338,7 +338,7 @@ pub fn main() !void {
 
         if (d.config.frame_limiter != .Off) {
             const ns_per_frame: u64 = switch (d.config.frame_limiter) {
-                .Auto => if (d.dc.gpu._get_register(DreamcastModule.HollyModule.SPG_CONTROL, .SPG_CONTROL).PAL == 1) 20_000_000 else 16_666_666,
+                .Auto => d.dc.target_refresh_rate().ns_per_frame(),
                 .@"120Hz" => 8_333_333,
                 .@"100Hz" => 10_000_000,
                 .@"60Hz" => 16_666_666,

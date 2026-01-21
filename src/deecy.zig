@@ -1172,7 +1172,7 @@ pub fn next_vblankin(self: *@This()) void {
     }
 }
 pub fn save_state_idx(comptime idx: u8) fn (*Self) void {
-    std.debug.assert(idx < 4);
+    std.debug.assert(idx < MaxSaveStates);
     return struct {
         pub fn save_state(self: *Self) void {
             self.save_state(idx) catch |err| deecy_log.err(termcolor.red("Failed to save state: {}"), .{err});
@@ -1180,7 +1180,7 @@ pub fn save_state_idx(comptime idx: u8) fn (*Self) void {
     }.save_state;
 }
 pub fn load_state_idx(comptime idx: u8) fn (*Self) void {
-    std.debug.assert(idx < 4);
+    std.debug.assert(idx < MaxSaveStates);
     return struct {
         pub fn load_state(self: *Self) void {
             self.load_state(idx) catch |err| deecy_log.err(termcolor.red("Failed to load state: {}"), .{err});
@@ -1238,23 +1238,6 @@ pub fn set_realtime(self: *@This(), realtime: bool) void {
     if (was_running) self.pause();
     defer if (was_running) self.start();
     self.realtime = realtime;
-}
-
-// Used for uncapped framerate (no audio output)
-pub fn dc_thread_loop(self: *@This()) void {
-    while (self.running) {
-        self.run_for(128);
-    }
-}
-
-pub fn dc_thread_loop_realtime(self: *@This()) void {
-    var precise_sleep: PreciseSleep = .init();
-    defer precise_sleep.deinit();
-    while (self.running) {
-        const spg_control = self.dc.gpu._get_register(DreamcastModule.HollyModule.SPG_CONTROL, .SPG_CONTROL).*;
-        self.run_for(DreamcastModule.Dreamcast.SH4Clock / @as(u64, (if (spg_control.PAL == 1) 50 else 60)));
-        precise_sleep.wait_for_interval(if (spg_control.PAL == 1) 20_000_000 else 16_666_666);
-    }
 }
 
 pub fn on_resize(self: *@This()) void {
@@ -1479,6 +1462,23 @@ fn run_for(self: *@This(), sh4_cycles: u64) void {
                 }
             }
         }
+    }
+}
+
+// Used for uncapped framerate (no audio output)
+fn dc_thread_loop(self: *@This()) void {
+    while (self.running) {
+        self.run_for(128);
+    }
+}
+
+fn dc_thread_loop_realtime(self: *@This()) void {
+    var precise_sleep: PreciseSleep = .init();
+    defer precise_sleep.deinit();
+    while (self.running) {
+        const refresh_rate = self.dc.target_refresh_rate();
+        self.run_for(DreamcastModule.Dreamcast.SH4Clock / refresh_rate.as_u64());
+        precise_sleep.wait_for_interval(refresh_rate.ns_per_frame());
     }
 }
 
