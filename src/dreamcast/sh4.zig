@@ -6,6 +6,7 @@ const dc_config = @import("dc_config");
 const builtin = @import("builtin");
 const termcolor = @import("termcolor");
 const host_memory = @import("host/host_memory.zig");
+const Once = @import("helpers").Once;
 
 pub const sh4_log = std.log.scoped(.sh4);
 pub const mmu_log = std.log.scoped(.mmu);
@@ -1593,12 +1594,13 @@ pub const SH4 = struct {
                             return;
                         },
                         // FIXME: Not emulated at all, these clash with my P4 access pattern :(
-                        @intFromEnum(P4Register.PMCR1) => {
-                            sh4_log.warn("Write to non implemented P4 register PMCR1: {X:0>4}.", .{value});
-                            return;
-                        },
-                        @intFromEnum(P4Register.PMCR2) => {
-                            sh4_log.warn("Write to non implemented P4 register PMCR2: {X:0>4}.", .{value});
+                        @intFromEnum(P4Register.PMCR1), @intFromEnum(P4Register.PMCR2) => {
+                            const pmcr: P4.PMCR = @bitCast(@as(u16, @intCast(value)));
+                            if (pmcr.pmen) {
+                                if (Once(@src())) sh4_log.warn("Write to non implemented P4 register {t}: {X:0>4}, {}.", .{ @as(P4Register, @enumFromInt(virtual_addr)), value, pmcr });
+                            } else {
+                                if (Once(@src())) sh4_log.warn("Write to non implemented P4 register {t}: {X:0>4}, {}.", .{ @as(P4Register, @enumFromInt(virtual_addr)), value, pmcr });
+                            }
                             return;
                         },
                         // Serial Interface

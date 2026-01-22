@@ -312,3 +312,63 @@ pub const FRQCR = packed struct(u16) {
         return PeripheralClockRatio;
     }
 };
+
+const PerformanceMeasurementItems = enum(u6) {
+    @"(nop)" = 0x00,
+    @"Operand access (read/with cache)" = 0x01, // Count
+    @"Operand access (write/with cache)" = 0x02, // Count
+    @"UTLB miss" = 0x03, // Count
+    @"Operand cache read miss" = 0x04, // Count
+    @"Operand cache write miss" = 0x05, // Count
+    @"Instruction fetch (/with cache)" = 0x06, // Count - 2 instructions fetched simultaneously
+    @"Instruction TLB miss" = 0x07, // Count
+    @"Instruction cache miss" = 0x08, // Count
+    @"All operand access" = 0x09, // Count
+    @"All instruction fetch" = 0x0a, // Count - 2 instructions fetched simultaneously
+    @"On-chip RAM operand access" = 0x0b, // Count
+    @"On-chip I/O space access" = 0x0d, // Count
+    @"Operand access (read + write/with cache)" = 0x0e, // Count - #1 + #2
+    @"Operand cache read + write miss" = 0x0f, // Count - #4 + #5
+    @"Branch instruction issued" = 0x10, // Count
+    @"Branch taken" = 0x11, // Count
+    @"BSR/BSRF/JSRissued" = 0x12, // Count
+    @"Instruction issued" = 0x13, // Count - Onset of 2-instruction simultaneous execution
+    @"2-instruction simultaneous issued" = 0x14, // Count
+    @"FPU instruction issued" = 0x15, // Count
+    @"Interrupt (normal)" = 0x16, // Count
+    @"Interrupt (NMI)" = 0x17, // Count
+    @"TRAPA instruction execution" = 0x18, // Count
+    @"UBC-A match" = 0x19, // Count
+    @"UBC-B match" = 0x1a, // Count
+    @"Instruction cache fill" = 0x21, // Cycle
+    @"Operand cache fill" = 0x22, // Cycle
+    @"Elapsed time" = 0x23, // Cycle
+    @"Pipeline freeze (by cache miss/instruction)" = 0x24, // Cycle
+    @"Pipeline freeze (by cache miss/data)" = 0x25, // Cycle
+    @"Pipeline freeze (by branch instruction)" = 0x27, // Cycle
+    @"Pipeline freeze (by CPU register)" = 0x28, // Cycle
+    @"Pipeline freeze (by FPU)" = 0x29, // Cycle
+    _,
+};
+
+pub const PMCR = packed struct(u16) {
+    /// Performance Item Mode Bits
+    pmm: PerformanceMeasurementItems,
+    _r0: u2,
+    /// Clock Counting Flag
+    /// With clock counting, this bit sets the objective count for either the CPU operation clock or the CPU clock-to-bus clock ratio.
+    ///   0 CPU operation clock counted
+    ///   1 Counting of the inverse of the CPU operation clock-to-bus clock ratio
+    clkf: u1,
+    _r1: u4,
+    /// Performance Counter Clear
+    /// Clears performance counter values (PMCTR1H, PMCTR1L, PMCTR2H, PMCTR2L) to 0. This bit is always 0 during read.
+    pmclr: u1,
+    /// Performance Measurement Start Condition
+    /// Sets the start condition for performance measurement
+    ///   0 Start on UBC channel A match, end on UBC channel B match
+    ///   1 Count while this bit is 1
+    pmst: u1,
+    /// Performance Measurement Enable
+    pmen: bool,
+};
