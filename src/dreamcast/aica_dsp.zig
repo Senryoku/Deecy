@@ -636,14 +636,10 @@ pub fn generate_sample_jit(self: *@This()) !void {
 
     self.clear_efreg();
 
-    if (self._regs[MDEC_CT_base] == 0)
-        self._regs[MDEC_CT_base] = @intCast(self._ring_buffer.size_in_samples() - 1);
-
     if (self._jit_buffer) |buffer|
         @as(*const fn ([*]u32) callconv(Architecture.CallingConvention) void, @ptrCast(&buffer[0]))(self._regs.ptr);
 
-    self._regs[MDEC_CT_base] -= 1;
-
+    self.decrement_mdec_ct();
     self.clear_mixs();
 }
 
@@ -660,9 +656,6 @@ pub fn generate_sample(self: *@This()) void {
     var temp_word: [4]u16 = @splat(0);
 
     self.clear_efreg();
-
-    if (self.MDEC_CT().* == 0)
-        self.MDEC_CT().* = @intCast(self._ring_buffer.size_in_samples() - 1);
 
     for (0..128) |step| {
         const instruction = self.read_mpro(@intCast(step));
@@ -839,9 +832,14 @@ pub fn generate_sample(self: *@This()) void {
         if (instruction.EWT) self._efreg(instruction.EWA).* = @intCast(SHIFTED >> 8);
     }
 
-    self.MDEC_CT().* -= 1;
-
+    self.decrement_mdec_ct();
     self.clear_mixs();
+}
+
+fn decrement_mdec_ct(self: *@This()) void {
+    self.MDEC_CT().* -%= 1;
+    const max: u16 = @intCast(self._ring_buffer.size_in_samples() - 1);
+    self.MDEC_CT().* = std.math.clamp(self.MDEC_CT().*, 0, max);
 }
 
 // To convert from 16-bit float to 24-bit integer (on read):
