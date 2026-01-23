@@ -1250,6 +1250,13 @@ pub fn draw_game_library(self: *@This()) !void {
                             defer zgui.popTextWrapPos();
                             zgui.textWrapped("{s}", .{entry.name});
                         }
+                        if (entry.path.len > 3) {
+                            zgui.pushFont(null, 20.0);
+                            defer zgui.popFont();
+                            var ext: [3]u8 = undefined;
+                            for (0..ext.len) |i| ext[i] = std.ascii.toUpper(entry.path[entry.path.len - 3 + i]);
+                            draw_list.addText(.{ cursor_pos[0] + 220.0, cursor_pos[1] + 264.0 }, 0x80808080, "{s}", .{ext});
+                        }
                     }
 
                     if (zgui.isItemHovered(.{})) {
