@@ -301,7 +301,7 @@
 								href="https://github.com/Senryoku/Deecy/releases"
 								target="_blank"
 							>
-								Release notes and older versions
+								Release notes and other versions
 							</a>
 						</div>
 					</div>
@@ -396,7 +396,7 @@
 		<script>
 			function extractPlatform(filename) {
 				const match = filename.match(
-					/deecy(?:-x86_64)?[-_]?([a-z]+)\.zip/i,
+					/deecy(?:-x86_64(?:_v\d)?)?[-_]?([a-z]+)\.zip/i,
 				);
 				return match
 					? match[1].charAt(0).toUpperCase() + match[1].slice(1)
@@ -459,8 +459,10 @@
 					container.appendChild(info);
 
 					latest.assets
-						.filter((asset) =>
-							asset.name.toLowerCase().endsWith(".zip"),
+						.filter(
+							(asset) =>
+								asset.name.toLowerCase().endsWith(".zip") &&
+								asset.name.includes("x86_64_v3"),
 						)
 						.sort((a, b) =>
 							extractPlatform(a.name) === userOS
