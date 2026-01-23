@@ -1696,9 +1696,11 @@ pub const Holly = struct {
             target_scanline - spg_status.scanline
         else
             (if (max_scanline >= spg_status.scanline) max_scanline - spg_status.scanline else 0) + target_scanline;
+        if (line_diff == 0) line_diff = max_scanline;
         if (spg_control.interlace) line_diff = @max(line_diff / 2, 1);
         const hcount: u64 = spg_load.hcount;
         const sh4_cycles = self.pixels_to_sh4_cycles((hcount + 1) * line_diff);
+        std.debug.assert(sh4_cycles > 0);
         self._dc.schedule_event(event, sh4_cycles);
     }
     pub fn schedule_vblank_in(self: *@This()) void {
