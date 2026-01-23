@@ -93,6 +93,11 @@ pub fn build(b: *std.Build) !void {
     exe.addWin32ResourceFile(.{ .file = b.path("src/assets/resource.rc") });
     if (target.result.os.tag == .windows and no_console)
         exe.subsystem = .Windows;
+    if (optimize == .ReleaseFast) {
+        exe.root_module.strip = true;
+        exe.lto = .full;
+        exe.link_gc_sections = true;
+    }
 
     // Check target for IDE support
     const exe_check = b.addExecutable(.{
@@ -181,6 +186,9 @@ pub fn build(b: *std.Build) !void {
                 .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
             }),
         });
+        interpreter_perf.root_module.strip = true;
+        interpreter_perf.lto = .full;
+        interpreter_perf.link_gc_sections = true;
         interpreter_perf.root_module.addImport("termcolor", termcolor_module);
         interpreter_perf.root_module.addImport("lz4", ziglz4.module("zig-lz4"));
         interpreter_perf.root_module.addImport("dreamcast", dc_module);
@@ -205,6 +213,9 @@ pub fn build(b: *std.Build) !void {
                 .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
             }),
         });
+        jit_perf.root_module.strip = true;
+        jit_perf.lto = .full;
+        jit_perf.link_gc_sections = true;
         jit_perf.root_module.addImport("termcolor", termcolor_module);
         jit_perf.root_module.addImport("lz4", ziglz4.module("zig-lz4"));
         jit_perf.root_module.addImport("dreamcast", dc_module);
