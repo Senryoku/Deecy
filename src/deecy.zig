@@ -498,7 +498,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         self.dc.cable_type = config.video_cable.to_dreamcast();
     }
 
-    self.renderer = try .create(self._allocator, self.gctx, &self.gctx_queue_mutex, config.renderer);
+    self.renderer = try .create(self._allocator, self.gctx, &self.gctx_queue_mutex, &self.config.renderer);
     self.dc.on_render_start = .{
         .function = @ptrCast(&Renderer.on_render_start),
         .context = self.renderer,

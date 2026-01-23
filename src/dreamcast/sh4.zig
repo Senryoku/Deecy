@@ -1336,8 +1336,7 @@ pub const SH4 = struct {
                             return out;
                         },
                         // FIXME: Not emulated at all, these clash with my P4 access pattern :(
-                        P4Register.PMCR1 => return 0,
-                        P4Register.PMCR2 => return 0,
+                        P4Register.PMCR1, P4Register.PMCR2 => return 0,
                         P4Register.TCNT0, P4Register.TCNT1, P4Register.TCNT2 => {
                             @constCast(self).update_timer_registers(switch (@as(P4Register, @enumFromInt(virtual_addr))) {
                                 P4Register.TCNT0 => 0,

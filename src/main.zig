@@ -322,7 +322,7 @@ pub fn main() !void {
         }
 
         if (d.dc.gpu.read_register(Holly.FB_R_CTRL, .FB_R_CTRL).enable) {
-            d.renderer.draw(d.config.renderer.display_mode, d.config.window_size.width, d.config.window_size.height); //  Blit to screen
+            d.renderer.draw(d.config.window_size.width, d.config.window_size.height); //  Blit to screen
         }
 
         try d.draw_ui();

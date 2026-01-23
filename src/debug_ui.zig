@@ -1355,7 +1355,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             while (d.renderer.oit_horizontal_slices > 1 and d.renderer.resolution.height % (8 * d.renderer.oit_horizontal_slices) != 0) {
                 d.renderer.oit_horizontal_slices -= 1;
             }
-            d.renderer.on_inner_resolution_change(d.config.renderer.scaling_filter);
+            d.renderer.on_inner_resolution_change();
         }
         zgui.separator();
         zgui.text("Render Size: {d}x{d}", .{ d.renderer.render_size.width, d.renderer.render_size.height });

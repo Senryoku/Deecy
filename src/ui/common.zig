@@ -2,10 +2,13 @@ const zgui = @import("zgui");
 
 pub const Icons = @import("font_awesome.zig");
 
+pub const Yellow: [4]f32 = .{ 0.72, 0.55, 0.13, 1.0 };
+pub const Red: [4]f32 = .{ 0.60, 0.12, 0.15, 1.0 };
+
 /// Afterwards:
 ///   defer zgui.pop_red_button_style();
 pub fn push_red_button_style() void {
-    zgui.pushStyleColor4f(.{ .c = .{ 0.60, 0.12, 0.15, 1.0 }, .idx = .button });
+    zgui.pushStyleColor4f(.{ .c = Red, .idx = .button });
     zgui.pushStyleColor4f(.{ .c = .{ 0.80, 0.20, 0.23, 1.0 }, .idx = .button_hovered });
     zgui.pushStyleColor4f(.{ .c = .{ 0.50, 0.08, 0.11, 1.0 }, .idx = .button_active });
 }

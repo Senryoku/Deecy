@@ -743,7 +743,7 @@ pub fn draw(self: *@This()) !void {
                         defer d.gctx_queue_mutex.unlock();
                         d.config.renderer.internal_resolution_factor = @intFromEnum(resolution);
                         d.renderer.resolution = .{ .width = Deecy.Renderer.NativeResolution.width * @intFromEnum(resolution), .height = Deecy.Renderer.NativeResolution.height * @intFromEnum(resolution) };
-                        d.renderer.on_inner_resolution_change(d.config.renderer.scaling_filter);
+                        d.renderer.on_inner_resolution_change();
                         //  Force a re-render if we're paused
                         if (d.running)
                             try d.renderer.render(&d.dc.gpu, false);
@@ -752,12 +752,10 @@ pub fn draw(self: *@This()) !void {
                     _ = zgui.comboFromEnum("Display Mode", &d.config.renderer.display_mode);
                     zgui.setNextItemWidth(dropdown_size);
                     if (zgui.comboFromEnum("Scaling Filter", &d.config.renderer.scaling_filter)) {
-                        d.renderer.set_scaling_filter(d.config.renderer.scaling_filter);
+                        d.renderer.on_scaling_filter_change();
                     }
                     zgui.setNextItemWidth(dropdown_size);
-                    if (zgui.comboFromEnum("Texture Filter", &d.config.renderer.texture_filter)) {
-                        d.renderer.texture_filter = d.config.renderer.texture_filter;
-                    }
+                    _ = zgui.comboFromEnum("Texture Filter", &d.config.renderer.texture_filter);
                     zgui.separator();
 
                     {
@@ -801,12 +799,21 @@ pub fn draw(self: *@This()) !void {
                     zgui.text("Experimental settings", .{});
                     zgui.setNextItemWidth(dropdown_size);
                     _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
-                    _ = zgui.checkbox("Framebuffer Emulation", .{ .v = &d.renderer.ExperimentalFramebufferEmulation });
-                    _ = zgui.checkbox("Render to Texture", .{ .v = &d.renderer.ExperimentalRenderToTexture });
-                    _ = zgui.checkbox("Render to Guest VRAM", .{ .v = &d.renderer.ExperimentalRenderToVRAM });
-                    _ = zgui.checkbox("Clamp Sprites UVs", .{ .v = &d.renderer.ExperimentalClampSpritesUVs });
-                    _ = zgui.checkbox("Render on Emulation Thread", .{ .v = &d.renderer.ExperimentalRenderOnEmulationThread });
-                    _ = zgui.checkbox("Use Pipeline Cache (Restart Required)", .{ .v = &d.config.enable_dawn_pipeline_cache });
+                    _ = zgui.checkbox("Framebuffer Emulation", .{ .v = &d.config.renderer.framebuffer_emulation });
+                    zgui.setItemTooltip("Allow re-use of the result of rendering to the framebuffer.\nSlower, particularly with 'Copy to Guest VRAM' enabled, but necessary for some effects (Static loading screens for example).", .{});
+                    if (d.config.renderer.framebuffer_emulation and d.config.renderer.copy_to_vram) {
+                        zgui.sameLine(.{});
+                        zgui.textUnformattedColored(common.Yellow, Icons.TriangleExclamation);
+                        zgui.setItemTooltip("'Framebuffer Emulation' and 'Copy to Guest VRAM' are rarely necessary at the same time and can hinder performance.", .{});
+                    }
+                    _ = zgui.checkbox("Copy to Guest VRAM", .{ .v = &d.config.renderer.copy_to_vram });
+                    zgui.setItemTooltip("Copy the result of rendering to the guest VRAM.\nSlower, particularly with 'Framebuffer Emulation' enabled, but necessary for some effects.", .{});
+                    _ = zgui.checkbox("Clamp Sprites UVs", .{ .v = &d.config.renderer.clamp_sprites_uvs });
+                    zgui.setItemTooltip("Avoid some seams around sprites when upscaling.", .{});
+                    _ = zgui.checkbox("Synchronous Render", .{ .v = &d.config.renderer.synchronous_render });
+                    zgui.setItemTooltip("Render synchronously with the guest system.\nCan avoid some synchronization issues at a slight performance cost.\nTry this when you notice corrupted textures, especially during transitions.", .{});
+                    _ = zgui.checkbox("Use Pipeline Cache", .{ .v = &d.config.enable_dawn_pipeline_cache });
+                    zgui.setItemTooltip("Restart Required.\nReduces 'pop-in' due to pipeline creation delay (shader compilation).", .{});
                     if (builtin.mode == .Debug) {
                         if (zgui.button("Reset Pipeline Cache", .{})) {
                             try @import("pipeline_cache.zig").clear(d._allocator);

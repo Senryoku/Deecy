@@ -684,8 +684,18 @@ pub const Renderer = struct {
 
         internal_resolution_factor: u32 = 2,
         display_mode: DisplayMode = .Center,
+        /// Filter used when blitting the rendered frame to the host surface.
         scaling_filter: Filter = .Linear,
         texture_filter: TextureFilter = .@"Application Driven",
+        /// Write the framebuffer back to a texture or guest VRAM (depending on ExperimentalRenderToVRAM) after each render.
+        framebuffer_emulation: bool = false,
+        /// When rendering to a texture or framebuffer, copy the result to guest VRAM. Necessary for some effects in Grandia II or Tony Hawk 2 for example.
+        copy_to_vram: bool = true,
+        /// Force UV clamping on some axis aligned quads to avoid wrapping errors after upscaling.
+        clamp_sprites_uvs: bool = true,
+        /// Render immediately when Render Start is called.
+        /// Can avoid some synchronization issues at a slight performance cost (default is to defer GPU processing to the main thread).
+        synchronous_render: bool = false,
     };
 
     const MaxFragmentsPerPixel = 24;
@@ -705,16 +715,10 @@ pub const Renderer = struct {
     const DepthClearValue = 0.0;
     const DepthCompareFunction: wgpu.CompareFunction = .greater;
 
-    /// Write the framebuffer back to a texture or guest VRAM (depending on ExperimentalRenderToVRAM) after each render.
-    ExperimentalFramebufferEmulation: bool = false,
-    /// Allow rendering to a texture.
-    ExperimentalRenderToTexture: bool = true,
-    /// When rendering to a texture or framebuffer, copy the result to guest VRAM. Necessary for some effects in Grandia II or Tony Hawk 2 for example.
-    ExperimentalRenderToVRAM: bool = true,
-    ExperimentalClampSpritesUVs: bool = true,
-    ExperimentalRenderOnEmulationThread: bool = false,
-
     DebugDisableTextureCacheAcrossFrames: bool = false,
+
+    /// Owned by Deecy.
+    config: *const Configuration,
 
     render_request: bool = false,
     on_render_start_param_base: u32 = 0,
@@ -780,7 +784,6 @@ pub const Renderer = struct {
     palette_buffer: zgpu.BufferHandle,
 
     resolution: Resolution,
-    texture_filter: Configuration.TextureFilter,
 
     /// Intermediate texture to upload framebuffer from VRAM at native resolution
     framebuffer: TextureAndView,
@@ -901,7 +904,7 @@ pub const Renderer = struct {
         });
     }
 
-    pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, gctx_queue_mutex: *std.Thread.Mutex, config: Configuration) !*Renderer {
+    pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, gctx_queue_mutex: *std.Thread.Mutex, config: *const Configuration) !*Renderer {
         const start = std.time.milliTimestamp();
         defer log.info("Renderer initialized in {d}ms", .{std.time.milliTimestamp() - start});
 
@@ -1267,8 +1270,8 @@ pub const Renderer = struct {
 
         var renderer = try allocator.create(Renderer);
         renderer.* = .{
+            .config = config,
             .resolution = .{ .width = config.internal_resolution_factor * NativeResolution.width, .height = config.internal_resolution_factor * NativeResolution.height },
-            .texture_filter = config.texture_filter,
 
             .blit_vertex_buffer = blit_vertex_buffer,
             .blit_index_buffer = blit_index_buffer,
@@ -1520,7 +1523,7 @@ pub const Renderer = struct {
             for (renderer.texture_metadata[i]) |*tm| tm.* = .{};
         }
 
-        renderer.on_inner_resolution_change(config.scaling_filter);
+        renderer.on_inner_resolution_change();
 
         return renderer;
     }
@@ -1627,10 +1630,6 @@ pub const Renderer = struct {
 
     pub fn on_render_start(self: *@This(), dc: *Dreamcast) void {
         const render_to_texture = dc.gpu.render_to_texture();
-        if (render_to_texture and !self.ExperimentalRenderToTexture) {
-            log.warn("Render to Texture is disabled.", .{});
-            return;
-        }
 
         // NOTE: Here we also rely on this lock to protect access to `ta_lists` and `render_passes`.
         self._gctx_queue_mutex.lock();
@@ -1704,7 +1703,7 @@ pub const Renderer = struct {
 
         // Process and render immediately when rendering to a texture. Decouples it from the host refresh rate, and some games require the result to be visible in guest VRAM ASAP.
         // Othersize, let the main thread process the list asynchronously unless explicitly disabled.
-        self.render_request = !self.ExperimentalRenderOnEmulationThread and !render_to_texture;
+        self.render_request = !self.config.synchronous_render and !render_to_texture;
 
         if (!self.render_request) {
             self.update(&dc.gpu) catch |err| return log.err(termcolor.red("Failed to update renderer: {t}"), .{err});
@@ -2363,7 +2362,7 @@ pub const Renderer = struct {
                     var area1_tsp_instruction = polygon.area1_tsp_instruction();
                     const area1_texture_control = polygon.area1_texture_control();
 
-                    switch (self.texture_filter) {
+                    switch (self.config.texture_filter) {
                         .@"Application Driven" => {},
                         .@"Force Nearest" => {
                             tsp_instruction.filter_mode = .Point;
@@ -2646,7 +2645,7 @@ pub const Renderer = struct {
                         self.max_depth = @max(self.max_depth, self.vertices.getLast().z);
                     }
 
-                    if (self.ExperimentalClampSpritesUVs and self.resolution.width != NativeResolution.width and textured) {
+                    if (self.config.clamp_sprites_uvs and self.resolution.width != NativeResolution.width and textured) {
                         // Here "Sprite" means "Screen Aligned Square", basically (not strictly a sprite in the TA sense). 4 vertices with the same depth, with UVs in [0..1].
                         const vertices = self.vertices.items[strip_start..];
                         if (vertices.len == 4 and (vertices[0].z == vertices[1].z and vertices[0].z == vertices[2].z and vertices[0].z == vertices[3].z)) {
@@ -3025,14 +3024,6 @@ pub const Renderer = struct {
             .width = @min(self.render_size.width * self.resolution.width / NativeResolution.width, self.resolution.width), // Assumes resolution is an integer multiplier of the NativeResolution.
             .height = @min(self.render_size.height * self.resolution.height / NativeResolution.height, self.resolution.height),
         };
-
-        if (render_to_texture) {
-            log.info("Rendering to texture! [{d},{d}] to [{d},{d}]", .{ self.global_clip.x.min, self.global_clip.y.min, self.global_clip.x.max, self.global_clip.y.max });
-            if (!self.ExperimentalRenderToTexture) {
-                log.warn("ExperimentalRenderToTexture is disabled.", .{});
-                return;
-            }
-        }
 
         const Target = struct { native: TextureAndView.Resources, resized: TextureAndView.Resources };
         const target: Target = if (render_to_texture) .{
@@ -3591,13 +3582,13 @@ pub const Renderer = struct {
                 pass.drawIndexed(4, 1, 0, 0, 0);
             }
 
-            if (self.ExperimentalFramebufferEmulation or render_to_texture) {
+            if (self.config.framebuffer_emulation or render_to_texture) {
                 // FIXME: Could technically go up to 1024 when rendering to a texture... Don't know if any game actualy does it.
                 //        Using the framebuffer size allow reusing some textures and buffers from the regular pipeline.
                 const width: u32 = @min(self.global_clip.x.max, NativeResolution.width);
                 const height: u32 = @min(self.global_clip.y.max, NativeResolution.height);
                 // Skips the CPU writeback and copy directly to a host texture slot.
-                if (!self.ExperimentalRenderToVRAM) {
+                if (!self.config.copy_to_vram) {
                     // TODO: How is the minimum value of the global_clip used exactly? (Find a game where it isn't just [0, 0].)
                     if (self.global_clip.x.min != 0 or self.global_clip.y.min != 0)
                         log.warn("Render to texture with unusual global_clip:  [{d},{d}] to [{d},{d}]", .{ self.global_clip.x.min, self.global_clip.y.min, self.global_clip.x.max, self.global_clip.y.max });
@@ -3729,7 +3720,7 @@ pub const Renderer = struct {
         gctx.submit(&.{commands});
 
         // Read the result and copy it to guest VRAM
-        if ((self.ExperimentalFramebufferEmulation or render_to_texture) and self.ExperimentalRenderToVRAM) {
+        if ((self.config.framebuffer_emulation or render_to_texture) and self.config.copy_to_vram) {
             const static = struct {
                 var result: zgpu.wgpu.MapAsyncStatus = .@"error";
                 fn signal_fb_mapped(status: zgpu.wgpu.MapAsyncStatus, message: zgpu.wgpu.StringView.C, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
@@ -3767,11 +3758,11 @@ pub const Renderer = struct {
 
     /// Blit the last rendered frame to the window surface.
     /// Locks _gctx_queue_mutex.
-    pub fn draw(self: *const @This(), display_mode: DisplayMode, window_width: u32, window_height: u32) void {
+    pub fn draw(self: *const @This(), window_width: u32, window_height: u32) void {
         self._gctx_queue_mutex.lock();
         defer self._gctx_queue_mutex.unlock();
 
-        self.update_blit_to_screen_vertex_buffer(window_width, window_height, display_mode);
+        self.update_blit_to_screen_vertex_buffer(window_width, window_height);
 
         if (self._gctx.lookupResource(self.blit_pipeline)) |pipeline| {
             var surface: zgpu.wgpu.SurfaceTexture = undefined;
@@ -3945,7 +3936,7 @@ pub const Renderer = struct {
     }
 
     /// Creates all resources that depends on the render size
-    pub fn on_inner_resolution_change(self: *@This(), scaling_filter: Filter) void {
+    pub fn on_inner_resolution_change(self: *@This()) void {
         self.deinit_screen_textures();
 
         // This is currently the largest buffer whose size is dependent on the resolution. Make sure we can allocate it.
@@ -3970,7 +3961,7 @@ pub const Renderer = struct {
         // Intermediate buffer used when rendering to a texture. We don't want to override resized_framebuffer since it is used for blitting.
         self.resized_render_to_texture_target = create_resized_framebuffer_texture(self._gctx, self.resolution, true, false);
 
-        self.create_blit_bind_groups(scaling_filter);
+        self.create_blit_bind_groups(self.config.scaling_filter);
 
         const mv_apply_bind_group_layout = self._gctx.createBindGroupLayout(&ModifierVolumeApplyBindGroupLayout, .{ .label = "ModifierVolumeApplyBindGroupLayout" });
         defer self._gctx.releaseResource(mv_apply_bind_group_layout);
@@ -4058,17 +4049,17 @@ pub const Renderer = struct {
     }
 
     // Assumes gctx_queue_mutex is locked.
-    pub fn update_blit_to_screen_vertex_buffer(self: *const @This(), width: u32, height: u32, display_mode: DisplayMode) void {
+    pub fn update_blit_to_screen_vertex_buffer(self: *const @This(), width: u32, height: u32) void {
         const iw: f32 = @floatFromInt(self.resolution.width);
         const ih: f32 = @floatFromInt(self.resolution.height);
         const tw: f32 = @floatFromInt(width);
         const th: f32 = @floatFromInt(height);
         const ias = iw / ih;
         const tas = tw / th;
-        const actual_dm = if (display_mode == .Center and (tw < iw or th < ih))
+        const actual_dm = if (self.config.display_mode == .Center and (tw < iw or th < ih))
             .Fit
         else
-            display_mode;
+            self.config.display_mode;
         var blit_vertex_data = switch (actual_dm) {
             .Center => [_]f32{
                 // x    y     u    v
@@ -4246,8 +4237,8 @@ pub const Renderer = struct {
         }
     }
 
-    pub fn set_scaling_filter(self: *@This(), scaling_filter: Filter) void {
-        self.create_blit_bind_groups(scaling_filter);
+    pub fn on_scaling_filter_change(self: *@This()) void {
+        self.create_blit_bind_groups(self.config.scaling_filter);
     }
 
     fn create_blit_bind_groups(self: *@This(), scaling_filter: Filter) void {
