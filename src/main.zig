@@ -70,12 +70,10 @@ const AvailableHacks = [_]struct { name: []const u8, hacks: []const Hack }{
 
 var EnabledHacks: ?[]const Hack = null;
 
-pub extern "kernel32" fn timeBeginPeriod(
-    uPeriod: std.os.windows.UINT,
-) callconv(.winapi) std.os.windows.UINT; // MMRESULT
-pub extern "kernel32" fn timeEndPeriod(
-    uPeriod: std.os.windows.UINT,
-) callconv(.winapi) std.os.windows.UINT; // MMRESULT
+pub extern "kernel32" fn timeBeginPeriod(uPeriod: std.os.windows.UINT) callconv(.winapi) std.os.windows.UINT; // MMRESULT
+pub extern "kernel32" fn timeEndPeriod(uPeriod: std.os.windows.UINT) callconv(.winapi) std.os.windows.UINT; // MMRESULT
+pub extern "kernel32" fn AttachConsole(dwProcessId: std.os.windows.DWORD) callconv(.winapi) std.os.windows.BOOL;
+const ATTACH_PARENT_PROCESS = ~@as(std.os.windows.DWORD, 0);
 
 pub fn main() !void {
     defer custom_log.deinit();
@@ -83,6 +81,16 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var allocator = gpa.allocator();
     defer _ = gpa.deinit();
+
+    if (builtin.os.tag == .windows and config.no_console) {
+        // When built with the GUI subsystem on Windows, try to attach to the console if we received any arguments.
+        var args = try std.process.argsWithAllocator(allocator);
+        defer args.deinit();
+        var arg_count: u64 = 0;
+        while (args.next()) |_| arg_count += 1;
+        if (arg_count > 1)
+            _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
 
     var d = try Deecy.create(allocator);
     defer d.destroy();
@@ -153,6 +161,8 @@ pub fn main() !void {
                     std.log.err(termcolor.red("Invalid state number after --load-state: {d}"), .{load_state.?});
                     return error.InvalidArguments;
                 }
+            } else if (std.mem.eql(u8, arg, "--attach-console")) {
+                // Argument used to attach the console on Windows in GUI subsystem, see above.
             } else {
                 std.log.warn(termcolor.yellow("Unknown argument: '{s}'"), .{arg});
             }
