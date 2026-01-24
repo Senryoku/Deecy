@@ -122,6 +122,7 @@ pub fn build(b: *std.Build) !void {
                     .unwind_tables = .none,
                     .strip = true,
                     .single_threaded = true,
+                    .stack_check = false,
                 }),
             });
             wrapper.subsystem = .Console;
