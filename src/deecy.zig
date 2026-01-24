@@ -40,6 +40,10 @@ const lz4 = @import("lz4");
 
 const deecy_log = std.log.scoped(.deecy);
 
+fn glfw_error_callback(zglfw_error: zglfw.ErrorCode, desc: ?[*:0]const u8) callconv(.c) void {
+    deecy_log.err("GLFW error {X}: {s}", .{ zglfw_error, desc orelse "(no description)" });
+}
+
 fn glfw_key_callback(window: *zglfw.Window, key: zglfw.Key, scancode: i32, action: zglfw.Action, mods: zglfw.Mods) callconv(.c) void {
     _ = scancode;
 
@@ -212,7 +216,7 @@ pub const PresentMode = enum(u32) {
 };
 
 const Configuration = struct {
-    log_output: custom_log.Output = if (!comptime_config.no_console) .Console else .None,
+    log_output: custom_log.Output = if (!comptime_config.no_console) .Console else .File,
     per_game_vmu: bool = true,
     performance_overlay: enum { Off, Simple, Detailed } = .Simple,
     display_vmus: bool = true,
@@ -368,6 +372,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
 
     custom_log.set_output(config.log_output);
 
+    _ = zglfw.setErrorCallback(glfw_error_callback);
     try zglfw.init();
 
     const self = try allocator.create(@This());
