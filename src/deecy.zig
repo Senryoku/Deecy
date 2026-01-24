@@ -234,7 +234,7 @@ const Configuration = struct {
 
     keyboard_bindings: [4]KeyboardBindings = .{ .Default, .{}, .{}, .{} },
     controllers_bindings: [4]ControllerBindings = .{ .{}, .{}, .{}, .{} },
-    controllers: [4]ControllerSettings = .{ .{ .enabled = true, .subperipherals = .{ .{ .VMU = .{ .filename = DefaultVMUPaths[0][0] } }, .None } }, .{ .enabled = true }, .{ .enabled = false }, .{ .enabled = false } },
+    controllers: [4]ControllerSettings = .{ .{ .enabled = true }, .{ .enabled = true }, .{ .enabled = false }, .{ .enabled = false } },
     region: enum(u8) {
         /// USA by default and auto detect when using a disc.
         Auto = std.math.maxInt(u8),
@@ -366,7 +366,9 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
             };
             break :config helpers.to_complete(Configuration, zon);
         } else |_| {
-            break :config .{};
+            var c: Configuration = .{};
+            c.controllers[0].subperipherals[0] = .{ .VMU = .{ .filename = try allocator.dupe(u8, DefaultVMUPaths[0][0]) } };
+            break :config c;
         }
     };
 
