@@ -9,7 +9,7 @@ body:
     attributes:
       value: |
         Describe the issue, how to reproduce it step by step, and the expected correct behavior.
-        Including Deecy's console output will often help, especially in case of crashes (run in a terminal to be able to copy it after it exits).
+        Including Deecy's console output will often help, especially in case of crashes. On Windows it can be found in `./userdata/deecy.log`.
         When reporting an issue with a specific game, consider including the following:
          - **Game name** 
            Be as specific with the version as possible. For example: "Soul Calibur (US), T1401N V1.000, GDI format".
