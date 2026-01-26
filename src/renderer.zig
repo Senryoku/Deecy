@@ -3101,6 +3101,8 @@ pub const Renderer = struct {
 
                 pass.setPipeline(background_pipeline);
                 pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)]).?, &.{});
+                const clip = self.convert_clipping(null);
+                pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
                 pass.drawIndexed(FirstIndex, 1, 0, 0, 0);
             }
 
