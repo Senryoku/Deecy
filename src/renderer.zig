@@ -3699,7 +3699,7 @@ pub const Renderer = struct {
                         .{
                             .layout = .{
                                 .offset = 0,
-                                .bytes_per_row = 4 * width,
+                                .bytes_per_row = std.mem.alignForward(u32, 4 * width, 256),
                                 .rows_per_image = height,
                             },
                             .buffer = gctx.lookupResource(self.framebuffer_copy_buffer).?,
