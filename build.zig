@@ -111,6 +111,26 @@ pub fn build(b: *std.Build) !void {
             deecy_module.linkSystemLibrary("dwmapi", .{});
             // Windows Multimedia API for timeBeginPeriod
             deecy_module.linkSystemLibrary("winmm", .{});
+
+            // Wrapper in console mode for launching Deecy from a terminal with proper console interactions.
+            const wrapper = b.addExecutable(.{
+                .name = "Deecy",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("src/windows_wrapper.zig"),
+                    .target = target,
+                    .optimize = .ReleaseSmall,
+                    .unwind_tables = .none,
+                    .strip = true,
+                    .single_threaded = true,
+                    .stack_check = false,
+                }),
+            });
+            wrapper.subsystem = .Console;
+            wrapper.lto = .full;
+            wrapper.link_gc_sections = true;
+            const install_wrapper = b.addInstallArtifact(wrapper, .{});
+            install_wrapper.dest_sub_path = "Deecy.com";
+            b.getInstallStep().dependOn(&install_wrapper.step);
         },
         else => {},
     }

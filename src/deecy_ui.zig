@@ -571,12 +571,11 @@ pub fn draw(self: *@This()) !void {
                     zgui.text("Logs will be saved in '{s}'", .{path});
                     zgui.endTooltip();
                 }
-                if (!comptime_config.no_console) {
-                    if (zgui.menuItem("Console", .{ .selected = d.config.log_output == .Console }))
-                        d.config.log_output = .Console;
-                    if (zgui.menuItem("Both", .{ .selected = d.config.log_output == .Both }))
-                        d.config.log_output = .Both;
-                }
+                if (zgui.menuItem("Console", .{ .selected = d.config.log_output == .Console }))
+                    d.config.log_output = .Console;
+                if (zgui.menuItem("Both", .{ .selected = d.config.log_output == .Both }))
+                    d.config.log_output = .Both;
+
                 if (d.config.log_output != initial_value) custom_log.set_output(d.config.log_output);
                 zgui.endMenu();
             }
