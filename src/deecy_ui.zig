@@ -879,9 +879,24 @@ pub fn draw(self: *@This()) !void {
                                             if (available_controllers.items[index].id) |id| {
                                                 if (zgui.selectable(item.name, .{ .selected = d.controllers[port] != null and d.controllers[port].?.id == id }))
                                                     d.controllers[port] = .{ .id = id };
+                                                    d.controllers_forced_none[port] = false;
+                                                    d.config.controllers[port].forced_none = false;
+                                                    // Ensure a physical/virtual controller can't be assigned to multiple ports.
+                                                    // If another port was using the same controller, unbind it and let auto-rebind
+                                                    // pick another available gamepad.
+                                                    for (0..4) |other_port| {
+                                                        if (other_port == port) continue;
+                                                        if (d.controllers[other_port] != null and d.controllers[other_port].?.id == id) {
+                                                            d.controllers[other_port] = null;
+                                                            d.controllers_forced_none[other_port] = false;
+                                                            d.config.controllers[other_port].forced_none = false;
+                                                        }
+                                                    }
                                             } else {
                                                 if (zgui.selectable(item.name, .{ .selected = d.controllers[port] == null }))
                                                     d.controllers[port] = null;
+                                                    d.controllers_forced_none[port] = true;
+                                                    d.config.controllers[port].forced_none = true;
                                             }
                                         }
                                         zgui.endCombo();

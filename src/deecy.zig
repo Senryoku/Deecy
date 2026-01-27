@@ -196,6 +196,7 @@ pub const DefaultVMUPaths = default_vmu_paths: {
 
 const ControllerSettings = struct {
     enabled: bool,
+    forced_none: bool = false,
     subcapabilities: DreamcastModule.Maple.Controller.InputCapabilities = DreamcastModule.Maple.Controller.StandardControllerCapabilities,
     subperipherals: [2]union(enum) { None, VMU: struct { filename: []const u8 }, VibrationPack } = .{ .None, .None },
 };
@@ -329,6 +330,8 @@ controllers: [4]?struct {
         }
     }
 } = @splat(null),
+
+controllers_forced_none: [4]bool = .{ false, false, false, false },
 
 display_ui: bool = true,
 ui: *UI = undefined,
@@ -852,6 +855,43 @@ pub fn stop_rumble(self: *@This()) void {
 }
 
 pub fn poll_controllers(self: *@This()) void {
+// Minimal auto-rebind:
+// Steam Input (virtual X360/XInput pad) can disappear/reappear or change joystick slot.
+// If our current assignment is missing, bind the first available *unused* gamepad.
+// Also supports persisting "None" per port via config.controllers[p].forced_none.
+var used: [zglfw.Joystick.maximum_supported]bool = .{false} ** zglfw.Joystick.maximum_supported;
+for (0..4) |p| {
+    if (self.controllers[p]) |c| {
+        const idx: usize = @intCast(@intFromEnum(c.id));
+        if (idx < used.len) used[idx] = true;
+    }
+}
+
+for (0..4) |p| {
+    // Keep runtime "forced none" in sync with config (so it persists across relaunches).
+    self.controllers_forced_none[p] = self.config.controllers[p].forced_none;
+    if (self.controllers_forced_none[p]) continue;
+
+    const need =
+        (self.controllers[p] == null) or
+        (!self.controllers[p].?.id.isPresent());
+
+    if (!need) continue;
+
+    for (0..zglfw.Joystick.maximum_supported) |i| {
+        const jid: zglfw.Joystick = @enumFromInt(i);
+        if (!jid.isPresent()) continue;
+        if (jid.asGamepad() == null) continue;
+
+        const idx: usize = @intCast(@intFromEnum(jid));
+        if (idx < used.len and used[idx]) continue;
+
+        self.controllers[p] = .{ .id = jid };
+        if (idx < used.len) used[idx] = true;
+        break;
+    }
+}
+
     for (0..4) |controller_idx| {
         if (self.dc.maple.ports[controller_idx].main) |*guest_controller| {
             switch (guest_controller.*) {
@@ -989,9 +1029,9 @@ pub fn poll_controllers(self: *@This()) void {
                                     }
                                 }
                             } else {
-                                // Not valid anymore? Disconnected?
-                                self.controllers[controller_idx] = null;
-                            }
+                            // Steam Input may recreate the virtual controller; do not clear the selection.
+                            // We'll rebind automatically at the beginning of poll_controllers().
+                        }
                         }
                     }
                 },
