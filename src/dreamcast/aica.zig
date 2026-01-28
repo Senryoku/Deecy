@@ -59,7 +59,7 @@ pub const AmpEnv2 = packed struct(u32) {
     release_rate: u5,
     decay_level: u5,
     key_rate_scaling: u4,
-    link: u1, // LPSLNK - If this bit is set, then the envelope transitions to the decay state when the sample loop start address is exceeded.
+    link: bool, // LPSLNK - If this bit is set, then the envelope transitions to the decay state when the sample loop start address is exceeded.
     _: u17 = 0,
 };
 
@@ -77,12 +77,18 @@ pub const Waveform = enum(u2) {
 };
 
 pub const LFOControl = packed struct(u32) {
-    amplitude_modulation_depth: u3, // (ALFOS)
-    amplitude_modulation_waveform: Waveform, // (ALFOWS)
-    pitch_modulation_depth: u3, // (PLFOS)
-    pitch_modulation_waveform: Waveform, // (PLFOWS)
-    frequency: u5, // (LFOF)
-    reset: bool, // (LFORE) 1=on, 0=off If set, the LFO phase is reset at the start of EACH SAMPLE LOOP.
+    /// (ALFOS)
+    amplitude_modulation_depth: u3,
+    /// (ALFOWS)
+    amplitude_modulation_waveform: Waveform,
+    /// (PLFOS)
+    pitch_modulation_depth: u3,
+    /// (PLFOWS)
+    pitch_modulation_waveform: Waveform,
+    /// (LFOF)
+    frequency: u5,
+    /// (LFORE) 1=on, 0=off If set, the LFO phase is reset at the start of EACH SAMPLE LOOP.
+    reset: bool,
     _: u16,
 };
 
@@ -102,24 +108,30 @@ pub const DSPChannelSend = packed struct(u32) {
 };
 
 pub const DirectPanVolSend = packed struct(u32) {
-    pan: u5, // Direct send pan (DIPAN)
-    // 0x00 or 0x10 is center, 0x0F is full right, 0x1F is full left
-    // 0x00-0x0F: each step beyond 0x00 attenuates the left side by 3db
-    //            (right side remains at same volume)
-    // 0x10-0x1F: each step beyond 0x10 attenuates the right side by 3db
-    //            (left side remains at same volume)
+    /// Direct send pan (DIPAN)
+    ///   0x00 or 0x10 is center, 0x0F is full right, 0x1F is full left
+    ///   0x00-0x0F: each step beyond 0x00 attenuates the left side by 3db
+    ///              (right side remains at same volume)
+    ///   0x10-0x1F: each step beyond 0x10 attenuates the right side by 3db
+    ///              (left side remains at same volume)
+    pan: u5,
     _0: u3,
-    volume: u4, // Direct send volume (DISDL) - "Affects how much of this channel is being sent directly to the dry output.  0xF is full volume (no attenuation), every level beneath that adds 3dB, and 0x0 means no output.""
+    /// Direct send volume (DISDL) - "Affects how much of this channel is being sent directly to the dry output.  0xF is full volume (no attenuation), every level beneath that adds 3dB, and 0x0 means no output.""
+    volume: u4,
     _1: u4,
     _2: u16,
 };
 
 pub const EnvSettings = packed struct(u32) {
-    q: u5, // filter resonance value Q = (0.75*value)-3, from -3 to 20.25 db
-    lpoff: bool, // 1 = turn off lowpass filter.
-    voff: bool, // if this bit is set to 1, the constant attenuation, envelope, and LFO volumes will not take effect. however, the note will still end when the envelope level reaches zero in the release state.
+    /// filter resonance value Q = (0.75*value)-3, from -3 to 20.25 db
+    q: u5,
+    /// 1 = turn off lowpass filter.
+    lpoff: bool,
+    /// if this bit is set to 1, the constant attenuation, envelope, and LFO volumes will not take effect. however, the note will still end when the envelope level reaches zero in the release state.
+    voff: bool,
     _: u1, // unknown [SAVED]
-    constant_attenuation: u8, // (TL) this value *4 seems to be added to the envelope attenuation (as in, 0x00-0xFF here corresponds to 0x000-0x3FF when referring to the envelope attenuation)
+    /// (TL) this value *4 seems to be added to the envelope attenuation (as in, 0x00-0xFF here corresponds to 0x000-0x3FF when referring to the envelope attenuation)
+    constant_attenuation: u8,
     _r: u16,
 };
 
@@ -330,7 +342,7 @@ const MIDIInput = packed struct(u32) {
 pub const ChannelInfoReq = packed struct(u32) {
     MIDI_output_buffer: u8,
     monitor_select: u6,
-    amplitude_or_filter_select: u1,
+    envelope_select: enum(u1) { Amplitude = 0, Filter = 1 },
     _: u17 = 0,
 };
 
@@ -375,7 +387,7 @@ pub const AICAChannelState = struct {
     } = .{},
 
     pub fn key_on(self: *AICAChannelState, registers: *const AICAChannel) void {
-        if (self.amp_env_state != .Release) return;
+        if (self.amp_env_state != .Release and self.amp_env_level < 0x3BF) return;
         self.playing = true;
         self.loop_end_flag = false;
         self.play_position = 0; // Looping channels also start at 0
@@ -397,7 +409,7 @@ pub const AICAChannelState = struct {
         self.amp_env_state = .Release;
         self.amp_env_level = 0x3FF;
         self.filter_env_state = .Release;
-        self.filter_env_level = 0x3FF;
+        self.filter_env_level = 0x1FFF;
     }
 
     pub fn compute_effective_rate(registers: *const AICAChannel, rate: u32) u32 {
@@ -693,12 +705,19 @@ pub const AICA = struct {
             .PlayStatus => {
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
                 var chan = &self.channel_states[req.monitor_select];
-                var status: PlayStatus = .{
-                    .env_level = @truncate(if (req.amplitude_or_filter_select == 0) chan.amp_env_level else chan.filter_env_level),
-                    .env_state = chan.amp_env_state,
-                    .loop_end_flag = chan.loop_end_flag,
+                var status: PlayStatus = switch (req.envelope_select) {
+                    .Amplitude => .{
+                        .env_level = @truncate(chan.amp_env_level),
+                        .env_state = chan.amp_env_state,
+                        .loop_end_flag = chan.loop_end_flag,
+                    },
+                    .Filter => .{
+                        .env_level = @truncate(chan.filter_env_level),
+                        .env_state = chan.filter_env_state,
+                        .loop_end_flag = chan.loop_end_flag,
+                    },
                 };
-                if (status.env_level >= 0x3C0) status.env_level = 0x1FFF;
+                if (req.envelope_select == .Amplitude and status.env_level >= 0x3C0) status.env_level = 0x1FFF;
                 if (T == u32 or high_byte)
                     chan.loop_end_flag = false; // Cleared on read.
                 if (!high_byte) {
@@ -774,6 +793,12 @@ pub const AICA = struct {
             switch (@as(AICARegister, @enumFromInt(reg_addr))) {
                 .MasterVolume => {
                     aica_log.debug("Write({}) to Master Volume (0x{X:0>8}) = 0x{X:0>8}", .{ T, addr, value });
+                },
+                .RingBufferAddress => {
+                    aica_log.debug("Write({}) to Ring Buffer Address (0x{X:0>8}) = 0x{X:0>8}", .{ T, addr, value });
+                    const old_value: T = self.read_register(T, addr);
+                    if (value != old_value)
+                        self.dsp._dirty_mpro = true;
                 },
                 .DDIR_DEXE => { // DMA transfer direction / DMA transfer start
                     if (T == u8)
@@ -1177,7 +1202,7 @@ pub const AICA = struct {
             base_play_position_inc <<= 1;
 
         if (state.play_position == registers.loop_start) {
-            if (registers.amp_env_2.link == 1 and state.amp_env_state == .Attack)
+            if (registers.amp_env_2.link and state.amp_env_state == .Attack)
                 state.amp_env_state = .Decay;
             if (registers.lfo_control.reset) {
                 state.lfo_phase = 0;
@@ -1246,23 +1271,20 @@ pub const AICA = struct {
                     .Attack => registers.flv1 & 0x1FFF,
                     .Decay => registers.flv2 & 0x1FFF,
                     .Sustain => registers.flv3 & 0x1FFF,
-                    else => 0,
+                    .Release => registers.flv4 & 0x1FFF,
                 });
                 if (state.filter_env_level < target) {
                     state.filter_env_level +|= decay;
                     state.filter_env_level = @min(state.filter_env_level, target);
                 } else if (state.filter_env_level > target) {
-                    if (state.filter_env_level > decay) {
-                        state.filter_env_level -|= decay;
-                    } else {
-                        state.filter_env_level = 0;
-                    }
+                    state.filter_env_level -|= decay;
                     state.filter_env_level = @max(state.filter_env_level, target);
-                } else {
+                }
+                if (state.filter_env_level == target) {
                     switch (state.filter_env_state) {
                         .Attack => state.filter_env_state = .Decay,
                         .Decay => state.filter_env_state = .Sustain,
-                        .Sustain => state.filter_env_state = .Release,
+                        .Sustain => state.filter_env_state = .Release, // FIXME: Wait for key off?
                         .Release => {},
                     }
                 }
@@ -1383,7 +1405,7 @@ pub const AICA = struct {
                 } else {
                     state.playing = false;
                     state.amp_env_level = 0x3FF;
-                    state.play_position = @truncate(registers.loop_end);
+                    state.play_position = 0;
                     return;
                 }
             }
