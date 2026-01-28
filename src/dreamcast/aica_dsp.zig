@@ -580,8 +580,6 @@ pub fn compile(self: *@This()) !void {
                     try b.push(.{ .reg64 = INPUTS.reg });
 
                     try b.mov(.{ .reg = Architecture.ArgRegisters[0] }, SHIFTED);
-                    try b.append(.{ .And = .{ .dst = .{ .reg = Architecture.ArgRegisters[0] }, .src = .{ .imm32 = 0xFFF } } });
-
                     try b.call(f16_from_i32);
 
                     try b.pop(.{ .reg64 = INPUTS.reg });
