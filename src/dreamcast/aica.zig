@@ -794,6 +794,12 @@ pub const AICA = struct {
                 .MasterVolume => {
                     aica_log.debug("Write({}) to Master Volume (0x{X:0>8}) = 0x{X:0>8}", .{ T, addr, value });
                 },
+                .RingBufferAddress => {
+                    aica_log.debug("Write({}) to Ring Buffer Address (0x{X:0>8}) = 0x{X:0>8}", .{ T, addr, value });
+                    const old_value: T = self.read_register(T, addr);
+                    if (value != old_value)
+                        self.dsp._dirty_mpro = true;
+                },
                 .DDIR_DEXE => { // DMA transfer direction / DMA transfer start
                     if (T == u8)
                         @as([*]u8, @ptrCast(&self.regs))[local_addr] = value & 0xFC;
