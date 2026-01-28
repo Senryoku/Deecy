@@ -101,8 +101,8 @@ audio_channels: [64]struct {
     }
 } = @splat(.{}),
 
-dsp_inputs: [16]struct { start_time: i64 = 0, xv: std.ArrayList(i32) = .empty, yv: std.ArrayList(i32) = .empty } = @splat(.{}),
-dsp_outputs: [16]struct { start_time: i64 = 0, xv: std.ArrayList(i32) = .empty, yv: std.ArrayList(i32) = .empty } = @splat(.{}),
+dsp_inputs: [16]DebugBuffer(i32) = @splat(.{}),
+dsp_outputs: [16]DebugBuffer(i32) = @splat(.{}),
 
 _allocator: std.mem.Allocator,
 _gctx: *zgpu.GraphicsContext,
@@ -766,6 +766,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     }
     zgui.end();
 
+    const dc_time = dc._global_cycles / 200_000;
+
     if (zgui.begin("AICA", .{})) {
         zgui.text("Master Volume: {X}", .{dc.aica.debug_read_reg(u32, .MasterVolume) & 0xF});
         const cdda_out_left = dc.aica.get_reg(AICAModule.DSPOutputMixer, .CDDAOutputLeft).*;
@@ -807,7 +809,6 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.plot.endPlot();
         }
         _ = zgui.checkbox("Show disabled channels", .{ .v = &self.show_disabled_channels });
-        const dc_time = dc._global_cycles / 200_000;
         inline for (0..64) |i| {
             const channel = dc.aica.get_channel_registers(@intCast(i));
             zgui.pushPtrId(channel);
@@ -920,8 +921,6 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     zgui.end();
 
     if (zgui.begin("AICA - DSP", .{})) {
-        const time = std.time.milliTimestamp();
-        const MaxSamples = 10_000;
         if (zgui.collapsingHeader("Program", .{ .default_open = false })) {
             for (0..128) |idx| {
                 zgui.text("[{d: >3}] {f}", .{ idx, dc.aica.dsp.read_mpro(@intCast(idx)) });
@@ -941,27 +940,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 zgui.pushIntId(i);
                 defer zgui.popId();
                 zgui.text("MIXS #{d}", .{i});
-                if (d.running) {
-                    if (time - self.dsp_inputs[i].start_time > MaxSamples) {
-                        self.dsp_inputs[i].xv.clearRetainingCapacity();
-                        self.dsp_inputs[i].yv.clearRetainingCapacity();
-                    }
-                    if (self.dsp_inputs[i].xv.items.len > 0) {
-                        try self.dsp_inputs[i].xv.append(self._allocator, @intCast(time - self.dsp_inputs[i].start_time));
-                    } else {
-                        self.dsp_inputs[i].start_time = time;
-                        try self.dsp_inputs[i].xv.append(self._allocator, 0);
-                    }
-                    try self.dsp_inputs[i].yv.append(self._allocator, @intCast(@as(i20, @bitCast(dc.aica.dsp.read_mixs(i)))));
-                } else {
-                    if (self.dsp_inputs[i].xv.items.len > 0)
-                        self.dsp_inputs[i].start_time = time - self.dsp_inputs[i].xv.items[self.dsp_inputs[i].xv.items.len - 1];
-                }
+                try self.dsp_inputs[i].add(self._allocator, dc_time, dc.aica.dsp.read_mixs(i));
                 if (zgui.plot.beginPlot("DSPInput", .{ .flags = zgui.plot.Flags.canvas_only, .h = 128.0 })) {
-                    zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = MaxSamples });
-                    zgui.plot.setupAxisLimits(.y1, .{ .min = @floatFromInt(std.math.minInt(i16)), .max = @floatFromInt(std.math.maxInt(i16)) });
+                    zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
+                    zgui.plot.setupAxisLimits(.y1, .{ .min = @floatFromInt(std.math.minInt(i20)), .max = @floatFromInt(std.math.maxInt(i20)) });
                     zgui.plot.setupFinish();
-                    zgui.plot.plotLine("input", i32, .{ .xv = self.dsp_inputs[i].xv.items, .yv = self.dsp_inputs[i].yv.items });
+                    zgui.plot.plotLine("Input", i32, .{ .xv = self.dsp_inputs[i].xv.items, .yv = self.dsp_inputs[i].yv.items });
                     zgui.plot.endPlot();
                 }
             }
@@ -972,25 +956,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 defer zgui.popId();
                 const mix = dc.aica.get_dsp_mix_register(@intCast(i)).*;
                 zgui.text("EFREG #{d} (EFSDL: {X}, EFPAN: {X})", .{ i, mix.efsdl, mix.efpan });
-                if (d.running) {
-                    if (time - self.dsp_outputs[i].start_time > MaxSamples) {
-                        self.dsp_outputs[i].xv.clearRetainingCapacity();
-                        self.dsp_outputs[i].yv.clearRetainingCapacity();
-                    }
-                    if (self.dsp_outputs[i].xv.items.len > 0) {
-                        try self.dsp_outputs[i].xv.append(self._allocator, @intCast(time - self.dsp_outputs[i].start_time));
-                    } else {
-                        self.dsp_outputs[i].start_time = time;
-                        try self.dsp_outputs[i].xv.append(self._allocator, 0);
-                    }
-                    try self.dsp_outputs[i].yv.append(self._allocator, @intCast(dc.aica.dsp.read_efreg(i)));
-                } else {
-                    if (self.dsp_outputs[i].xv.items.len > 0)
-                        self.dsp_outputs[i].start_time = time - self.dsp_outputs[i].xv.items[self.dsp_outputs[i].xv.items.len - 1];
-                }
+                try self.dsp_outputs[i].add(self._allocator, dc_time, dc.aica.dsp.read_efreg(i));
                 if (zgui.plot.beginPlot("DSPOutput", .{ .flags = zgui.plot.Flags.canvas_only, .h = 128.0 })) {
-                    zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = MaxSamples });
-                    zgui.plot.setupAxisLimits(.y1, .{ .min = @floatFromInt(std.math.minInt(i20)), .max = @floatFromInt(std.math.maxInt(i20)) });
+                    zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
+                    zgui.plot.setupAxisLimits(.y1, .{ .min = @floatFromInt(std.math.minInt(i16)), .max = @floatFromInt(std.math.maxInt(i16)) });
                     zgui.plot.setupFinish();
                     zgui.plot.plotLine("Output", i32, .{ .xv = self.dsp_outputs[i].xv.items, .yv = self.dsp_outputs[i].yv.items });
                     zgui.plot.endPlot();
