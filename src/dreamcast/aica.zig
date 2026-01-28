@@ -77,12 +77,18 @@ pub const Waveform = enum(u2) {
 };
 
 pub const LFOControl = packed struct(u32) {
-    amplitude_modulation_depth: u3, // (ALFOS)
-    amplitude_modulation_waveform: Waveform, // (ALFOWS)
-    pitch_modulation_depth: u3, // (PLFOS)
-    pitch_modulation_waveform: Waveform, // (PLFOWS)
-    frequency: u5, // (LFOF)
-    reset: bool, // (LFORE) 1=on, 0=off If set, the LFO phase is reset at the start of EACH SAMPLE LOOP.
+    /// (ALFOS)
+    amplitude_modulation_depth: u3,
+    /// (ALFOWS)
+    amplitude_modulation_waveform: Waveform,
+    /// (PLFOS)
+    pitch_modulation_depth: u3,
+    /// (PLFOWS)
+    pitch_modulation_waveform: Waveform,
+    /// (LFOF)
+    frequency: u5,
+    /// (LFORE) 1=on, 0=off If set, the LFO phase is reset at the start of EACH SAMPLE LOOP.
+    reset: bool,
     _: u16,
 };
 
@@ -102,24 +108,30 @@ pub const DSPChannelSend = packed struct(u32) {
 };
 
 pub const DirectPanVolSend = packed struct(u32) {
-    pan: u5, // Direct send pan (DIPAN)
-    // 0x00 or 0x10 is center, 0x0F is full right, 0x1F is full left
-    // 0x00-0x0F: each step beyond 0x00 attenuates the left side by 3db
-    //            (right side remains at same volume)
-    // 0x10-0x1F: each step beyond 0x10 attenuates the right side by 3db
-    //            (left side remains at same volume)
+    /// Direct send pan (DIPAN)
+    ///   0x00 or 0x10 is center, 0x0F is full right, 0x1F is full left
+    ///   0x00-0x0F: each step beyond 0x00 attenuates the left side by 3db
+    ///              (right side remains at same volume)
+    ///   0x10-0x1F: each step beyond 0x10 attenuates the right side by 3db
+    ///              (left side remains at same volume)
+    pan: u5,
     _0: u3,
-    volume: u4, // Direct send volume (DISDL) - "Affects how much of this channel is being sent directly to the dry output.  0xF is full volume (no attenuation), every level beneath that adds 3dB, and 0x0 means no output.""
+    /// Direct send volume (DISDL) - "Affects how much of this channel is being sent directly to the dry output.  0xF is full volume (no attenuation), every level beneath that adds 3dB, and 0x0 means no output.""
+    volume: u4,
     _1: u4,
     _2: u16,
 };
 
 pub const EnvSettings = packed struct(u32) {
-    q: u5, // filter resonance value Q = (0.75*value)-3, from -3 to 20.25 db
-    lpoff: bool, // 1 = turn off lowpass filter.
-    voff: bool, // if this bit is set to 1, the constant attenuation, envelope, and LFO volumes will not take effect. however, the note will still end when the envelope level reaches zero in the release state.
+    /// filter resonance value Q = (0.75*value)-3, from -3 to 20.25 db
+    q: u5,
+    /// 1 = turn off lowpass filter.
+    lpoff: bool,
+    /// if this bit is set to 1, the constant attenuation, envelope, and LFO volumes will not take effect. however, the note will still end when the envelope level reaches zero in the release state.
+    voff: bool,
     _: u1, // unknown [SAVED]
-    constant_attenuation: u8, // (TL) this value *4 seems to be added to the envelope attenuation (as in, 0x00-0xFF here corresponds to 0x000-0x3FF when referring to the envelope attenuation)
+    /// (TL) this value *4 seems to be added to the envelope attenuation (as in, 0x00-0xFF here corresponds to 0x000-0x3FF when referring to the envelope attenuation)
+    constant_attenuation: u8,
     _r: u16,
 };
 
