@@ -59,7 +59,7 @@ pub const AmpEnv2 = packed struct(u32) {
     release_rate: u5,
     decay_level: u5,
     key_rate_scaling: u4,
-    link: u1, // LPSLNK - If this bit is set, then the envelope transitions to the decay state when the sample loop start address is exceeded.
+    link: bool, // LPSLNK - If this bit is set, then the envelope transitions to the decay state when the sample loop start address is exceeded.
     _: u17 = 0,
 };
 
@@ -342,7 +342,7 @@ const MIDIInput = packed struct(u32) {
 pub const ChannelInfoReq = packed struct(u32) {
     MIDI_output_buffer: u8,
     monitor_select: u6,
-    amplitude_or_filter_select: u1,
+    envelope_select: enum(u1) { Amplitude = 0, Filter = 1 },
     _: u17 = 0,
 };
 
@@ -705,12 +705,19 @@ pub const AICA = struct {
             .PlayStatus => {
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
                 var chan = &self.channel_states[req.monitor_select];
-                var status: PlayStatus = .{
-                    .env_level = @truncate(if (req.amplitude_or_filter_select == 0) chan.amp_env_level else chan.filter_env_level),
-                    .env_state = chan.amp_env_state,
-                    .loop_end_flag = chan.loop_end_flag,
+                var status: PlayStatus = switch (req.envelope_select) {
+                    .Amplitude => .{
+                        .env_level = @truncate(chan.amp_env_level),
+                        .env_state = chan.amp_env_state,
+                        .loop_end_flag = chan.loop_end_flag,
+                    },
+                    .Filter => .{
+                        .env_level = @truncate(chan.filter_env_level),
+                        .env_state = chan.filter_env_state,
+                        .loop_end_flag = chan.loop_end_flag,
+                    },
                 };
-                if (status.env_level >= 0x3C0) status.env_level = 0x1FFF;
+                if (req.envelope_select == .Amplitude and status.env_level >= 0x3C0) status.env_level = 0x1FFF;
                 if (T == u32 or high_byte)
                     chan.loop_end_flag = false; // Cleared on read.
                 if (!high_byte) {
@@ -1189,7 +1196,7 @@ pub const AICA = struct {
             base_play_position_inc <<= 1;
 
         if (state.play_position == registers.loop_start) {
-            if (registers.amp_env_2.link == 1 and state.amp_env_state == .Attack)
+            if (registers.amp_env_2.link and state.amp_env_state == .Attack)
                 state.amp_env_state = .Decay;
             if (registers.lfo_control.reset) {
                 state.lfo_phase = 0;

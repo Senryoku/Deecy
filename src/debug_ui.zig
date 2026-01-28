@@ -771,7 +771,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.text("CDDA Right: Level: {X}, Pan: {X}", .{ cdda_out_right.efsdl, cdda_out_right.efpan });
         zgui.text("Ring buffer address: 0x{X:0>8}", .{dc.aica.debug_read_reg(u32, .RingBufferAddress)});
         const channel_info_req = dc.aica.debug_read_reg(AICAModule.ChannelInfoReq, .ChannelInfoReq);
-        zgui.text("Channel Select: {d: >2} ({s})", .{ channel_info_req.monitor_select, if (channel_info_req.amplitude_or_filter_select == 1) "filter" else "amplitude" });
+        zgui.text("Channel Select: {d: >2} ({t})", .{ channel_info_req.monitor_select, channel_info_req.envelope_select });
         zgui.text("SCIEB: {X:0>8}, SCIPD: {X:0>8}", .{ dc.aica.debug_read_reg(u32, .SCIEB), dc.aica.debug_read_reg(u32, .SCIPD) });
         zgui.text("MCIEB: {X:0>8}, MCIPD: {X:0>8}", .{ dc.aica.debug_read_reg(u32, .MCIEB), dc.aica.debug_read_reg(u32, .MCIPD) });
         zgui.text("INTRequest: {X:0>8}", .{dc.aica.debug_read_reg(u32, .INTRequest)});
@@ -814,32 +814,33 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 zgui.pushIntId(@intCast(i));
                 defer zgui.popId();
                 if (zgui.collapsingHeader("Channel", .{ .default_open = (state.playing or channel.play_control.key_on_bit) and !dc.aica.channel_states[i].debug.mute })) {
-                    zgui.text("Channel {d}", .{i});
+                    zgui.alignTextToFramePadding();
+                    zgui.text("Channel {d} -", .{i});
+                    zgui.sameLine(.{});
                     _ = zgui.checkbox("Mute (Debug)", .{ .v = &dc.aica.channel_states[i].debug.mute });
                     const start_addr = channel.sample_address();
 
-                    inline_colored(channel.play_control.key_on_bit, "KeyOn: {s: >3}", .{if (channel.play_control.key_on_bit) "Yes" else "No"});
+                    colored(channel.play_control.key_on_bit, "KeyOn: {s: >3}", .{if (channel.play_control.key_on_bit) "Yes" else "No"});
                     zgui.sameLine(.{});
                     zgui.text("- {t} -", .{channel.play_control.sample_format});
                     zgui.sameLine(.{});
                     colored(channel.play_control.sample_loop, "Loop: {s: >3}", .{if (channel.play_control.sample_loop) "Yes" else "No"});
-                    zgui.text("Addr: {X: >6} - Loop: {X:0>4} - {X:0>4}", .{
-                        start_addr,
-                        channel.loop_start,
-                        channel.loop_end,
-                    });
-                    zgui.text("FNS: {X:0>3} - Oct: {X:0>2}", .{ channel.sample_pitch_rate.fns, channel.sample_pitch_rate.oct });
+                    zgui.text("Addr: {X: >6} - Loop: {X:0>4} - {X:0>4}, Link: {}", .{ start_addr, channel.loop_start, channel.loop_end, channel.amp_env_2.link });
+                    zgui.text("FNS: {X:0>3} - Oct: {X:0>2} - KRS: {X:0>1}", .{ channel.sample_pitch_rate.fns, channel.sample_pitch_rate.oct, channel.amp_env_2.key_rate_scaling });
                     zgui.text("DIPAN: {X:0>2} - DISDL: {X:0>1}", .{ channel.direct_pan_vol_send.pan, channel.direct_pan_vol_send.volume });
-                    zgui.text("DSP Vol: {X:0>1} - DSP Chan: {X:0>1}", .{ channel.dps_channel_send.level, channel.dps_channel_send.channel });
-                    inline_colored(state.playing, "{s: >7}", .{if (state.playing) "Playing" else "Stopped"});
-                    zgui.text("PlayPos: {X: >6} - ", .{state.play_position});
+                    zgui.textColored(if (channel.dps_channel_send.level > 0) White else Grey, "DSP Vol: {X:0>1} - DSP Chan: {X:0>1}", .{ channel.dps_channel_send.level, channel.dps_channel_send.channel });
+                    colored(state.playing, "{s: >7}", .{if (state.playing) "Playing" else "Stopped"});
                     zgui.sameLine(.{});
+                    zgui.text("Pos: {X: >6} -", .{state.play_position});
                     inline_colored(state.loop_end_flag, "LoopEnd: {s: >3}", .{if (state.loop_end_flag) "Yes" else "No"});
-                    zgui.text("AmpMod {X: >1} {t: >8} / PitchMod {X: >1} {t: >8} / Freq {X: >2} Reset {}", .{
-                        channel.lfo_control.amplitude_modulation_depth,
-                        channel.lfo_control.amplitude_modulation_waveform,
-                        channel.lfo_control.pitch_modulation_depth,
-                        channel.lfo_control.pitch_modulation_waveform,
+
+                    zgui.textColored(if (channel.lfo_control.amplitude_modulation_depth > 0) White else Grey, "AmpMod {X: >1} {t: >8}", .{ channel.lfo_control.amplitude_modulation_depth, channel.lfo_control.amplitude_modulation_waveform });
+                    zgui.sameLine(.{});
+                    zgui.textUnformatted(" / ");
+                    zgui.sameLine(.{});
+                    zgui.textColored(if (channel.lfo_control.pitch_modulation_depth > 0) White else Grey, "PitchMod {X: >1} {t: >8}", .{ channel.lfo_control.pitch_modulation_depth, channel.lfo_control.pitch_modulation_waveform });
+                    zgui.sameLine(.{});
+                    zgui.text("(Freq={X: >2} Reset:{})", .{
                         channel.lfo_control.frequency,
                         channel.lfo_control.reset,
                     });
@@ -914,20 +915,6 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         }
     }
     zgui.end();
-
-    if (false) {
-        if (zgui.begin("Scheduler", .{})) {
-            const cycle: i64 = @intCast(d.dc._global_cycles);
-            zgui.text("Global Cycle: {d}", .{cycle});
-            // NOTE: This is not thread safe, and I don't want to introduce synchronization for a debugging view.
-            //       Disabled by default, use it at your own risk :)
-            var it = d.dc.scheduled_events.iterator();
-            while (it.next()) |event| {
-                zgui.text("[{d: >10}] {?} {f}", .{ @as(i64, @intCast(event.trigger_cycle)) - cycle, event.interrupt, event.event });
-            }
-        }
-        zgui.end();
-    }
 
     if (zgui.begin("AICA - DSP", .{})) {
         const time = std.time.milliTimestamp();
