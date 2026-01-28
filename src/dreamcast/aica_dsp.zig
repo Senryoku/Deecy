@@ -151,6 +151,7 @@ fn MDEC_CT(self: *@This()) *u16 {
 //   Added a warning in read/write functions just in case.
 const MDEC_CT_base = 0x1600 / 4;
 const TEMP_MEM_base = 0x1604 / 4;
+const TEMP_SLOTS = 4;
 
 /// 0x3000-0x31FF: Coefficients (COEF), 128 registers, 13 bits each
 ///               0x3000: bits 15-3 = COEF(0)
@@ -568,7 +569,7 @@ pub fn compile(self: *@This()) !void {
             if (instruction.MRD) {
                 try b.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(self._memory.ptr) });
                 try b.mov(EAX, .{ .mem = .{ .base = .rax, .index = addr.reg, .size = 16 } });
-                try b.mov(.{ .mem = .{ .base = RegistersBase, .displacement = @intCast(4 * (TEMP_MEM_base + (step % 4))), .size = 16 } }, EAX);
+                try b.mov(.{ .mem = .{ .base = RegistersBase, .displacement = @intCast(4 * (TEMP_MEM_base + (step % TEMP_SLOTS))), .size = 16 } }, EAX);
             }
 
             if (instruction.MWT) {
@@ -634,6 +635,8 @@ pub fn generate_sample_jit(self: *@This()) !void {
 
     self.clear_efreg();
 
+    for (0..4) |i| self._regs[TEMP_MEM_base + i] = 0;
+
     if (self._jit_buffer) |buffer|
         @as(*const fn ([*]u32) callconv(Architecture.CallingConvention) void, @ptrCast(&buffer[0]))(self._regs.ptr);
 
@@ -651,7 +654,7 @@ pub fn generate_sample(self: *@This()) void {
     // 12-bit whole address
     var ADRS_REG: u12 = 0;
 
-    var temp_word: [4]u16 = @splat(0);
+    var temp_word: [TEMP_SLOTS]u16 = @splat(0);
 
     self.clear_efreg();
 
