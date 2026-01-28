@@ -596,10 +596,10 @@ pub fn compile(self: *@This()) !void {
         if (instruction.ADRL) {
             if (instruction.SHFT == 3) {
                 try b.mov(ADRS_REG, INPUTS);
-                try b.sar(FRC_REG, 16);
+                try b.sar(ADRS_REG, 16);
             } else {
                 try b.mov(ADRS_REG, SHIFTED);
-                try b.sar(FRC_REG, 12);
+                try b.sar(ADRS_REG, 12);
             }
             try b.append(.{ .And = .{ .dst = ADRS_REG, .src = .{ .imm32 = 0xFFF } } });
         }
