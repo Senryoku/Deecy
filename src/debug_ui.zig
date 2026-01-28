@@ -33,7 +33,10 @@ fn DebugBuffer(comptime SampleType: type) type {
         xv: std.ArrayList(SampleType) = .empty,
         yv: std.ArrayList(SampleType) = .empty,
         pub fn add(self: *@This(), allocator: std.mem.Allocator, time: u64, sample: SampleType) !void {
-            if (time - self.start_time > 10_000) {
+            if (time < self.start_time) {
+                self.xv.clearRetainingCapacity();
+                self.yv.clearRetainingCapacity();
+            } else if (time - self.start_time > 10_000) {
                 self.xv.clearRetainingCapacity();
                 self.yv.clearRetainingCapacity();
             }

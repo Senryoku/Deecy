@@ -145,7 +145,7 @@ fn MDEC_CT(self: *@This()) *u16 {
     return @ptrCast(&self._regs[MDEC_CT_base]);
 }
 
-// There aren't actually memory mapped (that I know of), but we have the
+// These aren't actually memory mapped (that I know of), but we have the
 // memory, might as well use it. It also simplifies the JIT a bit: we
 // can use the register array as base for all memory operations.
 //   Added a warning in read/write functions just in case.
