@@ -387,7 +387,7 @@ pub const AICAChannelState = struct {
     } = .{},
 
     pub fn key_on(self: *AICAChannelState, registers: *const AICAChannel) void {
-        if (self.amp_env_state != .Release) return;
+        if (self.amp_env_state != .Release and self.amp_env_level < 0x3BF) return;
         self.playing = true;
         self.loop_end_flag = false;
         self.play_position = 0; // Looping channels also start at 0
@@ -409,7 +409,7 @@ pub const AICAChannelState = struct {
         self.amp_env_state = .Release;
         self.amp_env_level = 0x3FF;
         self.filter_env_state = .Release;
-        self.filter_env_level = 0x3FF;
+        self.filter_env_level = 0x1FFF;
     }
 
     pub fn compute_effective_rate(registers: *const AICAChannel, rate: u32) u32 {
@@ -1258,23 +1258,20 @@ pub const AICA = struct {
                     .Attack => registers.flv1 & 0x1FFF,
                     .Decay => registers.flv2 & 0x1FFF,
                     .Sustain => registers.flv3 & 0x1FFF,
-                    else => 0,
+                    .Release => registers.flv4 & 0x1FFF,
                 });
                 if (state.filter_env_level < target) {
                     state.filter_env_level +|= decay;
                     state.filter_env_level = @min(state.filter_env_level, target);
                 } else if (state.filter_env_level > target) {
-                    if (state.filter_env_level > decay) {
-                        state.filter_env_level -|= decay;
-                    } else {
-                        state.filter_env_level = 0;
-                    }
+                    state.filter_env_level -|= decay;
                     state.filter_env_level = @max(state.filter_env_level, target);
-                } else {
+                }
+                if (state.filter_env_level == target) {
                     switch (state.filter_env_state) {
                         .Attack => state.filter_env_state = .Decay,
                         .Decay => state.filter_env_state = .Sustain,
-                        .Sustain => state.filter_env_state = .Release,
+                        .Sustain => state.filter_env_state = .Release, // FIXME: Wait for key off?
                         .Release => {},
                     }
                 }
