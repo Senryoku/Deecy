@@ -555,7 +555,7 @@ pub const AICA = struct {
 
     _allocator: std.mem.Allocator,
 
-    // NOTE: Call setup_arm after!
+    /// NOTE: Call setup_arm after!
     pub fn init(allocator: std.mem.Allocator, memory: []u8) !AICA {
         var r = AICA{
             .regs = try allocator.alloc(u32, 0x8000 / 4),

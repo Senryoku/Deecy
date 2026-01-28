@@ -956,6 +956,7 @@ pub fn draw(self: *@This()) !void {
                         if (was_running) d.pause();
                         defer if (was_running) d.start();
                         d.dc.aica.dsp_emulation = dsp_emulation;
+                        d.config.dsp_emulation = dsp_emulation;
                     }
                     zgui.endTabItem();
                 }

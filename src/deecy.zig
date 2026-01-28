@@ -503,6 +503,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
             return err;
         };
         self.dc.cable_type = config.video_cable.to_dreamcast();
+        self.dc.aica.dsp_emulation = config.dsp_emulation;
     }
 
     self.renderer = try .create(self._allocator, self.gctx, &self.gctx_queue_mutex, &self.config.renderer);
