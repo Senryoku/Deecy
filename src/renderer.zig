@@ -3594,8 +3594,8 @@ pub const Renderer = struct {
                     // TODO: How is the minimum value of the global_clip used exactly? (Find a game where it isn't just [0, 0].)
                     if (self.global_clip.x.min != 0 or self.global_clip.y.min != 0)
                         log.warn("Render to texture with unusual global_clip:  [{d},{d}] to [{d},{d}]", .{ self.global_clip.x.min, self.global_clip.y.min, self.global_clip.x.max, self.global_clip.y.max });
-                    const u_size: u3 = @intCast(std.math.log2(try std.math.ceilPowerOfTwo(u32, self.global_clip.x.max >> 3)));
-                    const v_size: u3 = @intCast(std.math.log2(try std.math.ceilPowerOfTwo(u32, self.global_clip.y.max >> 3)));
+                    const u_size: u3 = @intCast(std.math.log2(try std.math.ceilPowerOfTwo(u32, @max(1, self.global_clip.x.max >> 3))));
+                    const v_size: u3 = @intCast(std.math.log2(try std.math.ceilPowerOfTwo(u32, @max(1, self.global_clip.y.max >> 3))));
                     const size_index: u3 = @max(u_size, v_size);
                     const interlaced = self.write_back_parameters.scaler_ctl.interlace;
                     const field = if (interlaced) self.write_back_parameters.scaler_ctl.field_select else 0;
