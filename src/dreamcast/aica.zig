@@ -184,8 +184,22 @@ pub const AICAChannel = packed struct(u576) {
     lpf_rates_1: LPFRates1, //                0x40                                                                Also named lpf7
     lpf_rates_2: LPFRates2, //                0x44                                                                Also named lpf8
 
-    pub fn sample_address(self: *const AICAChannel) u32 {
+    pub fn sample_address(self: *const @This()) u32 {
         return (@as(u32, self.play_control.start_address) << 16) | (self.sample_address_low & 0xFFFF);
+    }
+
+    pub fn compute_effective_rate(self: *const @This(), rate: u32) u32 {
+        var effective_rate: i32 = 2 * @as(i32, @intCast(rate));
+        if (self.amp_env_2.key_rate_scaling < 0xF) {
+            effective_rate += 2 * self.amp_env_2.key_rate_scaling;
+
+            // NOTE: In Neill Corlett's notes, this is also multiplied by 2, but not in Highly_Theoretical sources.
+            const oct: i32 = @intCast(@as(i4, @bitCast(self.sample_pitch_rate.oct)));
+            effective_rate += 2 * oct;
+
+            effective_rate += ((self.sample_pitch_rate.fns >> 9) & 1);
+        }
+        return @max(0, @min(0x3C, effective_rate));
     }
 };
 
@@ -407,20 +421,6 @@ pub const AICAChannelState = struct {
     pub fn key_off(self: *AICAChannelState) void {
         self.amp_env_state = .Release;
         self.filter_env_state = .Release;
-    }
-
-    pub fn compute_effective_rate(registers: *const AICAChannel, rate: u32) u32 {
-        var effective_rate: i32 = 2 * @as(i32, @intCast(rate));
-        if (registers.amp_env_2.key_rate_scaling < 0xF) {
-            effective_rate += 2 * registers.amp_env_2.key_rate_scaling;
-
-            // NOTE: In Neill Corlett's notes, this is also multiplied by 2, but not in Highly_Theoretical sources.
-            const oct: i32 = @intCast(@as(i4, @bitCast(registers.sample_pitch_rate.oct)));
-            effective_rate += 2 * oct;
-
-            effective_rate += ((registers.sample_pitch_rate.fns >> 9) & 1);
-        }
-        return @max(0, @min(0x3C, effective_rate));
     }
 
     // Returns true if the channel should advance in the enveloppe calculation for the current sample.
@@ -1056,33 +1056,19 @@ pub const AICA = struct {
     }
 
     pub fn generate_sample(self: *AICA, dc: *Dreamcast) void {
-        @memset(self.sample_buffer[self.sample_write_offset..@min(self.sample_write_offset + 2, self.sample_buffer.len)], 0);
-        if (self.sample_write_offset + 2 > self.sample_buffer.len)
-            @memset(self.sample_buffer[0 .. (self.sample_write_offset + 2) % self.sample_buffer.len], 0);
-
         self.get_reg(InterruptBits, .SCIPD).one_sample_interval = 1;
 
-        // Master Volume attenuation: -3dB (halfs the volume) for each attenuation level
-        // FIXME: Really not sure I'm handling this correctly!
-        //   Register Value | Volume
-        // -----------------|----------
-        //        0         | -MAXdB
-        //        1         |  -42dB
-        //        2         |  -39dB
-        //        ...       |
-        //        0xD       |   -6dB
-        //        0xE       |   -3dB
-        //        0xF       |    0dB
+        const offset = self.sample_write_offset;
+        std.debug.assert(offset % 2 == 0);
+        std.debug.assert(offset + 1 < self.sample_buffer.len);
+
+        @memset(self.sample_buffer[offset .. offset + 2], 0);
 
         for (0..64) |i| {
             self.update_channel(@intCast(i));
         }
 
         const cdda_samples = dc.gdrom.get_cdda_samples();
-
-        const offset = self.sample_write_offset;
-        std.debug.assert(offset % 2 == 0);
-        std.debug.assert(offset + 1 < self.sample_buffer.len);
 
         if (self.dsp_emulation != .Bypass) {
             self.dsp.set_exts(0, @bitCast(cdda_samples[0]));
@@ -1119,13 +1105,24 @@ pub const AICA = struct {
             self.sample_buffer[offset + 1] +|= sample.right;
         }
 
+        // Master Volume attenuation: -3dB (halfs the volume) for each attenuation level
+        // FIXME: Really not sure I'm handling this correctly!
+        //   Register Value | Volume
+        // -----------------|----------
+        //        0         | -MAXdB
+        //        1         |  -42dB
+        //        2         |  -39dB
+        //        ...       |
+        //        0xD       |   -6dB
+        //        0xE       |   -3dB
+        //        0xF       |    0dB
         const attenuation: u4 = 0xF - self.get_reg(u4, .MasterVolume).*;
         if (attenuation == 0xF) {
             self.sample_buffer[offset + 0] = 0;
             self.sample_buffer[offset + 1] = 0;
         } else {
-            self.sample_buffer[offset + 0] = self.sample_buffer[offset + 0] >> attenuation;
-            self.sample_buffer[offset + 1] = self.sample_buffer[offset + 1] >> attenuation;
+            self.sample_buffer[offset + 0] >>= attenuation;
+            self.sample_buffer[offset + 1] >>= attenuation;
         }
 
         self.sample_write_offset = (self.sample_write_offset + 2) % self.sample_buffer.len;
@@ -1232,8 +1229,7 @@ pub const AICA = struct {
 
         // Advance amplitude envelope
         {
-            const effective_rate = AICAChannelState.compute_effective_rate(
-                registers,
+            const effective_rate = registers.compute_effective_rate(
                 switch (state.amp_env_state) {
                     .Attack => registers.amp_env_1.attack_rate,
                     .Decay => registers.amp_env_1.decay_rate,
@@ -1271,8 +1267,7 @@ pub const AICA = struct {
         }
         // Advance low pass filter envelope
         {
-            const effective_rate = AICAChannelState.compute_effective_rate(
-                registers,
+            const effective_rate = registers.compute_effective_rate(
                 switch (state.filter_env_state) {
                     .Attack => registers.lpf_rates_1.lpf_attack_rate,
                     .Decay => registers.lpf_rates_1.lpf_decay_rate,
@@ -1314,7 +1309,7 @@ pub const AICA = struct {
         // Apply resonant low pass filter
         if (!registers.env_settings.lpoff) {
             // FIXME: This was barely tested.
-            const f: i32 = (((state.filter_env_level & 0xFF) | 0x100) << 4) >> @intCast((state.filter_env_level >> 8) ^ 0x1F);
+            const f: i32 = (((state.filter_env_level & 0xFF) | 0x100) << 4) >> @truncate(@as(u5, @truncate(state.filter_env_level >> 8)) ^ 0x1F);
             const q = 0x0E00 + 0x80 * @as(i32, registers.env_settings.q);
             sample = f * sample + (0x2000 - f + q) * self.low_pass_filter_buffer[channel_number][0] - q * self.low_pass_filter_buffer[channel_number][1];
             sample >>= 13;
@@ -1348,7 +1343,7 @@ pub const AICA = struct {
                 sample = 0;
             } else {
                 // (every 0x40 on the envelope attenuation level is 3dB)
-                sample = sample >> @truncate(attenuation >> 6);
+                sample >>= @truncate(attenuation >> 6);
             }
         }
 

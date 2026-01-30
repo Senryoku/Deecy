@@ -817,6 +817,14 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             if (self.show_disabled_channels or state.playing or channel.play_control.key_on_bit) {
                 zgui.pushIntId(@intCast(i));
                 defer zgui.popId();
+                const plot_flags = zgui.plot.Flags{
+                    .no_title = true,
+                    .no_legend = true,
+                    .no_menus = true,
+                    .no_box_select = true,
+                    .no_mouse_text = true,
+                    .no_inputs = true,
+                };
                 if (zgui.collapsingHeader("Channel", .{ .default_open = (state.playing or channel.play_control.key_on_bit) and !dc.aica.channel_states[i].debug.mute })) {
                     zgui.alignTextToFramePadding();
                     zgui.text("Channel {d} -", .{i});
@@ -851,7 +859,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     var loop_size = if (channel.play_control.sample_loop and channel.loop_end > channel.loop_start) channel.loop_end - channel.loop_start else channel.loop_end;
                     if (loop_size == 0) loop_size = 2048;
                     if (channel.play_control.sample_format == .i16) {
-                        if (zgui.plot.beginPlot("Samples", .{ .flags = zgui.plot.Flags.canvas_only })) {
+                        if (zgui.plot.beginPlot("Samples", .{ .flags = plot_flags })) {
                             zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = @floatFromInt(loop_size / 2) });
                             zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) });
                             zgui.plot.setupFinish();
@@ -860,7 +868,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             zgui.plot.endPlot();
                         }
                     } else if (channel.play_control.sample_format == .i8) {
-                        if (zgui.plot.beginPlot("Samples", .{ .flags = zgui.plot.Flags.canvas_only })) {
+                        if (zgui.plot.beginPlot("Samples", .{ .flags = plot_flags })) {
                             zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = @floatFromInt(loop_size) });
                             zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i8), .max = std.math.maxInt(i8) });
                             zgui.plot.setupFinish();
@@ -870,7 +878,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         }
                     } else {
                         try self.audio_channels[i].samples.add(self._allocator, dc_time, state.curr_sample);
-                        if (zgui.plot.beginPlot("Samples", .{ .flags = zgui.plot.Flags.canvas_only })) {
+                        if (zgui.plot.beginPlot("Samples", .{ .flags = plot_flags })) {
                             zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
                             zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) });
                             zgui.plot.setupFinish();
@@ -878,7 +886,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             zgui.plot.endPlot();
                         }
                     }
-                    const effective_rate = AICAModule.AICAChannelState.compute_effective_rate(channel, switch (state.amp_env_state) {
+                    const effective_rate = channel.compute_effective_rate(switch (state.amp_env_state) {
                         .Attack => channel.amp_env_1.attack_rate,
                         .Decay => channel.amp_env_1.decay_rate,
                         .Sustain => channel.amp_env_1.sustain_rate,
@@ -894,7 +902,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         channel.amp_env_2.release_rate,
                     });
                     try self.audio_channels[i].amplitude_envelope.add(self._allocator, dc_time, state.amp_env_level);
-                    if (zgui.plot.beginPlot("Amplitude Envelope", .{ .flags = zgui.plot.Flags.canvas_only, .h = 128.0 })) {
+                    if (zgui.plot.beginPlot("Amplitude Envelope", .{ .flags = plot_flags, .h = 128.0 })) {
                         zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
                         zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 0x400 });
                         zgui.plot.setupFinish();
@@ -907,7 +915,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     zgui.text("{s: >7} - level: {X: >4}", .{ @tagName(state.filter_env_state), state.filter_env_level });
                     zgui.text("Steps: {X: >4} - {X: >4} - {X: >4} - {X: >4} - {X: >4}", .{ channel.flv0, channel.flv1, channel.flv2, channel.flv3, channel.flv4 });
                     try self.audio_channels[i].filter_envelope.add(self._allocator, dc_time, state.filter_env_level);
-                    if (zgui.plot.beginPlot("Filter Envelope", .{ .flags = zgui.plot.Flags.canvas_only, .h = 128.0 })) {
+                    if (zgui.plot.beginPlot("Filter Envelope", .{ .flags = plot_flags, .h = 128.0 })) {
                         zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
                         zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 0x1FFF });
                         zgui.plot.setupFinish();
