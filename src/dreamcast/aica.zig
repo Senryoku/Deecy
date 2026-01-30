@@ -405,11 +405,8 @@ pub const AICAChannelState = struct {
     }
 
     pub fn key_off(self: *AICAChannelState) void {
-        self.playing = false;
         self.amp_env_state = .Release;
-        self.amp_env_level = 0x3FF;
         self.filter_env_state = .Release;
-        self.filter_env_level = 0x1FFF;
     }
 
     pub fn compute_effective_rate(registers: *const AICAChannel, rate: u32) u32 {
