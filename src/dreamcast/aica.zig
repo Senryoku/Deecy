@@ -498,6 +498,20 @@ const EnvelopeDecayValue = [_][4]u4{
     .{ 8, 8, 8, 8 },
 };
 
+const LFOPhaseInc = t: {
+    const LFOPhaseSpeed = [_]u32{
+        0x3FC00, 0x37C00, 0x2FC00, 0x27C00, 0x1FC00, 0x1BC00, 0x17C00, 0x13C00,
+        0x0FC00, 0x0BC00, 0x0DC00, 0x09C00, 0x07C00, 0x06C00, 0x05C00, 0x04C00,
+        0x03C00, 0x03400, 0x02C00, 0x02400, 0x01C00, 0x01800, 0x01400, 0x01000,
+        0x00C00, 0x00A00, 0x00800, 0x00600, 0x00400, 0x00300, 0x00200, 0x00100,
+    };
+    var table: [LFOPhaseSpeed.len]u32 = undefined;
+    for (LFOPhaseSpeed, 0..) |s, idx| {
+        table[idx] = @intCast(@as(u64, 0x100000000) / s);
+    }
+    break :t table;
+};
+
 fn apply_pan_attenuation(sample: i32, level: u4, pan: u5) struct { left: i32, right: i32 } {
     const att = 0xF - level;
     var left_att: u8 = att;
@@ -547,6 +561,8 @@ pub const AICA = struct {
     wave_memory: []u8 align(64), // Not owned.
 
     channel_states: []AICAChannelState,
+    /// Last two output samples for low-pass filtering. Not serialized.
+    low_pass_filter_buffer: [][2]i32,
 
     sample_buffer: []i32,
     sample_read_offset: usize = 0,
@@ -570,6 +586,7 @@ pub const AICA = struct {
             .regs = try allocator.alloc(u32, 0x8000 / 4),
             .wave_memory = memory,
             .channel_states = try allocator.alloc(AICAChannelState, 64),
+            .low_pass_filter_buffer = try allocator.alloc([2]i32, 64),
             .sample_buffer = try allocator.alloc(i32, 2048),
             ._allocator = allocator,
         };
@@ -603,6 +620,7 @@ pub const AICA = struct {
     pub fn deinit(self: *AICA) void {
         self.dsp.deinit();
         self.arm_jit.deinit();
+        self._allocator.free(self.low_pass_filter_buffer);
         self._allocator.free(self.channel_states);
         self._allocator.free(self.sample_buffer);
         self._allocator.free(self.regs);
@@ -613,6 +631,7 @@ pub const AICA = struct {
         @memset(self.wave_memory, 0);
 
         @memset(self.channel_states, .{});
+        @memset(self.low_pass_filter_buffer, .{ 0, 0 });
 
         @memset(self.sample_buffer, 0);
         self.sample_read_offset = 0;
@@ -1289,11 +1308,58 @@ pub const AICA = struct {
         }
 
         // Interpolate samples
-        const f: i32 = @intCast((state.fractional_play_position >> 4) & 0x3FFF);
-        const sample: i32 = (state.curr_sample * f) + (state.prev_sample * (0x4000 - f)) >> 14;
+        const frac: i32 = @intCast((state.fractional_play_position >> 4) & 0x3FFF);
+        var sample: i32 = (state.curr_sample * frac) + (state.prev_sample * (0x4000 - frac)) >> 14;
+
+        // Apply resonant low pass filter
+        if (!registers.env_settings.lpoff) {
+            // FIXME: This was barely tested.
+            const f: i32 = (((state.filter_env_level & 0xFF) | 0x100) << 4) >> @intCast((state.filter_env_level >> 8) ^ 0x1F);
+            const q = 0x0E00 + 0x80 * @as(i32, registers.env_settings.q);
+            sample = f * sample + (0x2000 - f + q) * self.low_pass_filter_buffer[channel_number][0] - q * self.low_pass_filter_buffer[channel_number][1];
+            sample >>= 13;
+            sample = std.math.clamp(sample, std.math.minInt(i16), std.math.maxInt(i16));
+            self.low_pass_filter_buffer[channel_number][1] = self.low_pass_filter_buffer[channel_number][0];
+            self.low_pass_filter_buffer[channel_number][0] = sample;
+        }
+
+        state.lfo_phase +%= LFOPhaseInc[registers.lfo_control.frequency];
+
+        // Apply amplitude envelope
+        if (!registers.env_settings.voff) {
+            var attenuation: u32 = registers.env_settings.constant_attenuation;
+            attenuation <<= 2;
+            attenuation +|= state.amp_env_level;
+            if (registers.lfo_control.amplitude_modulation_depth != 0) {
+                // Low Frequency Oscillator amplitude modulation
+                // FIXME: This wasn't tested at all.
+                const att: u8 = @truncate(switch (registers.lfo_control.amplitude_modulation_waveform) {
+                    .Sawtooth => state.lfo_phase >> 24,
+                    .Square => (state.lfo_phase >> 31) * 0xFF,
+                    .Triangle => if (state.lfo_phase & 0x80000000 == 0)
+                        ((state.lfo_phase >> 23) & 0xFF)
+                    else
+                        (0xFF - ((state.lfo_phase >> 23) & 0xFF)),
+                    .Noise => 0, // TODO
+                });
+                attenuation +|= @as(u32, 2) * (att >> (7 - registers.lfo_control.amplitude_modulation_depth));
+            }
+            if (attenuation >= 0x3C0) {
+                sample = 0;
+            } else {
+                // (every 0x40 on the envelope attenuation level is 3dB)
+                sample = sample >> @truncate(attenuation >> 6);
+            }
+        }
+
+        if (registers.lfo_control.pitch_modulation_depth > 0) {
+            // TODO: Low Frequency Oscillator (LFO) pitch modulation
+        }
+
         if (!state.debug.mute) {
             const disdl = registers.direct_pan_vol_send.volume; // Attenuation level when output to the DAC. I guess that means when bypassing the DSP?
             const dipan = if (self.get_reg(MasterVolume, .MasterVolume).mono) 0 else registers.direct_pan_vol_send.pan;
+
             // Direct send to the DAC
             if (disdl != 0) { // 0 means full attenuation, not send.
                 const s = apply_pan_attenuation(sample, disdl, dipan);
@@ -1336,57 +1402,6 @@ pub const AICA = struct {
                     break :adpcm state.compute_adpcm(@truncate(s));
                 },
             };
-
-            if (!registers.env_settings.lpoff) {
-                // TODO! Resonant Low Pass Filter
-            }
-
-            const lfo_phase_inc = t: {
-                const lfo_phase_speed = [_]u32{
-                    0x3FC00, 0x37C00, 0x2FC00, 0x27C00, 0x1FC00, 0x1BC00, 0x17C00, 0x13C00,
-                    0x0FC00, 0x0BC00, 0x0DC00, 0x09C00, 0x07C00, 0x06C00, 0x05C00, 0x04C00,
-                    0x03C00, 0x03400, 0x02C00, 0x02400, 0x01C00, 0x01800, 0x01400, 0x01000,
-                    0x00C00, 0x00A00, 0x00800, 0x00600, 0x00400, 0x00300, 0x00200, 0x00100,
-                };
-                var table: [lfo_phase_speed.len]u32 = undefined;
-                for (lfo_phase_speed, 0..) |s, idx| {
-                    table[idx] = @intCast(@as(u64, 0x100000000) / s);
-                }
-                break :t table;
-            };
-
-            state.lfo_phase +%= lfo_phase_inc[registers.lfo_control.frequency];
-
-            // Apply amplitude envelope
-            if (!registers.env_settings.voff) {
-                var attenuation: u32 = registers.env_settings.constant_attenuation;
-                attenuation <<= 2;
-                attenuation +|= state.amp_env_level;
-                if (registers.lfo_control.amplitude_modulation_depth != 0) {
-                    // Low Frequency Oscillator amplitude modulation
-                    // FIXME: This wasn't tested at all.
-                    const att: u8 = @truncate(switch (registers.lfo_control.amplitude_modulation_waveform) {
-                        .Sawtooth => state.lfo_phase >> 24,
-                        .Square => (state.lfo_phase >> 31) * 0xFF,
-                        .Triangle => if (state.lfo_phase & 0x80000000 == 0)
-                            ((state.lfo_phase >> 23) & 0xFF)
-                        else
-                            (0xFF - ((state.lfo_phase >> 23) & 0xFF)),
-                        .Noise => 0, // TODO
-                    });
-                    attenuation +|= @as(u32, 2) * (att >> (7 - registers.lfo_control.amplitude_modulation_depth));
-                }
-                if (attenuation >= 0x3C0) {
-                    state.curr_sample = 0;
-                } else {
-                    // (every 0x40 on the envelope attenuation level is 3dB)
-                    state.curr_sample = state.curr_sample >> @truncate(attenuation >> 6);
-                }
-            }
-
-            if (registers.lfo_control.pitch_modulation_depth > 0) {
-                // TODO: Low Frequency Oscillator (LFO) pitch modulation
-            }
 
             state.play_position +%= 1;
 
@@ -1565,5 +1580,7 @@ pub const AICA = struct {
         } else {
             try reader.readSliceAll(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..self.sample_write_offset]));
         }
+
+        @memset(self.low_pass_filter_buffer, .{ 0, 0 });
     }
 };
