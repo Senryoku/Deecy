@@ -1241,7 +1241,7 @@ pub const AICA = struct {
                     .Release => registers.amp_env_2.release_rate,
                 },
             );
-            if (AICAChannelState.env_should_advance(effective_rate, @intCast(i))) {
+            if (AICAChannelState.env_should_advance(effective_rate, i)) {
                 const idx = if (effective_rate < 0x30) 0 else effective_rate - 0x30;
                 switch (state.amp_env_state) {
                     .Attack => {
@@ -1280,7 +1280,7 @@ pub const AICA = struct {
                     .Release => registers.lpf_rates_2.lpf_release_rate,
                 },
             );
-            if (AICAChannelState.env_should_advance(effective_rate, @intCast(i))) {
+            if (AICAChannelState.env_should_advance(effective_rate, i)) {
                 const idx = if (effective_rate < 0x30) 0 else effective_rate - 0x30;
                 const decay = EnvelopeDecayValue[idx][i % 4];
                 const target: u16 = @truncate(switch (state.filter_env_state) {
