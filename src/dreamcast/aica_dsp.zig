@@ -604,8 +604,8 @@ pub fn compile(self: *@This()) !void {
         }
 
         if (instruction.IWT) {
-            const TEMP_MEM_op: Architecture.Operand = .{ .mem = .{ .base = RegistersBase, .displacement = @intCast(4 * (TEMP_MEM_base + ((step - 2) % 4))), .size = 16 } };
-            if (self.read_mpro(step - 2).NOFL) {
+            const TEMP_MEM_op: Architecture.Operand = .{ .mem = .{ .base = RegistersBase, .displacement = @intCast(4 * (TEMP_MEM_base + ((@max(2, step) - 2) % 4))), .size = 16 } };
+            if (self.read_mpro(@max(2, step) - 2).NOFL) {
                 try b.mov(EAX, TEMP_MEM_op);
                 try b.shl(EAX, .{ .imm8 = 8 });
             } else {

@@ -1,5 +1,6 @@
 const std = @import("std");
 const termcolor = @import("termcolor");
+const Once = @import("helpers").Once;
 
 const aica_log = std.log.scoped(.aica);
 
@@ -91,6 +92,18 @@ pub const LFOControl = packed struct(u32) {
     reset: bool,
     _: u16,
 };
+
+pub fn lfo_wave(form: Waveform, phase: u32) u8 {
+    return @truncate(switch (form) {
+        .Sawtooth => phase >> 24,
+        .Square => (phase >> 31) * 0xFF,
+        .Triangle => if (phase & 0x80000000 == 0)
+            ((phase >> 23) & 0xFF)
+        else
+            (0xFF - ((phase >> 23) & 0xFF)),
+        .Noise => 0, // TODO
+    });
+}
 
 pub const DSPChannelSend = packed struct(u32) {
     /// DSP send channel, 0x0-0xF
@@ -369,7 +382,7 @@ pub const TimerControl = packed struct(u32) {
 const AICARegisterStart = 0x00700000;
 
 pub const AICAChannelState = struct {
-    playing: bool = false,
+    playing: bool = false, // NOTE: This doesn't have any equivalent in the actual chip AFAIK and should probably be removed.
 
     loop_end_flag: bool = false,
     play_position: u16 = 0,
@@ -709,14 +722,14 @@ pub const AICA = struct {
         switch (@as(AICARegister, @enumFromInt(reg_addr))) {
             //.MasterVolume => return if (!high_byte) 0x10 else 0,
             .MIDIInput => {
-                var val = self.get_reg(MIDIInput, .MIDIInput);
-                val.mibuf = 0;
-                val.miemp = 1;
-                val.miful = 0;
-                val.miovf = 0;
-                val.moemp = 1;
-                val.moful = 0;
-                val._ = 0;
+                self.get_reg(MIDIInput, .MIDIInput).* = .{
+                    .mibuf = 0,
+                    .miemp = 1,
+                    .miful = 0,
+                    .miovf = 0,
+                    .moemp = 1,
+                    .moful = 0,
+                };
             },
             .PlayStatus => {
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
@@ -1196,23 +1209,12 @@ pub const AICA = struct {
         if (!state.playing) return;
         if (state.amp_env_level >= 0x3FF) {
             state.amp_env_level = 0x3FF;
+            state.playing = false;
             return;
         }
 
         const i = self._samples_counter;
         const registers = self.get_channel_registers(channel_number);
-
-        const sample_length = 0x40000;
-        // "For FNS = 0 (and OCT = 0), the tone matches the sampling source."
-        var base_play_position_inc: u32 = sample_length | (@as(u32, registers.sample_pitch_rate.fns) << 8);
-        if ((registers.sample_pitch_rate.oct & 8) == 0) {
-            base_play_position_inc <<= registers.sample_pitch_rate.oct;
-        } else {
-            base_play_position_inc >>= @as(u5, 16) - registers.sample_pitch_rate.oct;
-        }
-        // "Values in parentheses are +1 octave for ADPCM" (p.25)
-        if (registers.play_control.sample_format == .ADPCM and registers.sample_pitch_rate.oct >= 0x2 and registers.sample_pitch_rate.oct <= 0x7)
-            base_play_position_inc <<= 1;
 
         if (state.play_position == registers.loop_start) {
             if (registers.amp_env_2.link and state.amp_env_state == .Attack)
@@ -1327,16 +1329,9 @@ pub const AICA = struct {
             attenuation +|= state.amp_env_level;
             if (registers.lfo_control.amplitude_modulation_depth != 0) {
                 // Low Frequency Oscillator amplitude modulation
-                // FIXME: This wasn't tested at all.
-                const att: u8 = @truncate(switch (registers.lfo_control.amplitude_modulation_waveform) {
-                    .Sawtooth => state.lfo_phase >> 24,
-                    .Square => (state.lfo_phase >> 31) * 0xFF,
-                    .Triangle => if (state.lfo_phase & 0x80000000 == 0)
-                        ((state.lfo_phase >> 23) & 0xFF)
-                    else
-                        (0xFF - ((state.lfo_phase >> 23) & 0xFF)),
-                    .Noise => 0, // TODO
-                });
+                // FIXME: Needs more testing, hence the warning.
+                if (Once(@src())) aica_log.warn("Using LFO amplitude modulation: {t}, {d}", .{ registers.lfo_control.amplitude_modulation_waveform, registers.lfo_control.amplitude_modulation_depth });
+                const att: u8 = lfo_wave(registers.lfo_control.amplitude_modulation_waveform, state.lfo_phase);
                 attenuation +|= @as(u32, 2) * (att >> (7 - registers.lfo_control.amplitude_modulation_depth));
             }
             if (attenuation >= 0x3C0) {
@@ -1347,10 +1342,7 @@ pub const AICA = struct {
             }
         }
 
-        if (registers.lfo_control.pitch_modulation_depth > 0) {
-            // TODO: Low Frequency Oscillator (LFO) pitch modulation
-        }
-
+        // Output to sample buffer and/or DSP
         if (!state.debug.mute) {
             const disdl = registers.direct_pan_vol_send.volume; // Attenuation level when output to the DAC. I guess that means when bypassing the DSP?
             const dipan = if (self.get_reg(MasterVolume, .MasterVolume).mono) 0 else registers.direct_pan_vol_send.pan;
@@ -1379,6 +1371,37 @@ pub const AICA = struct {
             }
         }
 
+        // Compute playback speed according to desired pitch (FNS/OCT) and LFO pitch modulation.
+        // "For FNS = 0 (and OCT = 0), the tone matches the sampling source."
+        const sample_length = 0x40000;
+        var fns: i32 = @intCast(registers.sample_pitch_rate.fns);
+        if (registers.lfo_control.pitch_modulation_depth > 0) {
+            // Low Frequency Oscillator (LFO) pitch modulation
+            // FIXME: Needs more testing, hence the warning.
+            if (Once(@src())) aica_log.warn("Using LFO pitch modulation: {t}, {d}", .{ registers.lfo_control.pitch_modulation_waveform, registers.lfo_control.pitch_modulation_depth });
+            const wave = lfo_wave(registers.lfo_control.pitch_modulation_waveform, state.lfo_phase);
+            const shift = @as(i16, wave) - 0x80;
+            fns += switch (registers.lfo_control.pitch_modulation_depth) {
+                0 => unreachable,
+                1 => shift >> 5,
+                2 => shift >> 4,
+                3 => shift >> 3,
+                4 => shift >> 2,
+                5 => shift >> 1,
+                6 => shift,
+                7 => shift << 1,
+            };
+        }
+        var base_play_position_inc: u32 = @intCast(@max(0, sample_length + (fns << 8)));
+        if ((registers.sample_pitch_rate.oct & 8) == 0) {
+            base_play_position_inc <<= registers.sample_pitch_rate.oct;
+        } else {
+            base_play_position_inc >>= @as(u5, 16) - registers.sample_pitch_rate.oct;
+        }
+        // "Values in parentheses are +1 octave for ADPCM" (p.25)
+        if (registers.play_control.sample_format == .ADPCM and registers.sample_pitch_rate.oct >= 0x2 and registers.sample_pitch_rate.oct <= 0x7)
+            base_play_position_inc <<= 1;
+
         state.fractional_play_position += base_play_position_inc;
         while (state.fractional_play_position >= sample_length) {
             state.fractional_play_position -= sample_length;
@@ -1391,7 +1414,7 @@ pub const AICA = struct {
                 // FIXME: ADPCMStream, how does it work?
                 .ADPCM, .ADPCMStream => adpcm: {
                     // 4 bits per sample
-                    var s: u8 = @intCast(@as([*]const u8, @ptrCast(@alignCast(sample_ram.ptr)))[state.play_position >> 1]);
+                    var s: u8 = sample_ram[state.play_position >> 1];
                     if (state.play_position & 1 == 1)
                         s >>= 4;
                     break :adpcm state.compute_adpcm(@truncate(s));

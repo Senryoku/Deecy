@@ -808,6 +808,14 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.plot.plotLine("sample_write_offset", i32, .{ .xv = &[_]i32{ @intCast(dc.aica.sample_write_offset), @intCast(dc.aica.sample_write_offset) }, .yv = &[_]i32{ 0, -std.math.maxInt(i16) } });
             zgui.plot.endPlot();
         }
+        const plot_flags = zgui.plot.Flags{
+            .no_title = true,
+            .no_legend = true,
+            .no_menus = true,
+            .no_box_select = true,
+            .no_mouse_text = true,
+            .no_inputs = true,
+        };
         _ = zgui.checkbox("Show disabled channels", .{ .v = &self.show_disabled_channels });
         inline for (0..64) |i| {
             const channel = dc.aica.get_channel_registers(@intCast(i));
@@ -817,14 +825,6 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             if (self.show_disabled_channels or state.playing or channel.play_control.key_on_bit) {
                 zgui.pushIntId(@intCast(i));
                 defer zgui.popId();
-                const plot_flags = zgui.plot.Flags{
-                    .no_title = true,
-                    .no_legend = true,
-                    .no_menus = true,
-                    .no_box_select = true,
-                    .no_mouse_text = true,
-                    .no_inputs = true,
-                };
                 if (zgui.collapsingHeader("Channel", .{ .default_open = (state.playing or channel.play_control.key_on_bit) and !dc.aica.channel_states[i].debug.mute })) {
                     zgui.alignTextToFramePadding();
                     zgui.text("Channel {d} -", .{i});
@@ -856,6 +856,28 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         channel.lfo_control.frequency,
                         channel.lfo_control.reset,
                     });
+                    if (zgui.collapsingHeader("LFO", .{ .default_open = false })) {
+                        // Stupid LFO debugging visualizer
+                        const sample_count = 0x200;
+                        const samples = try self._allocator.alloc(u8, sample_count);
+                        defer self._allocator.free(samples);
+                        const current_phase = state.lfo_phase >> 23;
+                        inline for (.{ channel.lfo_control.amplitude_modulation_waveform, channel.lfo_control.pitch_modulation_waveform }) |waveform| {
+                            zgui.pushStrId(@tagName(waveform));
+                            defer zgui.popId();
+                            for (0..sample_count) |idx| {
+                                samples[idx] = AICAModule.lfo_wave(waveform, @intCast(idx << 23));
+                            }
+                            if (zgui.plot.beginPlot("LFO", .{ .flags = plot_flags, .h = 128.0 })) {
+                                zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = sample_count });
+                                zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 0x100 });
+                                zgui.plot.setupFinish();
+                                zgui.plot.plotLineValues("Wave", u8, .{ .v = samples });
+                                zgui.plot.plotLine("Current LFO Phase", u32, .{ .xv = &[_]u32{ current_phase, current_phase }, .yv = &[_]u32{ 0, std.math.maxInt(u8) } });
+                                zgui.plot.endPlot();
+                            }
+                        }
+                    }
                     var loop_size = if (channel.play_control.sample_loop and channel.loop_end > channel.loop_start) channel.loop_end - channel.loop_start else channel.loop_end;
                     if (loop_size == 0) loop_size = 2048;
                     if (channel.play_control.sample_format == .i16) {
