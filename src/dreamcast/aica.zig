@@ -1430,7 +1430,6 @@ pub const AICA = struct {
                     }
                 } else {
                     state.playing = false;
-                    state.amp_env_level = 0x3FF;
                     state.play_position = 0;
                     return;
                 }
