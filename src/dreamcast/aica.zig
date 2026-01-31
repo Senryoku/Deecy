@@ -414,7 +414,8 @@ pub const AICAChannelState = struct {
     } = .{},
 
     pub fn key_on(self: *@This(), registers: *const AICAChannel) void {
-        if (self.amp_env_state != .Release and self.amp_env_level < 0x3BF) return;
+        if (self.amp_env_state != .Release) return;
+
         self.playing = true;
         self.loop_end_flag = false;
         self.play_position = 0; // Looping channels also start at 0
