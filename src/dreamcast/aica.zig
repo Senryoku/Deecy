@@ -1120,6 +1120,15 @@ pub const AICA = struct {
                 self.sample_buffer[offset + 0] +|= fuckthat_factor * sample.left;
                 self.sample_buffer[offset + 1] +|= fuckthat_factor * sample.right;
             }
+        } else {
+            // Bypass DSP and output the values in the MIXS registers directly (as if they were in the EFREGs).
+            for (0..16) |channel| {
+                const channel_mix = self.get_dsp_mix_register(@intCast(channel));
+                const s = apply_pan_attenuation(self.dsp.read_mixs(channel), channel_mix.efsdl, channel_mix.efpan);
+                self.sample_buffer[offset + 0] +|= s.left;
+                self.sample_buffer[offset + 1] +|= s.right;
+            }
+            self.dsp.clear_mixs();
         }
 
         // Stream from GD-ROM
@@ -1360,17 +1369,7 @@ pub const AICA = struct {
                 const channel = registers.dps_channel_send.channel;
                 const att: u4 = 0xF - registers.dps_channel_send.level;
                 const attenuated: i32 = sample >> att;
-
-                if (self.dsp_emulation != .Bypass) {
-                    self.dsp.add_mixs(channel, @intCast(attenuated));
-                } else {
-                    // Bypass DSP and output the sample directly
-                    const channel_mix = self.get_dsp_mix_register(channel);
-                    const s = apply_pan_attenuation(attenuated, channel_mix.efsdl, channel_mix.efpan);
-
-                    self.sample_buffer[(2 * i + 0) % self.sample_buffer.len] +|= s.left;
-                    self.sample_buffer[(2 * i + 1) % self.sample_buffer.len] +|= s.right;
-                }
+                self.dsp.add_mixs(channel, @intCast(attenuated));
             }
         }
 

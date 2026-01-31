@@ -291,7 +291,7 @@ fn write_mixs(self: *@This(), idx: usize, value: i20) void {
     }
 }
 pub fn add_mixs(self: *@This(), idx: usize, value: i20) void {
-    self.write_mixs(idx, self.read_mixs(idx) + value);
+    self.write_mixs(idx, self.read_mixs(idx) +| value);
 }
 
 // 0x4580-0x45BF: Effect output data (EFREG), 16 registers, 16 bits each
@@ -321,7 +321,7 @@ pub fn set_exts(self: *@This(), idx: usize, value: u16) void {
     self._exts(idx).* = value;
 }
 
-fn clear_mixs(self: *@This()) void {
+pub fn clear_mixs(self: *@This()) void {
     @memset(self._regs[MIXS_base .. MIXS_base + 2 * 16], 0);
 }
 fn clear_efreg(self: *@This()) void {
@@ -633,12 +633,11 @@ pub fn compile(self: *@This()) !void {
 pub fn generate_sample_jit(self: *@This()) !void {
     if (self._dirty_mpro) try self.compile();
 
+    for (0..TEMP_SLOTS) |i| self._regs[TEMP_MEM_base + i] = 0;
     self.clear_efreg();
 
-    for (0..4) |i| self._regs[TEMP_MEM_base + i] = 0;
-
     if (self._jit_buffer) |buffer|
-        @as(*const fn ([*]u32) callconv(Architecture.CallingConvention) void, @ptrCast(&buffer[0]))(self._regs.ptr);
+        @as(*const fn ([*]u32) callconv(Architecture.CallingConvention) void, @ptrCast(buffer.ptr))(self._regs.ptr);
 
     self.decrement_mdec_ct();
     self.clear_mixs();
