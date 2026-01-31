@@ -1104,29 +1104,22 @@ pub const AICA = struct {
             self.dsp.set_exts(1, @bitCast(cdda_samples[1]));
             switch (self.dsp_emulation) {
                 .Interpreter => self.dsp.generate_sample(),
-                .JIT => self.dsp.generate_sample_jit() catch |err| {
-                    aica_log.err("Error in DSP JIT: {}", .{err});
-                },
+                .JIT => self.dsp.generate_sample_jit() catch |err| aica_log.err("Error in DSP JIT: {}", .{err}),
                 else => unreachable,
             }
             for (0..16) |channel| {
                 const mix = self.get_dsp_mix_register(@intCast(channel)).*;
                 const sample = apply_pan_attenuation(self.dsp.read_efreg(channel), mix.efsdl, mix.efpan);
-                // FIXME: I have no idea why the DSP is so low, but it seems to works otherwise and I'm tired of searching for now.
-                //        This factor is totally arbitrary, I have no basis for it except that according to all to sources I found,
-                //        the DSP outputs SHIFTED >> 8 to the EFREGs, and in practice I found that >> 5 works and >> 4 overflows.
-                //        So I should probably go with *8, but... Empirically I think *16 feels nicer. Hopefully that won't cost me an ear :D
-                const fuckthat_factor = 16;
-                self.sample_buffer[offset + 0] +|= fuckthat_factor * sample.left;
-                self.sample_buffer[offset + 1] +|= fuckthat_factor * sample.right;
+                self.sample_buffer[offset + 0] +|= sample.left;
+                self.sample_buffer[offset + 1] +|= sample.right;
             }
         } else {
             // Bypass DSP and output the values in the MIXS registers directly (as if they were in the EFREGs).
             for (0..16) |channel| {
                 const channel_mix = self.get_dsp_mix_register(@intCast(channel));
-                const s = apply_pan_attenuation(self.dsp.read_mixs(channel), channel_mix.efsdl, channel_mix.efpan);
-                self.sample_buffer[offset + 0] +|= s.left;
-                self.sample_buffer[offset + 1] +|= s.right;
+                const sample = apply_pan_attenuation(self.dsp.read_mixs(channel) >> 4, channel_mix.efsdl, channel_mix.efpan);
+                self.sample_buffer[offset + 0] +|= sample.left;
+                self.sample_buffer[offset + 1] +|= sample.right;
             }
             self.dsp.clear_mixs();
         }
@@ -1367,9 +1360,9 @@ pub const AICA = struct {
             }
             if (registers.dps_channel_send.level != 0) {
                 const channel = registers.dps_channel_send.channel;
-                const att: u4 = 0xF - registers.dps_channel_send.level;
-                const attenuated: i32 = sample >> att;
-                self.dsp.add_mixs(channel, @intCast(attenuated));
+                const attenuation: u4 = 0xF - registers.dps_channel_send.level;
+                const to_mixs: i32 = (sample << 4) >> attenuation; // MIXS are 20 bits, from 16bit samples.
+                self.dsp.add_mixs(channel, @intCast(to_mixs));
             }
         }
 
