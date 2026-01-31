@@ -413,7 +413,7 @@ pub const AICAChannelState = struct {
         mute: bool = false, // Don't output sample (but run normally otherwise)
     } = .{},
 
-    pub fn key_on(self: *AICAChannelState, registers: *const AICAChannel) void {
+    pub fn key_on(self: *@This(), registers: *const AICAChannel) void {
         if (self.amp_env_state != .Release and self.amp_env_level < 0x3BF) return;
         self.playing = true;
         self.loop_end_flag = false;
@@ -429,11 +429,28 @@ pub const AICAChannelState = struct {
         self.fractional_play_position = 0;
 
         self.adpcm_state = .{};
+
+        self.loop_start_check(registers);
     }
 
-    pub fn key_off(self: *AICAChannelState) void {
+    pub fn key_off(self: *@This()) void {
         self.amp_env_state = .Release;
         self.filter_env_state = .Release;
+    }
+
+    pub fn loop_start_check(self: *@This(), registers: *const AICAChannel) void {
+        if (self.play_position == registers.loop_start) {
+            if (registers.amp_env_2.link and self.amp_env_state == .Attack)
+                self.amp_env_state = .Decay;
+            if (registers.lfo_control.reset) {
+                self.lfo_phase = 0;
+            }
+            if (!self.adpcm_state.loop_init) {
+                self.adpcm_state.step_loopstart = self.adpcm_state.step;
+                self.adpcm_state.prev_loopstart = self.adpcm_state.prev;
+                self.adpcm_state.loop_init = true;
+            }
+        }
     }
 
     // Returns true if the channel should advance in the enveloppe calculation for the current sample.
@@ -462,7 +479,6 @@ pub const AICAChannelState = struct {
     }
 
     const ADPCMScale: [8]i32 = .{ 0xE6, 0xE6, 0xE6, 0xE6, 0x133, 0x199, 0x200, 0x266 };
-
     const ADPCMDiff: [8]i32 = .{ 1, 3, 5, 7, 9, 11, 13, 15 };
 };
 
@@ -1216,19 +1232,6 @@ pub const AICA = struct {
         const i = self._samples_counter;
         const registers = self.get_channel_registers(channel_number);
 
-        if (state.play_position == registers.loop_start) {
-            if (registers.amp_env_2.link and state.amp_env_state == .Attack)
-                state.amp_env_state = .Decay;
-            if (registers.lfo_control.reset) {
-                state.lfo_phase = 0;
-            }
-            if (!state.adpcm_state.loop_init) {
-                state.adpcm_state.step_loopstart = state.adpcm_state.step;
-                state.adpcm_state.prev_loopstart = state.adpcm_state.prev;
-                state.adpcm_state.loop_init = true;
-            }
-        }
-
         // Advance amplitude envelope
         {
             const effective_rate = registers.compute_effective_rate(
@@ -1410,7 +1413,7 @@ pub const AICA = struct {
             const sample_ram = self.wave_memory[registers.sample_address()..];
             state.curr_sample = switch (registers.play_control.sample_format) {
                 .i16 => @as([*]const i16, @ptrCast(@alignCast(sample_ram.ptr)))[state.play_position],
-                .i8 => @as(i32, @intCast(@as([*]const i8, @ptrCast(@alignCast(sample_ram.ptr)))[state.play_position])) << 8,
+                .i8 => @as(i32, @as(i8, @bitCast(sample_ram[state.play_position]))) << 8,
                 // FIXME: ADPCMStream, how does it work?
                 .ADPCM, .ADPCMStream => adpcm: {
                     // 4 bits per sample
@@ -1422,6 +1425,7 @@ pub const AICA = struct {
             };
 
             state.play_position +%= 1;
+            state.loop_start_check(registers);
 
             if (state.play_position >= registers.loop_end & 0xFFFF) {
                 state.loop_end_flag = true;
