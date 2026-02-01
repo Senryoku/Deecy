@@ -355,6 +355,7 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
                     gdrom_log.err(termcolor.red("CDI Hack: Stuck with data in dma queue, discarding."), .{});
                     self.dma_data_queue.discard(self.dma_data_queue.count);
                     self.status_register.bsy = 0;
+                    self.status_register.drdy = 1;
                 }
             } else static.consecutive_busy_reads = 0;
             static.last_dma_data_queue_count = self.dma_data_queue.count;
@@ -573,6 +574,7 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
             if (self.packet_command_idx >= 12) {
                 self.packet_command_idx = 0;
 
+                self.status_register.drdy = 0;
                 self.status_register.bsy = 1;
                 self.status_register.drq = 0;
                 gdrom_log.debug("  Received full SPI Command Packet!", .{});
@@ -764,7 +766,7 @@ fn set_mode(self: *@This()) !void {
 
     self.schedule_event(.{
         .cycles = 0, // FIXME: Random value
-        .status = .{ .bsy = 0, .drq = 0 },
+        .status = .{ .bsy = 0, .drq = 0, .drdy = 1 },
         .interrupt_reason = .{ .cod = .Command, .io = .HostToDevice },
     });
 }
