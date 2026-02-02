@@ -1,5 +1,13 @@
 const std = @import("std");
 
+fn get_git_commit(b: *std.Build) []const u8 {
+    var code: u8 = undefined;
+    const commit = b.runAllowFail(&.{ "git", "rev-parse", "--short", "HEAD" }, &code, .Inherit) catch {
+        return "Unknown Commit";
+    };
+    return std.mem.trimEnd(u8, commit, "\r\n");
+}
+
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
@@ -30,6 +38,7 @@ pub fn build(b: *std.Build) !void {
     const userdata_path = b.option([]const u8, "userdata_path", "Path to the userdata directory (default: './userdata')") orelse "./userdata";
     const use_appdata_dir = b.option(bool, "use_appdata_dir", "Prepend the platform specific AppData directory to data_path and userdata_path (default: false)") orelse false;
     const no_console = if (target.result.os.tag == .windows) b.option(bool, "no_console", "Do not open the console on Windows (default: false for debug builds, true otherwise)") orelse (optimize != .Debug) else false;
+    const git_commit = b.option([]const u8, "git_commit", "Current git commit hash (default: auto detect)") orelse get_git_commit(b);
 
     const dc_options = b.addOptions();
     dc_options.addOption(bool, "mmu", mmu);
@@ -64,6 +73,8 @@ pub fn build(b: *std.Build) !void {
 
     const deecy_options = b.addOptions();
     deecy_options.addOption([]const u8, "version", zon.version);
+    deecy_options.addOption([]const u8, "git_commit", git_commit);
+    deecy_options.addOption(std.builtin.OptimizeMode, "optimize", optimize);
     deecy_options.addOption(bool, "no_console", no_console);
 
     const deecy_module = b.createModule(.{

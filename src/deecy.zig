@@ -374,6 +374,8 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
 
     custom_log.set_output(config.log_output);
 
+    deecy_log.info("Deecy {s} {s} {t} (Commit {s})", .{ comptime_config.version, helpers.title_case_enum(builtin.os.tag), comptime_config.optimize, comptime_config.git_commit });
+
     _ = zglfw.setErrorCallback(glfw_error_callback);
     try zglfw.init();
 
