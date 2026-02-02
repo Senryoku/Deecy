@@ -93,18 +93,6 @@ pub const LFOControl = packed struct(u32) {
     _: u16,
 };
 
-pub fn lfo_wave(form: Waveform, phase: u32) u8 {
-    return @truncate(switch (form) {
-        .Sawtooth => phase >> 24,
-        .Square => (phase >> 31) * 0xFF,
-        .Triangle => if (phase & 0x80000000 == 0)
-            ((phase >> 23) & 0xFF)
-        else
-            (0xFF - ((phase >> 23) & 0xFF)),
-        .Noise => 0, // TODO
-    });
-}
-
 pub const DSPChannelSend = packed struct(u32) {
     /// DSP send channel, 0x0-0xF
     ///  "This affects which DSP MIXS register will receive this channel's output.
@@ -394,6 +382,7 @@ pub const AICAChannelState = struct {
     filter_env_state: EnvelopeState = .Release,
 
     lfo_phase: u32 = 0,
+    lfo_noise_state: u32 = 0x93ad8044,
 
     prev_sample: i32 = 0,
     curr_sample: i32 = 0,
@@ -484,10 +473,25 @@ pub const AICAChannelState = struct {
     const ADPCMScale: [8]i32 = .{ 0xE6, 0xE6, 0xE6, 0xE6, 0x133, 0x199, 0x200, 0x266 };
     const ADPCMDiff: [8]i32 = .{ 1, 3, 5, 7, 9, 11, 13, 15 };
 
+    pub fn lfo(self: *@This(), form: Waveform) u8 {
+        return @truncate(switch (form) {
+            .Sawtooth => self.lfo_phase >> 24,
+            .Square => (self.lfo_phase >> 31) * 0xFF,
+            .Triangle => if (self.lfo_phase & 0x80000000 == 0)
+                ((self.lfo_phase >> 23) & 0xFF)
+            else
+                (0xFF - ((self.lfo_phase >> 23) & 0xFF)),
+            .Noise => noise: {
+                self.lfo_noise_state = self.lfo_noise_state *% 196314165 +% 907633515;
+                break :noise self.lfo_noise_state;
+            },
+        });
+    }
+
     // FIXME: These over-complicated serialization functions are here to preserve backward compatibility.
     // /TODO: Clean them up when we have a good reason to break save state compatibility, and serialize low_pass_filter_samples.
 
-    pub fn serialize(self: *const AICAChannelState, writer: *std.Io.Writer) !usize {
+    pub fn serialize(self: *const @This(), writer: *std.Io.Writer) !usize {
         var bytes: usize = 0;
         bytes += try writer.write(std.mem.asBytes(&self.lfo_phase));
         bytes += try writer.write(std.mem.asBytes(&self.prev_sample));
@@ -505,7 +509,7 @@ pub const AICAChannelState = struct {
         return bytes;
     }
 
-    pub fn deserialize(self: *AICAChannelState, reader: *std.Io.Reader) !void {
+    pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !void {
         try reader.readSliceAll(std.mem.asBytes(&self.lfo_phase));
         try reader.readSliceAll(std.mem.asBytes(&self.prev_sample));
         try reader.readSliceAll(std.mem.asBytes(&self.curr_sample));
@@ -1373,7 +1377,7 @@ pub const AICA = struct {
                 // Low Frequency Oscillator amplitude modulation
                 // FIXME: Needs more testing, hence the warning.
                 if (Once(@src())) aica_log.warn("Using LFO amplitude modulation: {t}, {d}", .{ registers.lfo_control.amplitude_modulation_waveform, registers.lfo_control.amplitude_modulation_depth });
-                const att: u8 = lfo_wave(registers.lfo_control.amplitude_modulation_waveform, state.lfo_phase);
+                const att: u8 = state.lfo(registers.lfo_control.amplitude_modulation_waveform);
                 attenuation +|= @as(u32, 2) * (att >> (7 - registers.lfo_control.amplitude_modulation_depth));
             }
             if (attenuation >= 0x3C0) {
@@ -1411,7 +1415,7 @@ pub const AICA = struct {
             // Low Frequency Oscillator (LFO) pitch modulation
             // FIXME: Needs more testing, hence the warning.
             if (Once(@src())) aica_log.warn("Using LFO pitch modulation: {t}, {d}", .{ registers.lfo_control.pitch_modulation_waveform, registers.lfo_control.pitch_modulation_depth });
-            const wave = lfo_wave(registers.lfo_control.pitch_modulation_waveform, state.lfo_phase);
+            const wave = state.lfo(registers.lfo_control.pitch_modulation_waveform);
             const shift = @as(i16, wave) - 0x80;
             fns += switch (registers.lfo_control.pitch_modulation_depth) {
                 0 => unreachable,

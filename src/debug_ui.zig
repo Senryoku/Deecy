@@ -856,28 +856,6 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         channel.lfo_control.frequency,
                         channel.lfo_control.reset,
                     });
-                    if (zgui.collapsingHeader("LFO", .{ .default_open = false })) {
-                        // Stupid LFO debugging visualizer
-                        const sample_count = 0x200;
-                        const samples = try self._allocator.alloc(u8, sample_count);
-                        defer self._allocator.free(samples);
-                        const current_phase = state.lfo_phase >> 23;
-                        inline for (.{ channel.lfo_control.amplitude_modulation_waveform, channel.lfo_control.pitch_modulation_waveform }) |waveform| {
-                            zgui.pushStrId(@tagName(waveform));
-                            defer zgui.popId();
-                            for (0..sample_count) |idx| {
-                                samples[idx] = AICAModule.lfo_wave(waveform, @intCast(idx << 23));
-                            }
-                            if (zgui.plot.beginPlot("LFO", .{ .flags = plot_flags, .h = 128.0 })) {
-                                zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = sample_count });
-                                zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 0x100 });
-                                zgui.plot.setupFinish();
-                                zgui.plot.plotLineValues("Wave", u8, .{ .v = samples });
-                                zgui.plot.plotLine("Current LFO Phase", u32, .{ .xv = &[_]u32{ current_phase, current_phase }, .yv = &[_]u32{ 0, std.math.maxInt(u8) } });
-                                zgui.plot.endPlot();
-                            }
-                        }
-                    }
                     var loop_size = if (channel.play_control.sample_loop and channel.loop_end > channel.loop_start) channel.loop_end - channel.loop_start else channel.loop_end;
                     if (loop_size == 0) loop_size = 2048;
                     if (channel.play_control.sample_format == .i16) {
