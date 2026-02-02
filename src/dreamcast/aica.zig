@@ -481,6 +481,43 @@ pub const AICAChannelState = struct {
 
     const ADPCMScale: [8]i32 = .{ 0xE6, 0xE6, 0xE6, 0xE6, 0x133, 0x199, 0x200, 0x266 };
     const ADPCMDiff: [8]i32 = .{ 1, 3, 5, 7, 9, 11, 13, 15 };
+
+    // FIXME: These over-complicated serialization functions are here to preserve backward compatibility.
+    // /TODO: Clean them up when we have a good reason to break save state compatibility.
+
+    pub fn serialize(self: *const AICAChannelState, writer: *std.Io.Writer) !usize {
+        var bytes: usize = 0;
+        bytes += try writer.write(std.mem.asBytes(&self.lfo_phase));
+        bytes += try writer.write(std.mem.asBytes(&self.prev_sample));
+        bytes += try writer.write(std.mem.asBytes(&self.curr_sample));
+        bytes += try writer.write(&[4]u8{ 0, 0, 0, 0 });
+        bytes += try writer.write(std.mem.asBytes(&self.adpcm_state));
+        bytes += try writer.write(std.mem.asBytes(&self.play_position));
+        bytes += try writer.write(std.mem.asBytes(&self.amp_env_level));
+        bytes += try writer.write(std.mem.asBytes(&self.filter_env_level));
+        bytes += try writer.write(std.mem.asBytes(&self.playing));
+        bytes += try writer.write(std.mem.asBytes(&self.loop_end_flag));
+        bytes += try writer.write(std.mem.asBytes(&self.amp_env_state));
+        bytes += try writer.write(std.mem.asBytes(&self.filter_env_state));
+        bytes += try writer.write(&[2]u8{ 0, 0 });
+        return bytes;
+    }
+
+    pub fn deserialize(self: *AICAChannelState, reader: *std.Io.Reader) !void {
+        try reader.readSliceAll(std.mem.asBytes(&self.lfo_phase));
+        try reader.readSliceAll(std.mem.asBytes(&self.prev_sample));
+        try reader.readSliceAll(std.mem.asBytes(&self.curr_sample));
+        _ = try reader.discard(.limited(4));
+        try reader.readSliceAll(std.mem.asBytes(&self.adpcm_state));
+        try reader.readSliceAll(std.mem.asBytes(&self.play_position));
+        try reader.readSliceAll(std.mem.asBytes(&self.amp_env_level));
+        try reader.readSliceAll(std.mem.asBytes(&self.filter_env_level));
+        try reader.readSliceAll(std.mem.asBytes(&self.playing));
+        try reader.readSliceAll(std.mem.asBytes(&self.loop_end_flag));
+        try reader.readSliceAll(std.mem.asBytes(&self.amp_env_state));
+        try reader.readSliceAll(std.mem.asBytes(&self.filter_env_state));
+        _ = try reader.discard(.limited(2));
+    }
 };
 
 // AICA User Manual p. 23
@@ -1554,7 +1591,8 @@ pub const AICA = struct {
         bytes += try self.arm7.serialize(writer);
         bytes += try self.dsp.serialize(writer);
         bytes += try writer.write(std.mem.sliceAsBytes(self.regs));
-        bytes += try writer.write(std.mem.sliceAsBytes(self.channel_states));
+        for (self.channel_states) |state|
+            bytes += try state.serialize(writer);
         bytes += try writer.write(std.mem.asBytes(&self.rtc_write_enabled));
         bytes += try writer.write(std.mem.asBytes(&self._arm_cycles_counter));
         bytes += try writer.write(std.mem.asBytes(&self._timer_cycles_counter));
@@ -1579,7 +1617,8 @@ pub const AICA = struct {
         try self.arm7.deserialize(reader);
         try self.dsp.deserialize(reader);
         try reader.readSliceAll(std.mem.sliceAsBytes(self.regs));
-        try reader.readSliceAll(std.mem.sliceAsBytes(self.channel_states));
+        for (self.channel_states) |*state|
+            try state.deserialize(reader);
         try reader.readSliceAll(std.mem.asBytes(&self.rtc_write_enabled));
         try reader.readSliceAll(std.mem.asBytes(&self._arm_cycles_counter));
         try reader.readSliceAll(std.mem.asBytes(&self._timer_cycles_counter));
