@@ -7,110 +7,61 @@ on:
     branches: [main]
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        cpu: [x86_64_v2, x86_64_v3, x86_64_v4]
+        include:
+          - os: windows-latest
+            artifact_suffix: windows
+          - os: ubuntu-latest
+            artifact_suffix: linux
+
+    runs-on: ${{ matrix.os }}
+
     steps:
-        - uses: actions/checkout@v4
-          with:
-            submodules: 'true'
-        - name: Get zig version
-          id: zigversion        
-          run: |
-            $version = Get-Content -Path .zigversion -Raw
-            "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-        - name: Setup zig
-          uses: mlugg/setup-zig@v2
-          with:
-            version: ${{ steps.zigversion.outputs.version }}
-        - name: Compile Deecy for x86_64_v4
-          run: zig build --release=fast -Dcpu=x86_64_v4
-        - name: Prepare generic artifact
-          run: |
-            mkdir Deecy
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt update && sudo apt -y install libgtk-3-dev
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: 'true'
+          lfs: 'true'
+
+      - name: Get zig version
+        id: zigversion
+        shell: bash
+        run: echo "version=$(cat .zigversion)" >> $GITHUB_OUTPUT
+
+      - name: Setup zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ steps.zigversion.outputs.version }}
+
+      - name: Compile Deecy
+        run: zig build --release=fast -Dcpu=${{ matrix.cpu }}
+
+      - name: Prepare Artifacts
+        shell: bash
+        run: |
+          mkdir -p Deecy/data
+          printf "Copy dc_boot.bin and dc_flash.bin in ./data.\nWebsite: https://github.com/Senryoku/Deecy" > Deecy/README.txt
+          printf "Copy dc_boot.bin and dc_flash.bin here." > Deecy/data/README.txt
+          
+          if [ "${{ runner.os }}" == "Windows" ]; then
             cp zig-out/bin/dxcompiler.dll Deecy/
             cp zig-out/bin/dxil.dll Deecy/
-            printf "Copy dc_boot.bin and dc_flash.bin in ./data.\nWebsite: https://github.com/Senryoku/Deecy" > Deecy/README.txt
-            mkdir Deecy/data
-            printf "Copy dc_boot.bin and dc_flash.bin here." > Deecy/data/README.txt
-        - name: Prepare artifact for x86_64_v4
-          run: |
             cp zig-out/bin/Deecy.exe Deecy/
             cp zig-out/bin/Deecy.com Deecy/
-        - uses: actions/upload-artifact@v4
-          with: 
-            name: Deecy-x86_64_v4-windows
-            path: Deecy/
-        - name: Compile Deecy for x86_64_v3
-          run: zig build --release=fast -Dcpu=x86_64_v3
-        - name: Prepare artifact for x86_64_v3
-          run: |
-            rm Deecy/Deecy.exe
-            rm Deecy/Deecy.com
-            cp zig-out/bin/Deecy.exe Deecy/
-            cp zig-out/bin/Deecy.com Deecy/
-        - uses: actions/upload-artifact@v4
-          with: 
-            name: Deecy-x86_64_v3-windows
-            path: Deecy/
-        - name: Compile Deecy for x86_64_v2
-          run: zig build --release=fast -Dcpu=x86_64_v2
-        - name: Prepare artifact for x86_64_v2
-          run: |
-            rm Deecy/Deecy.exe
-            rm Deecy/Deecy.com
-            cp zig-out/bin/Deecy.exe Deecy/
-            cp zig-out/bin/Deecy.com Deecy/
-        - uses: actions/upload-artifact@v4
-          with: 
-            name: Deecy-x86_64_v2-windows
-            path: Deecy/
-  build-linux:
-    runs-on: ubuntu-latest
-    steps:
-        - name: Install nfd-zig dependencies
-          run: sudo apt update && sudo apt -y install libgtk-3-dev
-        - uses: actions/checkout@v4
-          with:
-            submodules: 'true'
-            lfs: 'true'
-        - name: Get zig version
-          id: zigversion
-          run: echo "version=$(cat .zigversion)" >> $GITHUB_OUTPUT
-        - name: Setup zig
-          uses: mlugg/setup-zig@v2
-          with:
-            version: ${{ steps.zigversion.outputs.version }}
-        - name: Compile Deecy for x86_64_v4
-          run: zig build --release=fast -Dcpu=x86_64_v4
-        - name: Prepare artifact for x86_64_v4
-          run: |
-            mkdir Deecy
+          else
             cp zig-out/bin/Deecy Deecy/
-            printf "Copy dc_boot.bin and dc_flash.bin in ./data.\nWebsite: https://github.com/Senryoku/Deecy" > Deecy/README.txt
-            mkdir Deecy/data
-            printf "Copy dc_boot.bin and dc_flash.bin here." > Deecy/data/README.txt
-        - uses: actions/upload-artifact@v4
-          with: 
-            name: Deecy-x86_64_v4-linux
-            path: Deecy/
-        - name: Compile Deecy for x86_64_v3
-          run: zig build --release=fast -Dcpu=x86_64_v3
-        - name: Prepare artifact for x86_64_v3
-          run: |
-            rm Deecy/Deecy
-            cp zig-out/bin/Deecy Deecy/
-        - uses: actions/upload-artifact@v4
-          with: 
-            name: Deecy-x86_64_v3-linux
-            path: Deecy/
-        - name: Compile Deecy for x86_64_v2
-          run: zig build --release=fast -Dcpu=x86_64_v2
-        - name: Prepare artifact for x86_64_v2
-          run: |
-            rm Deecy/Deecy
-            cp zig-out/bin/Deecy Deecy/
-        - uses: actions/upload-artifact@v4
-          with: 
-            name: Deecy-x86_64_v2-linux
-            path: Deecy/
+          fi
 
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Deecy-${{ matrix.cpu }}-${{ matrix.artifact_suffix }}
+          path: Deecy/
