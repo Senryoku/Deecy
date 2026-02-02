@@ -800,8 +800,8 @@ pub const SH4 = struct {
         self.update_timer_registers(channel);
 
         const tcr = self.p4_register(P4.TCR, TimerRegisters[channel].control);
-        tcr.*.unf = 1; // Signals underflow
-        if (tcr.*.unie == 1)
+        tcr.unf = 1; // Signals underflow
+        if (tcr.unie == 1)
             self.request_interrupt(TimerRegisters[channel].interrupt);
 
         self.schedule_timer(channel);

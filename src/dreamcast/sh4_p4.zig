@@ -207,12 +207,20 @@ pub const TSTR = packed struct(u8) {
 };
 
 pub const TCR = packed struct(u16) {
+    /// Timer Prescaler
     tpsc: u3 = 0,
+    /// Clock Edge 1 and 0
     ckeg: u2 = 0,
+    /// Underflow Interrupt Control
     unie: u1 = 0,
-    icpe: u2 = 0, // Only available on channel 2
+    /// Input Capture Control
+    ///   Only available on channel 2
+    icpe: u2 = 0,
+    /// Underflow Flag
     unf: u1 = 0,
-    icpf: u1 = 0, // Only available on channel 2
+    /// Input Capture Interrupt Flag
+    ///   Only available on channel 2
+    icpf: u1 = 0,
     _: u6 = 0,
 };
 
