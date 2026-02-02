@@ -397,6 +397,8 @@ pub const AICAChannelState = struct {
 
     prev_sample: i32 = 0,
     curr_sample: i32 = 0,
+    /// Last two sample for the low pass filter. Not serialized, but TODO: Should be at some point (it's just not worth breaking compatibility for)
+    low_pass_filter_samples: [2]i32 = @splat(0),
 
     fractional_play_position: u32 = 0,
 
@@ -408,7 +410,7 @@ pub const AICAChannelState = struct {
         loop_init: bool = false,
     } = .{},
 
-    // Unnecessary, but useful for debugging
+    // Unnecessary, but useful for debugging. Not serialized.
     debug: struct {
         mute: bool = false, // Don't output sample (but run normally otherwise)
     } = .{},
@@ -483,7 +485,7 @@ pub const AICAChannelState = struct {
     const ADPCMDiff: [8]i32 = .{ 1, 3, 5, 7, 9, 11, 13, 15 };
 
     // FIXME: These over-complicated serialization functions are here to preserve backward compatibility.
-    // /TODO: Clean them up when we have a good reason to break save state compatibility.
+    // /TODO: Clean them up when we have a good reason to break save state compatibility, and serialize low_pass_filter_samples.
 
     pub fn serialize(self: *const AICAChannelState, writer: *std.Io.Writer) !usize {
         var bytes: usize = 0;
@@ -517,6 +519,8 @@ pub const AICAChannelState = struct {
         try reader.readSliceAll(std.mem.asBytes(&self.amp_env_state));
         try reader.readSliceAll(std.mem.asBytes(&self.filter_env_state));
         _ = try reader.discard(.limited(2));
+
+        self.low_pass_filter_samples = @splat(0);
     }
 };
 
@@ -628,8 +632,6 @@ pub const AICA = struct {
     wave_memory: []u8 align(64), // Not owned.
 
     channel_states: []AICAChannelState,
-    /// Last two output samples for low-pass filtering. Not serialized.
-    low_pass_filter_buffer: [][2]i32,
 
     sample_buffer: []i32,
     sample_read_offset: usize = 0,
@@ -653,7 +655,6 @@ pub const AICA = struct {
             .regs = try allocator.alloc(u32, 0x8000 / 4),
             .wave_memory = memory,
             .channel_states = try allocator.alloc(AICAChannelState, 64),
-            .low_pass_filter_buffer = try allocator.alloc([2]i32, 64),
             .sample_buffer = try allocator.alloc(i32, 2048),
             ._allocator = allocator,
         };
@@ -687,7 +688,6 @@ pub const AICA = struct {
     pub fn deinit(self: *AICA) void {
         self.dsp.deinit();
         self.arm_jit.deinit();
-        self._allocator.free(self.low_pass_filter_buffer);
         self._allocator.free(self.channel_states);
         self._allocator.free(self.sample_buffer);
         self._allocator.free(self.regs);
@@ -698,7 +698,6 @@ pub const AICA = struct {
         @memset(self.wave_memory, 0);
 
         @memset(self.channel_states, .{});
-        @memset(self.low_pass_filter_buffer, .{ 0, 0 });
 
         @memset(self.sample_buffer, 0);
         self.sample_read_offset = 0;
@@ -1356,11 +1355,11 @@ pub const AICA = struct {
             // FIXME: This was barely tested.
             const f: i32 = (((state.filter_env_level & 0xFF) | 0x100) << 4) >> @truncate(@as(u5, @truncate(state.filter_env_level >> 8)) ^ 0x1F);
             const q = 0x0E00 + 0x80 * @as(i32, registers.env_settings.q);
-            sample = f * sample + (0x2000 - f + q) * self.low_pass_filter_buffer[channel_number][0] - q * self.low_pass_filter_buffer[channel_number][1];
+            sample = f * sample + (0x2000 - f + q) * state.low_pass_filter_samples[0] - q * state.low_pass_filter_samples[1];
             sample >>= 13;
             sample = std.math.clamp(sample, std.math.minInt(i16), std.math.maxInt(i16));
-            self.low_pass_filter_buffer[channel_number][1] = self.low_pass_filter_buffer[channel_number][0];
-            self.low_pass_filter_buffer[channel_number][0] = sample;
+            state.low_pass_filter_samples[1] = state.low_pass_filter_samples[0];
+            state.low_pass_filter_samples[0] = sample;
         }
 
         state.lfo_phase +%= LFOPhaseInc[registers.lfo_control.frequency];
@@ -1633,7 +1632,5 @@ pub const AICA = struct {
         } else {
             try reader.readSliceAll(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..self.sample_write_offset]));
         }
-
-        @memset(self.low_pass_filter_buffer, .{ 0, 0 });
     }
 };
