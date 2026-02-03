@@ -1510,7 +1510,7 @@ pub const AICA = struct {
             aica_addr -= 0x02000000;
         }
 
-        // NOTE: Wrong start adresses should raise exception, but we don't emulate them, yet.
+        // NOTE: Wrong start adresses should raise an exception.
         if (aica_addr < 0x00800000 or aica_addr >= 0x00A00000) {
             aica_log.err(termcolor.red("AICA DMA out of bounds! AICA Address: 0x{X:0>8}. Canceled."), .{aica_addr});
             return;
@@ -1521,11 +1521,11 @@ pub const AICA = struct {
         }
 
         // FIXME: I have no idea how to correctly handle this error case.
-        if (aica_addr + len_in_bytes >= 0x00A00000) {
+        if (aica_addr + len_in_bytes > 0x00A00000) {
             aica_log.err(termcolor.red("AICA DMA out of bounds! AICA Address: 0x{X:0>8}, length: 0x{X:0>8} => 0x{X:0>8}"), .{ aica_addr, len_in_bytes, aica_addr + len_in_bytes });
             return;
         }
-        if (root_bus_addr + len_in_bytes >= 0x0D000000) {
+        if (root_bus_addr + len_in_bytes > 0x0D000000) {
             aica_log.err(termcolor.red("AICA DMA out of bounds! Root Bus Address: 0x{X:0>8}, length: 0x{X:0>8} => 0x{X:0>8}"), .{ root_bus_addr, len_in_bytes, root_bus_addr + len_in_bytes });
             return;
         }
@@ -1534,8 +1534,6 @@ pub const AICA = struct {
         const physical_aica_addr = &self.wave_memory[aica_addr - 0x00800000];
 
         const len_in_u32 = len_in_bytes / 4;
-
-        // TODO: This might raise some exceptions, if the addresses are wrong.
 
         if (direction == 0) {
             // DMA transfer from the Root Bus to a G2 device
