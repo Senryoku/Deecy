@@ -60,7 +60,9 @@ Keyboard bindings can be customized in the settings. Defaults for controller 1:
 
 ## Compatibility
 
-[See issue #33](https://github.com/Senryoku/Deecy/issues/33)
+See [the list here](https://senryoku.github.io/Deecy/compatibility.html).
+
+Contribute in [its repository](https://github.com/Senryoku/Deecy-Compatibility).
 
 ## Build
 
