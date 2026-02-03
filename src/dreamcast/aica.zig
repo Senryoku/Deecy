@@ -1,5 +1,6 @@
 const std = @import("std");
 const termcolor = @import("termcolor");
+const Once = @import("helpers").Once;
 
 const aica_log = std.log.scoped(.aica);
 
@@ -59,7 +60,7 @@ pub const AmpEnv2 = packed struct(u32) {
     release_rate: u5,
     decay_level: u5,
     key_rate_scaling: u4,
-    link: u1, // LPSLNK - If this bit is set, then the envelope transitions to the decay state when the sample loop start address is exceeded.
+    link: bool, // LPSLNK - If this bit is set, then the envelope transitions to the decay state when the sample loop start address is exceeded.
     _: u17 = 0,
 };
 
@@ -77,12 +78,18 @@ pub const Waveform = enum(u2) {
 };
 
 pub const LFOControl = packed struct(u32) {
-    amplitude_modulation_depth: u3, // (ALFOS)
-    amplitude_modulation_waveform: Waveform, // (ALFOWS)
-    pitch_modulation_depth: u3, // (PLFOS)
-    pitch_modulation_waveform: Waveform, // (PLFOWS)
-    frequency: u5, // (LFOF)
-    reset: bool, // (LFORE) 1=on, 0=off If set, the LFO phase is reset at the start of EACH SAMPLE LOOP.
+    /// (ALFOS)
+    amplitude_modulation_depth: u3,
+    /// (ALFOWS)
+    amplitude_modulation_waveform: Waveform,
+    /// (PLFOS)
+    pitch_modulation_depth: u3,
+    /// (PLFOWS)
+    pitch_modulation_waveform: Waveform,
+    /// (LFOF)
+    frequency: u5,
+    /// (LFORE) 1=on, 0=off If set, the LFO phase is reset at the start of EACH SAMPLE LOOP.
+    reset: bool,
     _: u16,
 };
 
@@ -102,24 +109,30 @@ pub const DSPChannelSend = packed struct(u32) {
 };
 
 pub const DirectPanVolSend = packed struct(u32) {
-    pan: u5, // Direct send pan (DIPAN)
-    // 0x00 or 0x10 is center, 0x0F is full right, 0x1F is full left
-    // 0x00-0x0F: each step beyond 0x00 attenuates the left side by 3db
-    //            (right side remains at same volume)
-    // 0x10-0x1F: each step beyond 0x10 attenuates the right side by 3db
-    //            (left side remains at same volume)
+    /// Direct send pan (DIPAN)
+    ///   0x00 or 0x10 is center, 0x0F is full right, 0x1F is full left
+    ///   0x00-0x0F: each step beyond 0x00 attenuates the left side by 3db
+    ///              (right side remains at same volume)
+    ///   0x10-0x1F: each step beyond 0x10 attenuates the right side by 3db
+    ///              (left side remains at same volume)
+    pan: u5,
     _0: u3,
-    volume: u4, // Direct send volume (DISDL) - "Affects how much of this channel is being sent directly to the dry output.  0xF is full volume (no attenuation), every level beneath that adds 3dB, and 0x0 means no output.""
+    /// Direct send volume (DISDL) - "Affects how much of this channel is being sent directly to the dry output.  0xF is full volume (no attenuation), every level beneath that adds 3dB, and 0x0 means no output.""
+    volume: u4,
     _1: u4,
     _2: u16,
 };
 
 pub const EnvSettings = packed struct(u32) {
-    q: u5, // filter resonance value Q = (0.75*value)-3, from -3 to 20.25 db
-    lpoff: bool, // 1 = turn off lowpass filter.
-    voff: bool, // if this bit is set to 1, the constant attenuation, envelope, and LFO volumes will not take effect. however, the note will still end when the envelope level reaches zero in the release state.
+    /// filter resonance value Q = (0.75*value)-3, from -3 to 20.25 db
+    q: u5,
+    /// 1 = turn off lowpass filter.
+    lpoff: bool,
+    /// if this bit is set to 1, the constant attenuation, envelope, and LFO volumes will not take effect. however, the note will still end when the envelope level reaches zero in the release state.
+    voff: bool,
     _: u1, // unknown [SAVED]
-    constant_attenuation: u8, // (TL) this value *4 seems to be added to the envelope attenuation (as in, 0x00-0xFF here corresponds to 0x000-0x3FF when referring to the envelope attenuation)
+    /// (TL) this value *4 seems to be added to the envelope attenuation (as in, 0x00-0xFF here corresponds to 0x000-0x3FF when referring to the envelope attenuation)
+    constant_attenuation: u8,
     _r: u16,
 };
 
@@ -172,8 +185,22 @@ pub const AICAChannel = packed struct(u576) {
     lpf_rates_1: LPFRates1, //                0x40                                                                Also named lpf7
     lpf_rates_2: LPFRates2, //                0x44                                                                Also named lpf8
 
-    pub fn sample_address(self: *const AICAChannel) u32 {
+    pub fn sample_address(self: *const @This()) u32 {
         return (@as(u32, self.play_control.start_address) << 16) | (self.sample_address_low & 0xFFFF);
+    }
+
+    pub fn compute_effective_rate(self: *const @This(), rate: u32) u32 {
+        var effective_rate: i32 = 2 * @as(i32, @intCast(rate));
+        if (self.amp_env_2.key_rate_scaling < 0xF) {
+            effective_rate += 2 * self.amp_env_2.key_rate_scaling;
+
+            // NOTE: In Neill Corlett's notes, this is also multiplied by 2, but not in Highly_Theoretical sources.
+            const oct: i32 = @intCast(@as(i4, @bitCast(self.sample_pitch_rate.oct)));
+            effective_rate += 2 * oct;
+
+            effective_rate += ((self.sample_pitch_rate.fns >> 9) & 1);
+        }
+        return @max(0, @min(0x3C, effective_rate));
     }
 };
 
@@ -330,7 +357,7 @@ const MIDIInput = packed struct(u32) {
 pub const ChannelInfoReq = packed struct(u32) {
     MIDI_output_buffer: u8,
     monitor_select: u6,
-    amplitude_or_filter_select: u1,
+    envelope_select: enum(u1) { Amplitude = 0, Filter = 1 },
     _: u17 = 0,
 };
 
@@ -343,7 +370,7 @@ pub const TimerControl = packed struct(u32) {
 const AICARegisterStart = 0x00700000;
 
 pub const AICAChannelState = struct {
-    playing: bool = false,
+    playing: bool = false, // NOTE: This doesn't have any equivalent in the actual chip AFAIK and should probably be removed.
 
     loop_end_flag: bool = false,
     play_position: u16 = 0,
@@ -355,9 +382,12 @@ pub const AICAChannelState = struct {
     filter_env_state: EnvelopeState = .Release,
 
     lfo_phase: u32 = 0,
+    lfo_noise_state: u32 = 0x93ad8044,
 
     prev_sample: i32 = 0,
     curr_sample: i32 = 0,
+    /// Last two sample for the low pass filter. Not serialized, but TODO: Should be at some point (it's just not worth breaking compatibility for)
+    low_pass_filter_samples: [2]i32 = @splat(0),
 
     fractional_play_position: u32 = 0,
 
@@ -369,13 +399,14 @@ pub const AICAChannelState = struct {
         loop_init: bool = false,
     } = .{},
 
-    // Unnecessary, but useful for debugging
+    // Unnecessary, but useful for debugging. Not serialized.
     debug: struct {
         mute: bool = false, // Don't output sample (but run normally otherwise)
     } = .{},
 
-    pub fn key_on(self: *AICAChannelState, registers: *const AICAChannel) void {
+    pub fn key_on(self: *@This(), registers: *const AICAChannel) void {
         if (self.amp_env_state != .Release) return;
+
         self.playing = true;
         self.loop_end_flag = false;
         self.play_position = 0; // Looping channels also start at 0
@@ -390,28 +421,28 @@ pub const AICAChannelState = struct {
         self.fractional_play_position = 0;
 
         self.adpcm_state = .{};
+
+        self.loop_start_check(registers);
     }
 
-    pub fn key_off(self: *AICAChannelState) void {
-        self.playing = false;
+    pub fn key_off(self: *@This()) void {
         self.amp_env_state = .Release;
-        self.amp_env_level = 0x3FF;
         self.filter_env_state = .Release;
-        self.filter_env_level = 0x3FF;
     }
 
-    pub fn compute_effective_rate(registers: *const AICAChannel, rate: u32) u32 {
-        var effective_rate: i32 = 2 * @as(i32, @intCast(rate));
-        if (registers.amp_env_2.key_rate_scaling < 0xF) {
-            effective_rate += 2 * registers.amp_env_2.key_rate_scaling;
-
-            // NOTE: In Neill Corlett's notes, this is also multiplied by 2, but not in Highly_Theoretical sources.
-            const oct: i32 = @intCast(@as(i4, @bitCast(registers.sample_pitch_rate.oct)));
-            effective_rate += 2 * oct;
-
-            effective_rate += ((registers.sample_pitch_rate.fns >> 9) & 1);
+    pub fn loop_start_check(self: *@This(), registers: *const AICAChannel) void {
+        if (self.play_position == registers.loop_start) {
+            if (registers.amp_env_2.link and self.amp_env_state == .Attack)
+                self.amp_env_state = .Decay;
+            if (registers.lfo_control.reset) {
+                self.lfo_phase = 0;
+            }
+            if (!self.adpcm_state.loop_init) {
+                self.adpcm_state.step_loopstart = self.adpcm_state.step;
+                self.adpcm_state.prev_loopstart = self.adpcm_state.prev;
+                self.adpcm_state.loop_init = true;
+            }
         }
-        return @max(0, @min(0x3C, effective_rate));
     }
 
     // Returns true if the channel should advance in the enveloppe calculation for the current sample.
@@ -440,8 +471,61 @@ pub const AICAChannelState = struct {
     }
 
     const ADPCMScale: [8]i32 = .{ 0xE6, 0xE6, 0xE6, 0xE6, 0x133, 0x199, 0x200, 0x266 };
-
     const ADPCMDiff: [8]i32 = .{ 1, 3, 5, 7, 9, 11, 13, 15 };
+
+    pub fn lfo(self: *@This(), form: Waveform) u8 {
+        return @truncate(switch (form) {
+            .Sawtooth => self.lfo_phase >> 24,
+            .Square => (self.lfo_phase >> 31) * 0xFF,
+            .Triangle => if (self.lfo_phase & 0x80000000 == 0)
+                ((self.lfo_phase >> 23) & 0xFF)
+            else
+                (0xFF - ((self.lfo_phase >> 23) & 0xFF)),
+            .Noise => noise: {
+                self.lfo_noise_state = self.lfo_noise_state *% 196314165 +% 907633515;
+                break :noise self.lfo_noise_state;
+            },
+        });
+    }
+
+    // FIXME: These over-complicated serialization functions are here to preserve backward compatibility.
+    // /TODO: Clean them up when we have a good reason to break save state compatibility, and serialize low_pass_filter_samples.
+
+    pub fn serialize(self: *const @This(), writer: *std.Io.Writer) !usize {
+        var bytes: usize = 0;
+        bytes += try writer.write(std.mem.asBytes(&self.lfo_phase));
+        bytes += try writer.write(std.mem.asBytes(&self.prev_sample));
+        bytes += try writer.write(std.mem.asBytes(&self.curr_sample));
+        bytes += try writer.write(&[4]u8{ 0, 0, 0, 0 });
+        bytes += try writer.write(std.mem.asBytes(&self.adpcm_state));
+        bytes += try writer.write(std.mem.asBytes(&self.play_position));
+        bytes += try writer.write(std.mem.asBytes(&self.amp_env_level));
+        bytes += try writer.write(std.mem.asBytes(&self.filter_env_level));
+        bytes += try writer.write(std.mem.asBytes(&self.playing));
+        bytes += try writer.write(std.mem.asBytes(&self.loop_end_flag));
+        bytes += try writer.write(std.mem.asBytes(&self.amp_env_state));
+        bytes += try writer.write(std.mem.asBytes(&self.filter_env_state));
+        bytes += try writer.write(&[2]u8{ 0, 0 });
+        return bytes;
+    }
+
+    pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !void {
+        try reader.readSliceAll(std.mem.asBytes(&self.lfo_phase));
+        try reader.readSliceAll(std.mem.asBytes(&self.prev_sample));
+        try reader.readSliceAll(std.mem.asBytes(&self.curr_sample));
+        _ = try reader.discard(.limited(4));
+        try reader.readSliceAll(std.mem.asBytes(&self.adpcm_state));
+        try reader.readSliceAll(std.mem.asBytes(&self.play_position));
+        try reader.readSliceAll(std.mem.asBytes(&self.amp_env_level));
+        try reader.readSliceAll(std.mem.asBytes(&self.filter_env_level));
+        try reader.readSliceAll(std.mem.asBytes(&self.playing));
+        try reader.readSliceAll(std.mem.asBytes(&self.loop_end_flag));
+        try reader.readSliceAll(std.mem.asBytes(&self.amp_env_state));
+        try reader.readSliceAll(std.mem.asBytes(&self.filter_env_state));
+        _ = try reader.discard(.limited(2));
+
+        self.low_pass_filter_samples = @splat(0);
+    }
 };
 
 // AICA User Manual p. 23
@@ -487,6 +571,20 @@ const EnvelopeDecayValue = [_][4]u4{
     .{ 8, 4, 8, 4 },
     .{ 8, 8, 8, 4 },
     .{ 8, 8, 8, 8 },
+};
+
+const LFOPhaseInc = t: {
+    const LFOPhaseSpeed = [_]u32{
+        0x3FC00, 0x37C00, 0x2FC00, 0x27C00, 0x1FC00, 0x1BC00, 0x17C00, 0x13C00,
+        0x0FC00, 0x0BC00, 0x0DC00, 0x09C00, 0x07C00, 0x06C00, 0x05C00, 0x04C00,
+        0x03C00, 0x03400, 0x02C00, 0x02400, 0x01C00, 0x01800, 0x01400, 0x01000,
+        0x00C00, 0x00A00, 0x00800, 0x00600, 0x00400, 0x00300, 0x00200, 0x00100,
+    };
+    var table: [LFOPhaseSpeed.len]u32 = undefined;
+    for (LFOPhaseSpeed, 0..) |s, idx| {
+        table[idx] = @intCast(@as(u64, 0x100000000) / s);
+    }
+    break :t table;
 };
 
 fn apply_pan_attenuation(sample: i32, level: u4, pan: u5) struct { left: i32, right: i32 } {
@@ -681,24 +779,31 @@ pub const AICA = struct {
         switch (@as(AICARegister, @enumFromInt(reg_addr))) {
             //.MasterVolume => return if (!high_byte) 0x10 else 0,
             .MIDIInput => {
-                var val = self.get_reg(MIDIInput, .MIDIInput);
-                val.mibuf = 0;
-                val.miemp = 1;
-                val.miful = 0;
-                val.miovf = 0;
-                val.moemp = 1;
-                val.moful = 0;
-                val._ = 0;
+                self.get_reg(MIDIInput, .MIDIInput).* = .{
+                    .mibuf = 0,
+                    .miemp = 1,
+                    .miful = 0,
+                    .miovf = 0,
+                    .moemp = 1,
+                    .moful = 0,
+                };
             },
             .PlayStatus => {
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
                 var chan = &self.channel_states[req.monitor_select];
-                var status: PlayStatus = .{
-                    .env_level = @truncate(if (req.amplitude_or_filter_select == 0) chan.amp_env_level else chan.filter_env_level),
-                    .env_state = chan.amp_env_state,
-                    .loop_end_flag = chan.loop_end_flag,
+                var status: PlayStatus = switch (req.envelope_select) {
+                    .Amplitude => .{
+                        .env_level = @truncate(chan.amp_env_level),
+                        .env_state = chan.amp_env_state,
+                        .loop_end_flag = chan.loop_end_flag,
+                    },
+                    .Filter => .{
+                        .env_level = @truncate(chan.filter_env_level),
+                        .env_state = chan.filter_env_state,
+                        .loop_end_flag = chan.loop_end_flag,
+                    },
                 };
-                if (status.env_level >= 0x3C0) status.env_level = 0x1FFF;
+                if (req.envelope_select == .Amplitude and status.env_level >= 0x3C0) status.env_level = 0x1FFF;
                 if (T == u32 or high_byte)
                     chan.loop_end_flag = false; // Cleared on read.
                 if (!high_byte) {
@@ -774,6 +879,12 @@ pub const AICA = struct {
             switch (@as(AICARegister, @enumFromInt(reg_addr))) {
                 .MasterVolume => {
                     aica_log.debug("Write({}) to Master Volume (0x{X:0>8}) = 0x{X:0>8}", .{ T, addr, value });
+                },
+                .RingBufferAddress => {
+                    aica_log.debug("Write({}) to Ring Buffer Address (0x{X:0>8}) = 0x{X:0>8}", .{ T, addr, value });
+                    const old_value: T = self.read_register(T, addr);
+                    if (value != old_value)
+                        self.dsp._dirty_mpro = true;
                 },
                 .DDIR_DEXE => { // DMA transfer direction / DMA transfer start
                     if (T == u8)
@@ -1015,23 +1126,13 @@ pub const AICA = struct {
     }
 
     pub fn generate_sample(self: *AICA, dc: *Dreamcast) void {
-        @memset(self.sample_buffer[self.sample_write_offset..@min(self.sample_write_offset + 2, self.sample_buffer.len)], 0);
-        if (self.sample_write_offset + 2 > self.sample_buffer.len)
-            @memset(self.sample_buffer[0 .. (self.sample_write_offset + 2) % self.sample_buffer.len], 0);
-
         self.get_reg(InterruptBits, .SCIPD).one_sample_interval = 1;
 
-        // Master Volume attenuation: -3dB (halfs the volume) for each attenuation level
-        // FIXME: Really not sure I'm handling this correctly!
-        //   Register Value | Volume
-        // -----------------|----------
-        //        0         | -MAXdB
-        //        1         |  -42dB
-        //        2         |  -39dB
-        //        ...       |
-        //        0xD       |   -6dB
-        //        0xE       |   -3dB
-        //        0xF       |    0dB
+        const offset = self.sample_write_offset;
+        std.debug.assert(offset % 2 == 0);
+        std.debug.assert(offset + 1 < self.sample_buffer.len);
+
+        @memset(self.sample_buffer[offset .. offset + 2], 0);
 
         for (0..64) |i| {
             self.update_channel(@intCast(i));
@@ -1039,31 +1140,29 @@ pub const AICA = struct {
 
         const cdda_samples = dc.gdrom.get_cdda_samples();
 
-        const offset = self.sample_write_offset;
-        std.debug.assert(offset % 2 == 0);
-        std.debug.assert(offset + 1 < self.sample_buffer.len);
-
         if (self.dsp_emulation != .Bypass) {
             self.dsp.set_exts(0, @bitCast(cdda_samples[0]));
             self.dsp.set_exts(1, @bitCast(cdda_samples[1]));
             switch (self.dsp_emulation) {
                 .Interpreter => self.dsp.generate_sample(),
-                .JIT => self.dsp.generate_sample_jit() catch |err| {
-                    aica_log.err("Error in DSP JIT: {}", .{err});
-                },
+                .JIT => self.dsp.generate_sample_jit() catch |err| aica_log.err("Error in DSP JIT: {}", .{err}),
                 else => unreachable,
             }
             for (0..16) |channel| {
                 const mix = self.get_dsp_mix_register(@intCast(channel)).*;
                 const sample = apply_pan_attenuation(self.dsp.read_efreg(channel), mix.efsdl, mix.efpan);
-                // FIXME: I have no idea why the DSP is so low, but it seems to works otherwise and I'm tired of searching for now.
-                //        This factor is totally arbitrary, I have no basis for it except that according to all to sources I found,
-                //        the DSP outputs SHIFTED >> 8 to the EFREGs, and in practice I found that >> 5 works and >> 4 overflows.
-                //        So I should probably go with *8, but... Empirically I think *16 feels nicer. Hopefully that won't cost me an ear :D
-                const fuckthat_factor = 16;
-                self.sample_buffer[offset + 0] +|= fuckthat_factor * sample.left;
-                self.sample_buffer[offset + 1] +|= fuckthat_factor * sample.right;
+                self.sample_buffer[offset + 0] +|= sample.left;
+                self.sample_buffer[offset + 1] +|= sample.right;
             }
+        } else {
+            // Bypass DSP and output the values in the MIXS registers directly (as if they were in the EFREGs).
+            for (0..16) |channel| {
+                const channel_mix = self.get_dsp_mix_register(@intCast(channel));
+                const sample = apply_pan_attenuation(self.dsp.read_mixs(channel) >> 4, channel_mix.efsdl, channel_mix.efpan);
+                self.sample_buffer[offset + 0] +|= sample.left;
+                self.sample_buffer[offset + 1] +|= sample.right;
+            }
+            self.dsp.clear_mixs();
         }
 
         // Stream from GD-ROM
@@ -1078,13 +1177,24 @@ pub const AICA = struct {
             self.sample_buffer[offset + 1] +|= sample.right;
         }
 
+        // Master Volume attenuation: -3dB (halfs the volume) for each attenuation level
+        // FIXME: Really not sure I'm handling this correctly!
+        //   Register Value | Volume
+        // -----------------|----------
+        //        0         | -MAXdB
+        //        1         |  -42dB
+        //        2         |  -39dB
+        //        ...       |
+        //        0xD       |   -6dB
+        //        0xE       |   -3dB
+        //        0xF       |    0dB
         const attenuation: u4 = 0xF - self.get_reg(u4, .MasterVolume).*;
         if (attenuation == 0xF) {
             self.sample_buffer[offset + 0] = 0;
             self.sample_buffer[offset + 1] = 0;
         } else {
-            self.sample_buffer[offset + 0] = self.sample_buffer[offset + 0] >> attenuation;
-            self.sample_buffer[offset + 1] = self.sample_buffer[offset + 1] >> attenuation;
+            self.sample_buffer[offset + 0] >>= attenuation;
+            self.sample_buffer[offset + 1] >>= attenuation;
         }
 
         self.sample_write_offset = (self.sample_write_offset + 2) % self.sample_buffer.len;
@@ -1158,41 +1268,16 @@ pub const AICA = struct {
         if (!state.playing) return;
         if (state.amp_env_level >= 0x3FF) {
             state.amp_env_level = 0x3FF;
+            state.playing = false;
             return;
         }
 
         const i = self._samples_counter;
         const registers = self.get_channel_registers(channel_number);
 
-        const sample_length = 0x40000;
-        // "For FNS = 0 (and OCT = 0), the tone matches the sampling source."
-        var base_play_position_inc: u32 = sample_length | (@as(u32, registers.sample_pitch_rate.fns) << 8);
-        if ((registers.sample_pitch_rate.oct & 8) == 0) {
-            base_play_position_inc <<= registers.sample_pitch_rate.oct;
-        } else {
-            base_play_position_inc >>= @as(u5, 16) - registers.sample_pitch_rate.oct;
-        }
-        // "Values in parentheses are +1 octave for ADPCM" (p.25)
-        if (registers.play_control.sample_format == .ADPCM and registers.sample_pitch_rate.oct >= 0x2 and registers.sample_pitch_rate.oct <= 0x7)
-            base_play_position_inc <<= 1;
-
-        if (state.play_position == registers.loop_start) {
-            if (registers.amp_env_2.link == 1 and state.amp_env_state == .Attack)
-                state.amp_env_state = .Decay;
-            if (registers.lfo_control.reset) {
-                state.lfo_phase = 0;
-            }
-            if (!state.adpcm_state.loop_init) {
-                state.adpcm_state.step_loopstart = state.adpcm_state.step;
-                state.adpcm_state.prev_loopstart = state.adpcm_state.prev;
-                state.adpcm_state.loop_init = true;
-            }
-        }
-
         // Advance amplitude envelope
         {
-            const effective_rate = AICAChannelState.compute_effective_rate(
-                registers,
+            const effective_rate = registers.compute_effective_rate(
                 switch (state.amp_env_state) {
                     .Attack => registers.amp_env_1.attack_rate,
                     .Decay => registers.amp_env_1.decay_rate,
@@ -1200,7 +1285,7 @@ pub const AICA = struct {
                     .Release => registers.amp_env_2.release_rate,
                 },
             );
-            if (AICAChannelState.env_should_advance(effective_rate, @intCast(i))) {
+            if (AICAChannelState.env_should_advance(effective_rate, i)) {
                 const idx = if (effective_rate < 0x30) 0 else effective_rate - 0x30;
                 switch (state.amp_env_state) {
                     .Attack => {
@@ -1230,8 +1315,7 @@ pub const AICA = struct {
         }
         // Advance low pass filter envelope
         {
-            const effective_rate = AICAChannelState.compute_effective_rate(
-                registers,
+            const effective_rate = registers.compute_effective_rate(
                 switch (state.filter_env_state) {
                     .Attack => registers.lpf_rates_1.lpf_attack_rate,
                     .Decay => registers.lpf_rates_1.lpf_decay_rate,
@@ -1239,30 +1323,27 @@ pub const AICA = struct {
                     .Release => registers.lpf_rates_2.lpf_release_rate,
                 },
             );
-            if (AICAChannelState.env_should_advance(effective_rate, @intCast(i))) {
+            if (AICAChannelState.env_should_advance(effective_rate, i)) {
                 const idx = if (effective_rate < 0x30) 0 else effective_rate - 0x30;
                 const decay = EnvelopeDecayValue[idx][i % 4];
                 const target: u16 = @truncate(switch (state.filter_env_state) {
                     .Attack => registers.flv1 & 0x1FFF,
                     .Decay => registers.flv2 & 0x1FFF,
                     .Sustain => registers.flv3 & 0x1FFF,
-                    else => 0,
+                    .Release => registers.flv4 & 0x1FFF,
                 });
                 if (state.filter_env_level < target) {
                     state.filter_env_level +|= decay;
                     state.filter_env_level = @min(state.filter_env_level, target);
                 } else if (state.filter_env_level > target) {
-                    if (state.filter_env_level > decay) {
-                        state.filter_env_level -|= decay;
-                    } else {
-                        state.filter_env_level = 0;
-                    }
+                    state.filter_env_level -|= decay;
                     state.filter_env_level = @max(state.filter_env_level, target);
-                } else {
+                }
+                if (state.filter_env_level == target) {
                     switch (state.filter_env_state) {
                         .Attack => state.filter_env_state = .Decay,
                         .Decay => state.filter_env_state = .Sustain,
-                        .Sustain => state.filter_env_state = .Release,
+                        .Sustain => state.filter_env_state = .Release, // FIXME: Wait for key off?
                         .Release => {},
                     }
                 }
@@ -1270,11 +1351,48 @@ pub const AICA = struct {
         }
 
         // Interpolate samples
-        const f: i32 = @intCast((state.fractional_play_position >> 4) & 0x3FFF);
-        const sample: i32 = (state.curr_sample * f) + (state.prev_sample * (0x4000 - f)) >> 14;
+        const frac: i32 = @intCast((state.fractional_play_position >> 4) & 0x3FFF);
+        var sample: i32 = (state.curr_sample * frac) + (state.prev_sample * (0x4000 - frac)) >> 14;
+
+        // Apply resonant low pass filter
+        if (!registers.env_settings.lpoff) {
+            // FIXME: This was barely tested.
+            const f: i32 = (((state.filter_env_level & 0xFF) | 0x100) << 4) >> @truncate(@as(u5, @truncate(state.filter_env_level >> 8)) ^ 0x1F);
+            const q = 0x0E00 + 0x80 * @as(i32, registers.env_settings.q);
+            sample = f * sample + (0x2000 - f + q) * state.low_pass_filter_samples[0] - q * state.low_pass_filter_samples[1];
+            sample >>= 13;
+            sample = std.math.clamp(sample, std.math.minInt(i16), std.math.maxInt(i16));
+            state.low_pass_filter_samples[1] = state.low_pass_filter_samples[0];
+            state.low_pass_filter_samples[0] = sample;
+        }
+
+        state.lfo_phase +%= LFOPhaseInc[registers.lfo_control.frequency];
+
+        // Apply amplitude envelope
+        if (!registers.env_settings.voff) {
+            var attenuation: u32 = registers.env_settings.constant_attenuation;
+            attenuation <<= 2;
+            attenuation +|= state.amp_env_level;
+            if (registers.lfo_control.amplitude_modulation_depth != 0) {
+                // Low Frequency Oscillator amplitude modulation
+                // FIXME: Needs more testing, hence the warning.
+                if (Once(@src())) aica_log.warn("Using LFO amplitude modulation: {t}, {d}", .{ registers.lfo_control.amplitude_modulation_waveform, registers.lfo_control.amplitude_modulation_depth });
+                const att: u8 = state.lfo(registers.lfo_control.amplitude_modulation_waveform);
+                attenuation +|= @as(u32, 2) * (att >> (7 - registers.lfo_control.amplitude_modulation_depth));
+            }
+            if (attenuation >= 0x3C0) {
+                sample = 0;
+            } else {
+                // (every 0x40 on the envelope attenuation level is 3dB)
+                sample >>= @truncate(attenuation >> 6);
+            }
+        }
+
+        // Output to sample buffer and/or DSP
         if (!state.debug.mute) {
             const disdl = registers.direct_pan_vol_send.volume; // Attenuation level when output to the DAC. I guess that means when bypassing the DSP?
             const dipan = if (self.get_reg(MasterVolume, .MasterVolume).mono) 0 else registers.direct_pan_vol_send.pan;
+
             // Direct send to the DAC
             if (disdl != 0) { // 0 means full attenuation, not send.
                 const s = apply_pan_attenuation(sample, disdl, dipan);
@@ -1283,21 +1401,42 @@ pub const AICA = struct {
             }
             if (registers.dps_channel_send.level != 0) {
                 const channel = registers.dps_channel_send.channel;
-                const att: u4 = 0xF - registers.dps_channel_send.level;
-                const attenuated: i32 = sample >> att;
-
-                if (self.dsp_emulation != .Bypass) {
-                    self.dsp.add_mixs(channel, @intCast(attenuated));
-                } else {
-                    // Bypass DSP and output the sample directly
-                    const channel_mix = self.get_dsp_mix_register(channel);
-                    const s = apply_pan_attenuation(attenuated, channel_mix.efsdl, channel_mix.efpan);
-
-                    self.sample_buffer[(2 * i + 0) % self.sample_buffer.len] +|= s.left;
-                    self.sample_buffer[(2 * i + 1) % self.sample_buffer.len] +|= s.right;
-                }
+                const attenuation: u4 = 0xF - registers.dps_channel_send.level;
+                const to_mixs: i32 = (sample << 4) >> attenuation; // MIXS are 20 bits, from 16bit samples.
+                self.dsp.add_mixs(channel, @intCast(to_mixs));
             }
         }
+
+        // Compute playback speed according to desired pitch (FNS/OCT) and LFO pitch modulation.
+        // "For FNS = 0 (and OCT = 0), the tone matches the sampling source."
+        const sample_length = 0x40000;
+        var fns: i32 = @intCast(registers.sample_pitch_rate.fns);
+        if (registers.lfo_control.pitch_modulation_depth > 0) {
+            // Low Frequency Oscillator (LFO) pitch modulation
+            // FIXME: Needs more testing, hence the warning.
+            if (Once(@src())) aica_log.warn("Using LFO pitch modulation: {t}, {d}", .{ registers.lfo_control.pitch_modulation_waveform, registers.lfo_control.pitch_modulation_depth });
+            const wave = state.lfo(registers.lfo_control.pitch_modulation_waveform);
+            const shift = @as(i16, wave) - 0x80;
+            fns += switch (registers.lfo_control.pitch_modulation_depth) {
+                0 => unreachable,
+                1 => shift >> 5,
+                2 => shift >> 4,
+                3 => shift >> 3,
+                4 => shift >> 2,
+                5 => shift >> 1,
+                6 => shift,
+                7 => shift << 1,
+            };
+        }
+        var base_play_position_inc: u32 = @intCast(@max(0, sample_length + (fns << 8)));
+        if ((registers.sample_pitch_rate.oct & 8) == 0) {
+            base_play_position_inc <<= registers.sample_pitch_rate.oct;
+        } else {
+            base_play_position_inc >>= @as(u5, 16) - registers.sample_pitch_rate.oct;
+        }
+        // "Values in parentheses are +1 octave for ADPCM" (p.25)
+        if (registers.play_control.sample_format == .ADPCM and registers.sample_pitch_rate.oct >= 0x2 and registers.sample_pitch_rate.oct <= 0x7)
+            base_play_position_inc <<= 1;
 
         state.fractional_play_position += base_play_position_inc;
         while (state.fractional_play_position >= sample_length) {
@@ -1307,69 +1446,19 @@ pub const AICA = struct {
             const sample_ram = self.wave_memory[registers.sample_address()..];
             state.curr_sample = switch (registers.play_control.sample_format) {
                 .i16 => @as([*]const i16, @ptrCast(@alignCast(sample_ram.ptr)))[state.play_position],
-                .i8 => @as(i32, @intCast(@as([*]const i8, @ptrCast(@alignCast(sample_ram.ptr)))[state.play_position])) << 8,
+                .i8 => @as(i32, @as(i8, @bitCast(sample_ram[state.play_position]))) << 8,
                 // FIXME: ADPCMStream, how does it work?
                 .ADPCM, .ADPCMStream => adpcm: {
                     // 4 bits per sample
-                    var s: u8 = @intCast(@as([*]const u8, @ptrCast(@alignCast(sample_ram.ptr)))[state.play_position >> 1]);
+                    var s: u8 = sample_ram[state.play_position >> 1];
                     if (state.play_position & 1 == 1)
                         s >>= 4;
                     break :adpcm state.compute_adpcm(@truncate(s));
                 },
             };
 
-            if (!registers.env_settings.lpoff) {
-                // TODO! Resonant Low Pass Filter
-            }
-
-            const lfo_phase_inc = t: {
-                const lfo_phase_speed = [_]u32{
-                    0x3FC00, 0x37C00, 0x2FC00, 0x27C00, 0x1FC00, 0x1BC00, 0x17C00, 0x13C00,
-                    0x0FC00, 0x0BC00, 0x0DC00, 0x09C00, 0x07C00, 0x06C00, 0x05C00, 0x04C00,
-                    0x03C00, 0x03400, 0x02C00, 0x02400, 0x01C00, 0x01800, 0x01400, 0x01000,
-                    0x00C00, 0x00A00, 0x00800, 0x00600, 0x00400, 0x00300, 0x00200, 0x00100,
-                };
-                var table: [lfo_phase_speed.len]u32 = undefined;
-                for (lfo_phase_speed, 0..) |s, idx| {
-                    table[idx] = @intCast(@as(u64, 0x100000000) / s);
-                }
-                break :t table;
-            };
-
-            state.lfo_phase +%= lfo_phase_inc[registers.lfo_control.frequency];
-
-            // Apply amplitude envelope
-            if (!registers.env_settings.voff) {
-                var attenuation: u32 = registers.env_settings.constant_attenuation;
-                attenuation <<= 2;
-                attenuation +|= state.amp_env_level;
-                if (registers.lfo_control.amplitude_modulation_depth != 0) {
-                    // Low Frequency Oscillator amplitude modulation
-                    // FIXME: This wasn't tested at all.
-                    const att: u8 = @truncate(switch (registers.lfo_control.amplitude_modulation_waveform) {
-                        .Sawtooth => state.lfo_phase >> 24,
-                        .Square => (state.lfo_phase >> 31) * 0xFF,
-                        .Triangle => if (state.lfo_phase & 0x80000000 == 0)
-                            ((state.lfo_phase >> 23) & 0xFF)
-                        else
-                            (0xFF - ((state.lfo_phase >> 23) & 0xFF)),
-                        .Noise => 0, // TODO
-                    });
-                    attenuation +|= @as(u32, 2) * (att >> (7 - registers.lfo_control.amplitude_modulation_depth));
-                }
-                if (attenuation >= 0x3C0) {
-                    state.curr_sample = 0;
-                } else {
-                    // (every 0x40 on the envelope attenuation level is 3dB)
-                    state.curr_sample = state.curr_sample >> @truncate(attenuation >> 6);
-                }
-            }
-
-            if (registers.lfo_control.pitch_modulation_depth > 0) {
-                // TODO: Low Frequency Oscillator (LFO) pitch modulation
-            }
-
             state.play_position +%= 1;
+            state.loop_start_check(registers);
 
             if (state.play_position >= registers.loop_end & 0xFFFF) {
                 state.loop_end_flag = true;
@@ -1382,8 +1471,7 @@ pub const AICA = struct {
                     }
                 } else {
                     state.playing = false;
-                    state.amp_env_level = 0x3FF;
-                    state.play_position = @truncate(registers.loop_end);
+                    state.play_position = 0;
                     return;
                 }
             }
@@ -1506,7 +1594,8 @@ pub const AICA = struct {
         bytes += try self.arm7.serialize(writer);
         bytes += try self.dsp.serialize(writer);
         bytes += try writer.write(std.mem.sliceAsBytes(self.regs));
-        bytes += try writer.write(std.mem.sliceAsBytes(self.channel_states));
+        for (self.channel_states) |state|
+            bytes += try state.serialize(writer);
         bytes += try writer.write(std.mem.asBytes(&self.rtc_write_enabled));
         bytes += try writer.write(std.mem.asBytes(&self._arm_cycles_counter));
         bytes += try writer.write(std.mem.asBytes(&self._timer_cycles_counter));
@@ -1531,7 +1620,8 @@ pub const AICA = struct {
         try self.arm7.deserialize(reader);
         try self.dsp.deserialize(reader);
         try reader.readSliceAll(std.mem.sliceAsBytes(self.regs));
-        try reader.readSliceAll(std.mem.sliceAsBytes(self.channel_states));
+        for (self.channel_states) |*state|
+            try state.deserialize(reader);
         try reader.readSliceAll(std.mem.asBytes(&self.rtc_write_enabled));
         try reader.readSliceAll(std.mem.asBytes(&self._arm_cycles_counter));
         try reader.readSliceAll(std.mem.asBytes(&self._timer_cycles_counter));

@@ -145,12 +145,13 @@ fn MDEC_CT(self: *@This()) *u16 {
     return @ptrCast(&self._regs[MDEC_CT_base]);
 }
 
-// There aren't actually memory mapped (that I know of), but we have the
+// These aren't actually memory mapped (that I know of), but we have the
 // memory, might as well use it. It also simplifies the JIT a bit: we
 // can use the register array as base for all memory operations.
 //   Added a warning in read/write functions just in case.
 const MDEC_CT_base = 0x1600 / 4;
 const TEMP_MEM_base = 0x1604 / 4;
+const TEMP_SLOTS = 4;
 
 /// 0x3000-0x31FF: Coefficients (COEF), 128 registers, 13 bits each
 ///               0x3000: bits 15-3 = COEF(0)
@@ -290,7 +291,7 @@ fn write_mixs(self: *@This(), idx: usize, value: i20) void {
     }
 }
 pub fn add_mixs(self: *@This(), idx: usize, value: i20) void {
-    self.write_mixs(idx, self.read_mixs(idx) + value);
+    self.write_mixs(idx, self.read_mixs(idx) +| value);
 }
 
 // 0x4580-0x45BF: Effect output data (EFREG), 16 registers, 16 bits each
@@ -320,7 +321,7 @@ pub fn set_exts(self: *@This(), idx: usize, value: u16) void {
     self._exts(idx).* = value;
 }
 
-fn clear_mixs(self: *@This()) void {
+pub fn clear_mixs(self: *@This()) void {
     @memset(self._regs[MIXS_base .. MIXS_base + 2 * 16], 0);
 }
 fn clear_efreg(self: *@This()) void {
@@ -568,7 +569,7 @@ pub fn compile(self: *@This()) !void {
             if (instruction.MRD) {
                 try b.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(self._memory.ptr) });
                 try b.mov(EAX, .{ .mem = .{ .base = .rax, .index = addr.reg, .size = 16 } });
-                try b.mov(.{ .mem = .{ .base = RegistersBase, .displacement = @intCast(4 * (TEMP_MEM_base + (step % 4))), .size = 16 } }, EAX);
+                try b.mov(.{ .mem = .{ .base = RegistersBase, .displacement = @intCast(4 * (TEMP_MEM_base + (step % TEMP_SLOTS))), .size = 16 } }, EAX);
             }
 
             if (instruction.MWT) {
@@ -580,8 +581,6 @@ pub fn compile(self: *@This()) !void {
                     try b.push(.{ .reg64 = INPUTS.reg });
 
                     try b.mov(.{ .reg = Architecture.ArgRegisters[0] }, SHIFTED);
-                    try b.append(.{ .And = .{ .dst = .{ .reg = Architecture.ArgRegisters[0] }, .src = .{ .imm32 = 0xFFF } } });
-
                     try b.call(f16_from_i32);
 
                     try b.pop(.{ .reg64 = INPUTS.reg });
@@ -596,17 +595,17 @@ pub fn compile(self: *@This()) !void {
         if (instruction.ADRL) {
             if (instruction.SHFT == 3) {
                 try b.mov(ADRS_REG, INPUTS);
-                try b.sar(FRC_REG, 16);
+                try b.sar(ADRS_REG, 16);
             } else {
                 try b.mov(ADRS_REG, SHIFTED);
-                try b.sar(FRC_REG, 12);
+                try b.sar(ADRS_REG, 12);
             }
             try b.append(.{ .And = .{ .dst = ADRS_REG, .src = .{ .imm32 = 0xFFF } } });
         }
 
         if (instruction.IWT) {
-            const TEMP_MEM_op: Architecture.Operand = .{ .mem = .{ .base = RegistersBase, .displacement = @intCast(4 * (TEMP_MEM_base + ((step - 2) % 4))), .size = 16 } };
-            if (self.read_mpro(step - 2).NOFL) {
+            const TEMP_MEM_op: Architecture.Operand = .{ .mem = .{ .base = RegistersBase, .displacement = @intCast(4 * (TEMP_MEM_base + ((@max(2, step) - 2) % 4))), .size = 16 } };
+            if (self.read_mpro(@max(2, step) - 2).NOFL) {
                 try b.mov(EAX, TEMP_MEM_op);
                 try b.shl(EAX, .{ .imm8 = 8 });
             } else {
@@ -634,10 +633,11 @@ pub fn compile(self: *@This()) !void {
 pub fn generate_sample_jit(self: *@This()) !void {
     if (self._dirty_mpro) try self.compile();
 
+    for (0..TEMP_SLOTS) |i| self._regs[TEMP_MEM_base + i] = 0;
     self.clear_efreg();
 
     if (self._jit_buffer) |buffer|
-        @as(*const fn ([*]u32) callconv(Architecture.CallingConvention) void, @ptrCast(&buffer[0]))(self._regs.ptr);
+        @as(*const fn ([*]u32) callconv(Architecture.CallingConvention) void, @ptrCast(buffer.ptr))(self._regs.ptr);
 
     self.decrement_mdec_ct();
     self.clear_mixs();
@@ -653,7 +653,7 @@ pub fn generate_sample(self: *@This()) void {
     // 12-bit whole address
     var ADRS_REG: u12 = 0;
 
-    var temp_word: [4]u16 = @splat(0);
+    var temp_word: [TEMP_SLOTS]u16 = @splat(0);
 
     self.clear_efreg();
 
