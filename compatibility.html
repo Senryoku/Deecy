@@ -202,6 +202,28 @@
 				text-transform: uppercase;
 				font-size: 0.8em;
 			}
+
+			.copy-link-btn {
+				background: none;
+				border: none;
+				color: var(--text-dim);
+				cursor: pointer;
+				padding: 5px;
+				display: inline-flex;
+				align-items: center;
+				transition:
+					color 0.2s,
+					transform 0.1s;
+			}
+
+			.copy-link-btn:hover {
+				color: var(--accent-gold);
+				transform: scale(1.1);
+			}
+
+			.copy-link-btn:active {
+				transform: scale(0.9);
+			}
 		</style>
 	</head>
 	<body>
@@ -288,6 +310,15 @@
 					threshold: 0.3,
 				});
 				renderTable(gamesData);
+
+				if (window.location.hash) {
+					const gameName = decodeURIComponent(
+						window.location.hash.slice(1),
+					);
+					const game = gamesData.find((g) => g.game === gameName);
+					const listElement = document.getElementById(gameName);
+					if (game && listElement) setDetails(game, listElement);
+				}
 			}
 
 			function statusClass(status) {
@@ -295,15 +326,22 @@
 			}
 
 			function setDetails(data, element) {
+				const gameHash = encodeURIComponent(data.game);
+				history.replaceState(null, null, `#${gameHash}`);
+
 				document
 					.querySelectorAll(".game-row")
 					.forEach((r) => r.classList.remove("active"));
 				element.classList.add("active");
 
-				let html = `
-			                 <div class="game-title-area">
-			                     <h2>${data.game}</h2>
-			                     <div>${data.tags.map((t) => `<span class="tag">${t}</span>`).join("")}</div>
+				const permalink = `${window.location.origin}${window.location.pathname}#${encodeURIComponent(data.game)}`;
+
+				let html = `<div class="game-title-area">
+			                    <h2 style="display: inline-block">${data.game}</h2>
+								<button class="copy-link-btn" onclick="navigator.clipboard.writeText('${permalink}', this)" title="Copy Permalink">
+									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+								</button>
+			                    <div>${data.tags.map((t) => `<span class="tag">${t}</span>`).join("")}</div>
 			                 </div>
 							 <div class="game-info">
 			             `;
@@ -357,6 +395,7 @@
 					const status = item.status_reports[0]?.status ?? "Unknown";
 
 					const row = document.createElement("tr");
+					row.id = item.game;
 					row.className = "game-row";
 					row.innerHTML = `
 						<td><strong>${item.game}</strong></td>
