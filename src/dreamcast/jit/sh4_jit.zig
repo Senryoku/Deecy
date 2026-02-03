@@ -740,6 +740,11 @@ pub const SH4JIT = struct {
     pub noinline fn compile(self: *@This(), start_ctx: JITContext) !*BasicBlock {
         var ctx = start_ctx;
 
+        if (start_ctx.mmu_enabled and self.block_invalidation == .None) {
+            sh4_jit_log.warn("MMU enabled: Switching to 'Hash' block invalidation strategy.", .{});
+            self.block_invalidation = .Hash;
+        }
+
         // When the MMU is enabled, crossing a page boundary might raise a exception.
         // It's easier to just bail in this case.
         // 1KB is the smallest page size, but I haven't seen it used in practice, this could
