@@ -211,18 +211,19 @@
 				padding: 5px;
 				display: inline-flex;
 				align-items: center;
-				transition:
-					color 0.2s,
-					transform 0.1s;
-			}
-
-			.copy-link-btn:hover {
-				color: var(--accent-gold);
-				transform: scale(1.1);
+				transition: color 0.2s;
+				font-size: 1.6em;
 			}
 
 			.copy-link-btn:active {
 				transform: scale(0.9);
+			}
+
+			.icon {
+				font-size: 1.1em;
+				line-height: 1.1;
+				display: inline-block;
+				margin: 0 4px;
 			}
 		</style>
 	</head>
@@ -336,13 +337,20 @@
 
 				const permalink = `${window.location.origin}${window.location.pathname}#${encodeURIComponent(data.game)}`;
 
+				const githubIssueURL = `https://github.com/Senryoku/Deecy/issues/new?template=bug_report.yml&assignees=Senryoku&title=${encodeURIComponent(data.game)}`;
+
 				let html = `<div class="game-title-area">
 			                    <h2 style="display: inline-block">${data.game}</h2>
 								<button class="copy-link-btn" onclick="navigator.clipboard.writeText('${permalink}', this)" title="Copy Permalink">
-									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+									<span class="icon">🔗</span>
 								</button>
 			                    <div>${data.tags.map((t) => `<span class="tag">${t}</span>`).join("")}</div>
 			                 </div>
+							<div>
+								<a href="${githubIssueURL}" target="_blank" class="action-btn report-btn" title="Use Issue Template">
+									<span class="icon">⚠</span><span>Report an issue with this game</span>
+								</a>
+							</div>
 							 <div class="game-info">
 			             `;
 
