@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0"></script>
+		<title>Deecy Compatibility Dashboard</title>
+		<link href="style.css" rel="stylesheet" />
+		<style>
+			:root {
+				--status-playable: #10b981;
+				--status-ingame: #f59e0b;
+				--status-intro: #ef4444;
+			}
+
+			.dashboard {
+				display: flex;
+				height: 100vh;
+				width: 100%;
+			}
+
+			.sidebar {
+				flex: 1;
+				min-width: 450px;
+				display: flex;
+				flex-direction: column;
+				border-right: 1px solid var(--border);
+				background: var(--bg-panel);
+			}
+
+			.sidebar-header {
+				padding: 20px;
+				border-bottom: 1px solid var(--border);
+			}
+
+			.sidebar-header h1 {
+				font-size: 1.5em;
+				color: var(--accent-gold);
+				font-variant: small-caps;
+				margin-bottom: 15px;
+			}
+
+			input#search {
+				width: 100%;
+				padding: 12px;
+				background: #111;
+				border: 1px solid var(--border);
+				border-radius: 6px;
+				color: white;
+				font-size: 0.95em;
+			}
+			#clear-search {
+				position: absolute;
+				right: 10px;
+				top: 50%;
+				transform: translateY(-50%);
+				background: none;
+				border: none;
+				color: var(--text-dim);
+				font-size: 1.5em;
+				cursor: pointer;
+				line-height: 1;
+			}
+
+			#clear-search:hover {
+				color: var(--accent-gold);
+			}
+			input#search {
+				padding-right: 35px;
+			}
+
+			.table-wrapper {
+				flex: 1;
+				overflow-y: auto;
+			}
+
+			table {
+				width: 100%;
+				border-collapse: collapse;
+				table-layout: fixed;
+			}
+
+			thead th {
+				position: sticky;
+				top: 0;
+				background: #1a1a1a;
+				text-align: left;
+				padding: 12px;
+				font-size: 0.85em;
+				color: var(--text-dim);
+				border-bottom: 1px solid var(--border);
+				z-index: 10;
+			}
+			th:nth-child(1),
+			td:nth-child(1) {
+				width: 55%;
+			}
+			th:nth-child(2),
+			td:nth-child(2) {
+				width: 25%;
+			}
+			th:nth-child(3),
+			td:nth-child(3) {
+				width: 20%;
+			}
+
+			tr.game-row {
+				cursor: pointer;
+				transition: background 0.2s;
+				border-bottom: 1px solid #333;
+			}
+			tr.game-row:hover {
+				background: #333;
+			}
+			tr.game-row.active {
+				background: #3b3b3b;
+				box-shadow: inset 4px 0 0 0 var(--accent-gold);
+			}
+
+			td {
+				padding: 12px;
+				font-size: 0.95em;
+				white-space: nowrap;
+				overflow: hidden;
+				text-overflow: ellipsis;
+			}
+
+			.details-panel {
+				flex: 1.2;
+				background: var(--bg-dark);
+				overflow-y: auto;
+				padding: 40px;
+			}
+
+			.details-placeholder {
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				height: 100%;
+				color: var(--text-dim);
+				font-style: italic;
+			}
+
+			.game-title-area {
+				margin-bottom: 30px;
+			}
+			.game-title-area h2 {
+				font-size: 2.5em;
+				margin-bottom: 10px;
+			}
+			.game-info {
+				display: flex;
+				flex-direction: column;
+				gap: 20px;
+				margin-bottom: 20px;
+			}
+
+			.tag {
+				background: #444;
+				padding: 2px 8px;
+				border-radius: 4px;
+				font-size: 0.75em;
+				margin-right: 5px;
+				color: var(--accent-gold);
+			}
+
+			.report-card {
+				background: var(--bg-panel);
+				border: 1px solid var(--border);
+				border-radius: 8px;
+				padding: 20px;
+				margin-bottom: 15px;
+			}
+
+			.report-header {
+				display: flex;
+				justify-content: space-between;
+				margin-bottom: 10px;
+				font-family: monospace;
+				font-size: 0.9em;
+				border-bottom: 1px solid #333;
+				padding-bottom: 10px;
+			}
+
+			.status-playable,
+			.bg-playable {
+				color: var(--status-playable);
+			}
+			.status-ingame,
+			.bg-ingame {
+				color: var(--status-ingame);
+			}
+			.status-intro,
+			.status-nothing,
+			.bg-intro,
+			.bg-nothing {
+				color: var(--status-intro);
+			}
+
+			.status-badge {
+				font-weight: bold;
+				text-transform: uppercase;
+				font-size: 0.8em;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="dashboard">
+			<div class="sidebar">
+				<div class="sidebar-header">
+					<div style="display: flex; gap: 10px">
+						<img
+							src="logo.svg"
+							width="32"
+							height="32"
+							alt="Deecy Logo"
+						/>
+						<h1>Deecy Compatibility</h1>
+					</div>
+					<div>
+						Compatibility list for the
+						<a
+							href="https://senryoku.github.io/Deecy/"
+							target="_blank"
+							>Deecy emulator</a
+						>.
+					</div>
+					<div>
+						Contribute to this list on
+						<a
+							href="https://github.com/Senryoku/Deecy-Compatibility"
+							target="_blank"
+						>
+							the repository</a
+						>. Report bugs on
+						<a
+							href="https://github.com/Senryoku/Deecy/issues"
+							target="_blank"
+						>
+							GitHub issue tracker</a
+						>.
+					</div>
+					<br />
+					<div style="position: relative">
+						<input
+							type="text"
+							id="search"
+							placeholder="Search game or tag (e.g. 'WinCE')..."
+						/>
+						<button id="clear-search" style="display: none">
+							&times;
+						</button>
+					</div>
+				</div>
+				<div class="table-wrapper">
+					<table>
+						<thead>
+							<tr>
+								<th>Game Name</th>
+								<th>Tags</th>
+								<th>Status</th>
+							</tr>
+						</thead>
+						<tbody id="compatibility-table-body"></tbody>
+					</table>
+				</div>
+			</div>
+
+			<div class="details-panel" id="compatibility-details">
+				<div class="details-placeholder">
+					Select a game from the list to view compatibility reports
+				</div>
+			</div>
+		</div>
+
+		<script>
+			let gamesData = [];
+
+			let fuse;
+
+			async function init() {
+				const response = await fetch(
+					"https://raw.githubusercontent.com/Senryoku/Deecy-Compatibility/main/compatibility.json",
+				);
+				gamesData = await response.json();
+				fuse = new Fuse(gamesData, {
+					keys: ["game", "tags"],
+					threshold: 0.3,
+				});
+				renderTable(gamesData);
+			}
+
+			function statusClass(status) {
+				return status.toLowerCase().replace(/\s+/g, "");
+			}
+
+			function setDetails(data, element) {
+				document
+					.querySelectorAll(".game-row")
+					.forEach((r) => r.classList.remove("active"));
+				element.classList.add("active");
+
+				let html = `
+			                 <div class="game-title-area">
+			                     <h2>${data.game}</h2>
+			                     <div>${data.tags.map((t) => `<span class="tag">${t}</span>`).join("")}</div>
+			                 </div>
+							 <div class="game-info">
+			             `;
+
+				if (data.linked_issues?.length > 0) {
+					html += `
+						<div class="linked-issues">
+							Linked issues: ${data.linked_issues.map((i) => `<a href="https://github.com/Senryoku/Deecy/issues/${i}" target="_blank">#${i}</a>`).join(", ")}
+						</div>
+					`;
+				}
+
+				html += `</div>`;
+
+				for (let report of data.status_reports) {
+					const headers = [];
+					if (report.version)
+						headers.push(`<div>#${report.version}</div>`);
+					if (report.commit)
+						headers.push(
+							`<div><a href="https://github.com/Senryoku/Deecy/commit/${report.commit}" target="_blank">#${report.commit.substring(0, 7)}</a></div>`,
+						);
+					if (report.game_version)
+						headers.push(`<div>#${report.game_version}</div>`);
+					if (report.status)
+						headers.push(
+							`<div class="status-${statusClass(report.status)}">${report.status}</div>`,
+						);
+
+					html += `
+						<div class="report-card">
+							<div class="report-header">
+								${headers.join("")}
+							</div>
+							<div class="report-notes">${report.notes ?? "No notes."}</div>
+						</div>
+					`;
+				}
+
+				document.getElementById("compatibility-details").innerHTML =
+					html;
+			}
+
+			function renderTable(data) {
+				const tbody = document.getElementById(
+					"compatibility-table-body",
+				);
+				tbody.innerHTML = "";
+
+				data.forEach((item) => {
+					const status = item.status_reports[0]?.status ?? "Unknown";
+
+					const row = document.createElement("tr");
+					row.className = "game-row";
+					row.innerHTML = `
+						<td><strong>${item.game}</strong></td>
+						<td><div style="overflow: hidden; text-overflow: ellipsis;">${item.tags.map((t) => `<span class="tag">${t}</span>`).join("")}</div></td>
+						<td><span class="status-badge status-${statusClass(status)}">${status}</span></td>
+					`;
+					row.onclick = () => setDetails(item, row);
+					tbody.appendChild(row);
+				});
+			}
+
+			const searchInput = document.getElementById("search");
+			const clearBtn = document.getElementById("clear-search");
+
+			searchInput.addEventListener("input", (e) => {
+				const query = e.target.value;
+				clearBtn.style.display = query ? "block" : "none";
+				if (!query) {
+					renderTable(gamesData);
+					return;
+				}
+				renderTable(fuse.search(query).map((r) => r.item));
+			});
+
+			clearBtn.addEventListener("click", () => {
+				searchInput.value = "";
+				clearBtn.style.display = "none";
+				renderTable(gamesData);
+				searchInput.focus();
+			});
+
+			init();
+		</script>
+	</body>
+</html>

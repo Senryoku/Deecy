@@ -1,0 +1,45 @@
+:root {
+	--accent-gold: #f7a41d;
+	--accent-blue: #3b75c2;
+	--accent-blue-high: #558fdb;
+
+	--bg-dark: #1e1e1e;
+	--bg-panel: #242424;
+	--bg-row-alt: #2e2e2e;
+	--border: #444;
+	--text-main: #eee;
+	--text-dim: #aaa;
+}
+
+* {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+body {
+	font-family: Arial, sans-serif;
+	background: linear-gradient(135deg, var(--bg-dark), #2a2a2a);
+	color: #eee;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	min-height: 100vh;
+}
+
+/* Firefox specific */
+@-moz-document url-prefix() {
+	body {
+		background: var(--bg-dark);
+	}
+}
+
+a {
+	color: var(--accent-blue-high);
+	text-decoration: none;
+}
+
+a:hover {
+	color: var(--accent-blue);
+	text-decoration: underline;
+}

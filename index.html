@@ -7,40 +7,15 @@
 		<link rel="icon" type="image/svg+xml" href="logo.svg" />
 
 		<title>Deecy - Dreamcast Emulator</title>
+		<link href="style.css" rel="stylesheet" />
 		<style>
-			:root {
-				--accent-gold: #f7a41d;
-				--accent-blue: #3b75c2;
-				--accent-blue-high: #558fdb;
-			}
-
-			* {
-				box-sizing: border-box;
-				margin: 0;
-				padding: 0;
-			}
-
 			body {
-				font-family: Arial, sans-serif;
-				background: linear-gradient(135deg, #1e1e1e, #2a2a2a);
-				color: #eee;
-				display: flex;
-				justify-content: center;
-				align-items: center;
 				padding-left: 20px;
 				padding-right: 20px;
-				min-height: 100vh;
-			}
-
-			/* Firefox specific */
-			@-moz-document url-prefix() {
-				body {
-					background: #1e1e1e;
-				}
 			}
 
 			.container {
-				background: #242424;
+				background: var(--bg-panel);
 				padding: 30px;
 				box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
 				max-width: 800px;
@@ -68,16 +43,6 @@
 					align-items: center;
 					margin-left: 0;
 				}
-			}
-
-			a {
-				color: var(--accent-blue-high);
-				text-decoration: none;
-			}
-
-			a:hover {
-				color: var(--accent-blue);
-				text-decoration: underline;
 			}
 
 			header {
@@ -266,21 +231,6 @@
 					<div id="download-buttons">
 						<p class="loading">Loading latest release...</p>
 					</div>
-					<!--
-				<details class="previous-releases">
-					<summary>Previous Releases</summary>
-					<table id="previous-releases-table">
-						<thead>
-							<tr>
-								<th>Version</th>
-								<th>Release Date</th>
-								<th>Downloads</th>
-							</tr>
-						</thead>
-						<tbody></tbody>
-					</table>
-				</details>
-        		-->
 					<div style="display: flex; justify-content: space-between">
 						<div>
 							Unstable builds:
@@ -332,18 +282,19 @@
 			<section class="compatibility">
 				<h2>Compatibility</h2>
 				<p>
-					Being very new, Deecy doesn't have a comprehensive list of
-					supported games or shortcomings yet. I am currently tracking
-					the state of some games here:
+					See the
+					<a href="compatibility.html" target="_blank">
+						Compatibility List</a
+					>. Contribute to it in the
 					<a
-						href="https://github.com/Senryoku/Deecy/issues/33"
+						href="https://github.com/Senryoku/Deecy-Compatibilty"
 						target="_blank"
 					>
-						Issue #33
-					</a>
+						dedicated repository</a
+					>.
 				</p>
 				<p>
-					Report bugs on
+					Report bugs on the
 					<a
 						href="https://github.com/Senryoku/Deecy/issues"
 						target="_blank"
@@ -412,35 +363,6 @@
 						: "Other";
 			}
 
-			function populatePreviousVersions(releases) {
-				const tableBody = document.querySelector(
-					"#previous-releases-table tbody",
-				);
-				releases.slice(1, 4).forEach((release) => {
-					const row = document.createElement("tr");
-					row.innerHTML = `
-              <td>${release.tag_name}</td>
-              <td>${new Date(release.published_at).toLocaleDateString()}</td>
-              <td>
-                ${release.assets
-					.filter((asset) =>
-						asset.name.toLowerCase().endsWith(".zip"),
-					)
-					.map(
-						(asset) =>
-							`<a href="${
-								asset.browser_download_url
-							}" target="_blank">${extractPlatform(
-								asset.name,
-							)}</a>`,
-					)
-					.join(" | ")}
-              </td>
-            `;
-					tableBody.appendChild(row);
-				});
-			}
-
 			const userOS = detectUserOS();
 
 			fetch("https://api.github.com/repos/Senryoku/Deecy/releases")
@@ -492,8 +414,6 @@
 
 							container.appendChild(item);
 						});
-
-					// populatePreviousVersions(releases);
 				})
 				.catch(() => {
 					document.getElementById("download-buttons").innerHTML =
