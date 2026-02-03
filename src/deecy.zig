@@ -1071,6 +1071,8 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
     if (self.config.per_game_vmu) try self.load_per_game_vmu();
     try self.check_save_state_slots();
 
+    deecy_log.info("Loaded '{s}' ({s}).", .{ self.get_product_name() orelse "Unknown Title", self.get_product_id() orelse "Unknown ID" });
+
     var title = try std.ArrayList(u8).initCapacity(self._allocator, 64);
     defer title.deinit(self._allocator);
     try title.appendSlice(self._allocator, "Deecy");
