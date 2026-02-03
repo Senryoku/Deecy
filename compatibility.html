@@ -8,9 +8,9 @@
 		<link href="style.css" rel="stylesheet" />
 		<style>
 			:root {
-				--status-playable: #10b981;
-				--status-ingame: #f59e0b;
-				--status-intro: #ef4444;
+				--status-green: #10b981;
+				--status-orange: #f59e0b;
+				--status-red: #ef4444;
 			}
 
 			.dashboard {
@@ -182,25 +182,21 @@
 				padding-bottom: 10px;
 			}
 
-			.status-playable,
-			.bg-playable {
-				color: var(--status-playable);
-			}
-			.status-ingame,
-			.bg-ingame {
-				color: var(--status-ingame);
-			}
-			.status-intro,
-			.status-nothing,
-			.bg-intro,
-			.bg-nothing {
-				color: var(--status-intro);
+			.status {
+				font-weight: bold;
+				font-variant: small-caps;
+				color: var(--status-red);
 			}
 
-			.status-badge {
-				font-weight: bold;
-				text-transform: uppercase;
-				font-size: 0.8em;
+			.status-playable {
+				color: var(--status-green);
+			}
+			.status-ingame {
+				color: var(--status-orange);
+			}
+			.status-intro,
+			.status-nothing {
+				color: var(--status-red);
 			}
 
 			.copy-link-btn {
@@ -376,7 +372,7 @@
 						headers.push(`<div>${report.game_version}</div>`);
 					if (report.status)
 						headers.push(
-							`<div class="status-${statusClass(report.status)}">${report.status}</div>`,
+							`<div class="status status-${statusClass(report.status)}">${report.status}</div>`,
 						);
 
 					html += `
@@ -408,7 +404,7 @@
 					row.innerHTML = `
 						<td><strong>${item.game}</strong></td>
 						<td><div style="overflow: hidden; text-overflow: ellipsis;">${item.tags.map((t) => `<span class="tag">${t}</span>`).join("")}</div></td>
-						<td><span class="status-badge status-${statusClass(status)}">${status}</span></td>
+						<td><span class="status status-${statusClass(status)}">${status}</span></td>
 					`;
 					row.onclick = () => setDetails(item, row);
 					tbody.appendChild(row);
