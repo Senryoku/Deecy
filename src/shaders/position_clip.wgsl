@@ -4,8 +4,8 @@ fn to_position_clip(position: vec3<f32>, depth_max: f32) -> vec4<f32> {
     // FIXME: Soul Calibur sends some very high (sometimes infinite) z values, breaking everything.
 	//        Clamping seems to be enough for now, but obviously not ideal (and the value is completely arbitrary).
 	//        Might want to revisit later if we get issues with vertices really close to the near plane.
-    var campled_depth_max = min(32768.0, depth_max);
-    var clampled_z = max(bitcast<f32>(0x7ffffd), min(32768.0, position.z));
+    var campled_depth_max = min(100000000.0, depth_max);
+    var clampled_z = max(bitcast<f32>(0x7ffffd), min(100000000.0, position.z));
 
     let inv_w = 1.0 / clampled_z;
 
