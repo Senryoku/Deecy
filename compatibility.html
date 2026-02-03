@@ -321,13 +321,13 @@
 				for (let report of data.status_reports) {
 					const headers = [];
 					if (report.version)
-						headers.push(`<div>#${report.version}</div>`);
+						headers.push(`<div>${report.version}</div>`);
 					if (report.commit)
 						headers.push(
-							`<div><a href="https://github.com/Senryoku/Deecy/commit/${report.commit}" target="_blank">#${report.commit.substring(0, 7)}</a></div>`,
+							`<div><a href="https://github.com/Senryoku/Deecy/commit/${report.commit}" target="_blank">${report.commit.substring(0, 7)}</a></div>`,
 						);
 					if (report.game_version)
-						headers.push(`<div>#${report.game_version}</div>`);
+						headers.push(`<div>${report.game_version}</div>`);
 					if (report.status)
 						headers.push(
 							`<div class="status-${statusClass(report.status)}">${report.status}</div>`,
