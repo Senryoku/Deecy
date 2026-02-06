@@ -50,6 +50,7 @@ fn glfw_key_callback(window: *zglfw.Window, key: zglfw.Key, scancode: i32, actio
     const maybe_app = window.getUserPointer(@This());
 
     if (maybe_app) |app| {
+        if (app.update_dc_keyboard(key, action)) return;
         if (zgui.io.getWantCaptureKeyboard()) return;
 
         if (action == .press) {
@@ -196,7 +197,12 @@ pub const DefaultVMUPaths = default_vmu_paths: {
 
 const ControllerSettings = struct {
     enabled: bool,
-    subcapabilities: DreamcastModule.Maple.Controller.InputCapabilities = DreamcastModule.Maple.Controller.StandardControllerCapabilities,
+    device: union(enum) {
+        Controller: struct {
+            subcapabilities: DreamcastModule.Maple.Controller.InputCapabilities = DreamcastModule.Maple.Controller.StandardControllerCapabilities,
+        },
+        Keyboard: struct {},
+    } = .{ .Controller = .{} },
     subperipherals: [2]union(enum) { None, VMU: struct { filename: []const u8 }, VibrationPack } = .{ .None, .None },
 };
 
@@ -797,7 +803,14 @@ pub fn load_vmu(self: *@This(), port: u8, slot: u8, vmu_path: []const u8) !void 
 pub fn enable_controller(self: *@This(), port: u8, value: bool) !void {
     const config = &self.config.controllers[port];
     if (value) {
-        self.dc.maple.ports[port].main = .{ .Controller = .{ .subcapabilities = .{ @bitCast(config.subcapabilities), 0, 0 } } };
+        switch (config.device) {
+            .Controller => |controller| {
+                self.dc.maple.ports[port].main = .{ .Controller = .{ .subcapabilities = .{ @bitCast(controller.subcapabilities), 0, 0 } } };
+            },
+            .Keyboard => {
+                self.dc.maple.ports[port].main = .{ .Keyboard = .{} };
+            },
+        }
         inline for (0..config.subperipherals.len) |slot| {
             try self.init_peripheral(port, slot);
         }
@@ -1002,6 +1015,28 @@ pub fn poll_controllers(self: *@This()) void {
             }
         }
     }
+}
+
+pub fn update_dc_keyboard(self: *@This(), key: zglfw.Key, action: zglfw.Action) bool {
+    for (&self.dc.maple.ports) |*port| {
+        if (port.main) |*peripheral| {
+            switch (peripheral.*) {
+                .Keyboard => |*keyboard| {
+                    if (zglfw_key_to_dc_key(key)) |dc_key| {
+                        switch (action) {
+                            .press => keyboard.press_key(dc_key),
+                            .release => keyboard.release_key(dc_key),
+                            else => {},
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+    // FIXME: Should return true when the key should be captured by a running game.
+    //        Not entirely sure how to handle that yet.
+    return false;
 }
 
 pub fn load_and_start(self: *@This(), path: []const u8) !void {
@@ -1695,4 +1730,133 @@ pub fn wait_async_jobs(self: *@This()) void {
 pub fn launch_async(self: *@This(), func: anytype, args: anytype) !void {
     self.wait_async_jobs();
     self._thread = try std.Thread.spawn(.{}, func, args);
+}
+
+pub fn zglfw_key_to_dc_key(key: zglfw.Key) ?DreamcastModule.Maple.Keyboard.KeyScanCode {
+    return switch (key) {
+        .a => .A,
+        .b => .B,
+        .c => .C,
+        .d => .D,
+        .e => .E,
+        .f => .F,
+        .g => .G,
+        .h => .H,
+        .i => .I,
+        .j => .J,
+        .k => .K,
+        .l => .L,
+        .m => .M,
+        .n => .N,
+        .o => .O,
+        .p => .P,
+        .q => .Q,
+        .r => .R,
+        .s => .S,
+        .t => .T,
+        .u => .U,
+        .v => .V,
+        .w => .W,
+        .x => .X,
+        .y => .Y,
+        .z => .Z,
+
+        .zero => .@"0",
+        .one => .@"1",
+        .two => .@"2",
+        .three => .@"3",
+        .four => .@"4",
+        .five => .@"5",
+        .six => .@"6",
+        .seven => .@"7",
+        .eight => .@"8",
+        .nine => .@"9",
+
+        .F1 => .F1,
+        .F2 => .F2,
+        .F3 => .F3,
+        .F4 => .F4,
+        .F5 => .F5,
+        .F6 => .F6,
+        .F7 => .F7,
+        .F8 => .F8,
+        .F9 => .F9,
+        .F10 => .F10,
+        .F11 => .F11,
+        .F12 => .F12,
+        .F13 => .F13,
+        .F14 => .F14,
+        .F15 => .F15,
+        .F16 => .F16,
+        .F17 => .F17,
+        .F18 => .F18,
+        .F19 => .F19,
+        .F20 => .F20,
+        .F21 => .F21,
+        .F22 => .F22,
+        .F23 => .F23,
+        .F24 => .F24,
+
+        .enter => .Return,
+        .escape => .Escape,
+        .backspace => .Delete,
+        .tab => .Tab,
+        .space => .Spacebar,
+        .insert => .Insert,
+        .delete => .DeleteForward,
+        .right => .RightArrow,
+        .left => .LeftArrow,
+        .down => .DownArrow,
+        .up => .UpArrow,
+        .page_up => .PageUp,
+        .page_down => .PageDown,
+        .home => .Home,
+        .end => .End,
+        .caps_lock => .CapsLock,
+        .scroll_lock => .ScrollLock,
+        .num_lock => .KeypadNumLock,
+        .print_screen => .PrintScreen,
+        .pause => .Pause,
+        .menu => .Menu,
+
+        .minus => .Minus,
+        .equal => .Equal,
+        .left_bracket => .LeftBracket,
+        .right_bracket => .RightBracket,
+        .backslash => .Backslash,
+        .semicolon => .Semicolon,
+        .apostrophe => .Quote,
+        .grave_accent => .Tilde, // Grave Accent/Tilde
+        .comma => .Comma,
+        .period => .Period,
+        .slash => .Slash,
+
+        .kp_0 => .Keypad0,
+        .kp_1 => .Keypad1,
+        .kp_2 => .Keypad2,
+        .kp_3 => .Keypad3,
+        .kp_4 => .Keypad4,
+        .kp_5 => .Keypad5,
+        .kp_6 => .Keypad6,
+        .kp_7 => .Keypad7,
+        .kp_8 => .Keypad8,
+        .kp_9 => .Keypad9,
+        .kp_decimal => .KeypadPeriod,
+        .kp_divide => .KeypadSlash,
+        .kp_multiply => .KeypadAsterisk,
+        .kp_subtract => .KeypadMinus,
+        .kp_add => .KeypadPlus,
+        .kp_enter => .KeypadEnter,
+        .kp_equal => .KeypadEqual,
+
+        // .left_control => .LeftControl,
+        // .left_shift => .RightShift,
+        // .left_alt => .LeftAlt,
+        // .left_super => .LeftGui,
+        // .right_control => .RightControl,
+        // .right_shift => .RightShift2,
+        // .right_alt => .RightAlt,
+        // .right_super => .RightS3,
+        else => null,
+    };
 }

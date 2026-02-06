@@ -867,30 +867,55 @@ pub fn draw(self: *@This()) !void {
                                 if (zgui.checkbox("Plugged in", .{ .v = &connected })) {
                                     try d.enable_controller(port, connected);
                                 }
-                                if (d.dc.maple.ports[port].main) |*peripheral| {
-                                    var gamepad_id: ?zglfw.Gamepad = null;
-                                    if (d.controllers[port]) |j| {
-                                        if (j.id.isPresent())
-                                            gamepad_id = j.id.asGamepad();
-                                    }
-                                    const name = if (gamepad_id) |gamepad| gamepad.getName() else "None";
-                                    if (zgui.beginCombo("Device", .{ .preview_value = name })) {
-                                        for (available_controllers.items, 0..) |item, index| {
-                                            if (available_controllers.items[index].id) |id| {
-                                                if (zgui.selectable(item.name, .{ .selected = d.controllers[port] != null and d.controllers[port].?.id == id }))
-                                                    d.controllers[port] = .{ .id = id };
-                                            } else {
-                                                if (zgui.selectable(item.name, .{ .selected = d.controllers[port] == null }))
-                                                    d.controllers[port] = null;
-                                            }
+
+                                var device_type = std.meta.activeTag(d.config.controllers[port].device);
+                                if (zgui.comboFromEnum("Peripheral", &device_type)) {
+                                    if (device_type != d.config.controllers[port].device) {
+                                        try d.enable_controller(port, false);
+                                        switch (device_type) {
+                                            inline else => |t| d.config.controllers[port].device = @unionInit(@TypeOf(d.config.controllers[port].device), @tagName(t), .{}),
                                         }
-                                        zgui.endCombo();
+                                        try d.enable_controller(port, true);
                                     }
-                                    if (d.controllers[port]) |*j| {
-                                        _ = zgui.sliderFloat("Deadzone", .{ .v = &j.deadzone, .min = 0.0, .max = 1.0, .flags = .{} });
-                                    }
+                                }
+
+                                if (d.dc.maple.ports[port].main) |*peripheral| {
                                     switch (peripheral.*) {
-                                        .Controller => try @import("ui/controller_settings.zig").draw_controller_settings(d, port),
+                                        .Controller => {
+                                            var gamepad_id: ?zglfw.Gamepad = null;
+                                            if (d.controllers[port]) |j| {
+                                                if (j.id.isPresent())
+                                                    gamepad_id = j.id.asGamepad();
+                                            }
+                                            const name = if (gamepad_id) |gamepad| gamepad.getName() else "None";
+                                            if (zgui.beginCombo("Device", .{ .preview_value = name })) {
+                                                for (available_controllers.items, 0..) |item, index| {
+                                                    if (available_controllers.items[index].id) |id| {
+                                                        if (zgui.selectable(item.name, .{ .selected = d.controllers[port] != null and d.controllers[port].?.id == id }))
+                                                            d.controllers[port] = .{ .id = id };
+                                                    } else {
+                                                        if (zgui.selectable(item.name, .{ .selected = d.controllers[port] == null }))
+                                                            d.controllers[port] = null;
+                                                    }
+                                                }
+                                                zgui.endCombo();
+                                            }
+                                            if (d.controllers[port]) |*j| {
+                                                _ = zgui.sliderFloat("Deadzone", .{ .v = &j.deadzone, .min = 0.0, .max = 1.0, .flags = .{} });
+                                            }
+                                            try @import("ui/controller_settings.zig").draw_controller_settings(d, port);
+                                        },
+                                        .Keyboard => |keyboard| {
+                                            zgui.text("(Keyboard configuration here soon)", .{});
+                                            zgui.separator();
+                                            const status = keyboard.read();
+                                            zgui.text("Change key bits: {any}", .{status.change_key_bits});
+                                            zgui.text("LED information: {any}", .{status.led_information});
+                                            zgui.text("Key scan code array:", .{});
+                                            for (status.key_scan_code_array) |key| {
+                                                zgui.text("  {t}", .{key});
+                                            }
+                                        },
                                         else => {},
                                     }
 

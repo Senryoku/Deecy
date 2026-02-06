@@ -94,11 +94,13 @@ pub const FunctionCodesMask = packed struct(u32) {
         return @bitCast(value);
     }
 
-    pub const Screen = @This(){ .screen = 1 };
-    pub const Storage = @This(){ .storage = 1 };
-    pub const Timer = @This(){ .timer = 1 };
-    pub const Controller = @This(){ .controller = 1 };
     pub const Vibration = @This(){ .vibration = 1 };
+    pub const Pointing = @This(){ .pointing = 1 };
+    pub const Controller = @This(){ .controller = 1 };
+    pub const Storage = @This(){ .storage = 1 };
+    pub const Screen = @This(){ .screen = 1 };
+    pub const Timer = @This(){ .timer = 1 };
+    pub const Keyboard = @This(){ .keyboard = 1 };
 
     pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         if (@popCount(self.as_u32()) == 1) {
@@ -124,11 +126,14 @@ pub const DeviceInfoPayload = extern struct {
 };
 
 pub const Controller = @import("maple/controller.zig");
+pub const Keyboard = @import("maple/keyboard.zig");
+
 pub const VMU = @import("maple/vmu.zig");
 pub const VibrationPack = @import("maple/vibration_pack.zig");
 
 const Peripheral = union(enum) {
     Controller: Controller,
+    Keyboard: Keyboard,
     VMU: VMU,
     VibrationPack: VibrationPack,
 
@@ -217,7 +222,7 @@ const MaplePort = struct {
                 },
                 .GetCondition => {
                     switch (target.*) {
-                        inline .Controller, .VibrationPack => |*c| {
+                        inline .Controller, .Keyboard, .VibrationPack => |*c| {
                             std.debug.assert(command.payload_length == 1);
                             const condition = c.get_condition(function_type);
                             dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = @intCast(condition.len) }));
