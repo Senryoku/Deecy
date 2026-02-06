@@ -905,8 +905,16 @@ pub fn draw(self: *@This()) !void {
                                             }
                                             try @import("ui/controller_settings.zig").draw_controller_settings(d, port);
                                         },
-                                        .Keyboard => |keyboard| {
-                                            zgui.text("(Keyboard configuration here soon)", .{});
+                                        .Keyboard => |*keyboard| {
+                                            zgui.separator();
+                                            var subcapabilities: MapleModule.Keyboard.FunctionDefinition = @bitCast(keyboard.subcapabilities[0]);
+                                            _ = zgui.comboFromEnum("Language", &subcapabilities.keyboard_language);
+                                            _ = zgui.comboFromEnum("Layout", &subcapabilities.keyboard_type);
+                                            _ = zgui.comboFromEnum("LED Control", &subcapabilities.led_control);
+                                            if (subcapabilities.as_u32() != keyboard.subcapabilities[0]) {
+                                                keyboard.subcapabilities[0] = subcapabilities.as_u32();
+                                                d.config.controllers[port].device.Keyboard.subcapabilities = subcapabilities.as_u32();
+                                            }
                                             zgui.separator();
                                             const status = keyboard.read();
                                             zgui.text("Change key bits: {any}", .{status.change_key_bits});

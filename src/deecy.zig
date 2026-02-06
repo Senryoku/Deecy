@@ -50,8 +50,10 @@ fn glfw_key_callback(window: *zglfw.Window, key: zglfw.Key, scancode: i32, actio
     const maybe_app = window.getUserPointer(@This());
 
     if (maybe_app) |app| {
-        if (app.update_dc_keyboard(key, action)) return;
         if (zgui.io.getWantCaptureKeyboard()) return;
+        // While a game is running and a keyboard is connected, all keyboard shortcut are disabled, with the exception of Escape (otherwise we'd have no way to pause the game).
+        // This isn't ideal, but I'm not sure what's the best way to handle this yet.
+        if (app.update_dc_keyboard(key, action) and key != .escape) return;
 
         if (action == .press) {
             // Escape is a special case in all "wait for input" functions. I'll keep it as the only non-modifiable shortcut.
@@ -199,9 +201,11 @@ const ControllerSettings = struct {
     enabled: bool,
     device: union(enum) {
         Controller: struct {
-            subcapabilities: DreamcastModule.Maple.Controller.InputCapabilities = DreamcastModule.Maple.Controller.StandardControllerCapabilities,
+            subcapabilities: DreamcastModule.Maple.Controller.InputCapabilities = .Standard,
         },
-        Keyboard: struct {},
+        Keyboard: struct {
+            subcapabilities: u32 = (DreamcastModule.Maple.Keyboard.FunctionDefinition{}).as_u32(),
+        },
     } = .{ .Controller = .{} },
     subperipherals: [2]union(enum) { None, VMU: struct { filename: []const u8 }, VibrationPack } = .{ .None, .None },
 };
@@ -807,8 +811,8 @@ pub fn enable_controller(self: *@This(), port: u8, value: bool) !void {
             .Controller => |controller| {
                 self.dc.maple.ports[port].main = .{ .Controller = .{ .subcapabilities = .{ @bitCast(controller.subcapabilities), 0, 0 } } };
             },
-            .Keyboard => {
-                self.dc.maple.ports[port].main = .{ .Keyboard = .{} };
+            .Keyboard => |keyboard| {
+                self.dc.maple.ports[port].main = .{ .Keyboard = .{ .subcapabilities = .{ keyboard.subcapabilities, 0, 0 } } };
             },
         }
         inline for (0..config.subperipherals.len) |slot| {
@@ -1017,25 +1021,29 @@ pub fn poll_controllers(self: *@This()) void {
     }
 }
 
+/// Returns true when the key might be used by a running game.
 pub fn update_dc_keyboard(self: *@This(), key: zglfw.Key, action: zglfw.Action) bool {
-    for (&self.dc.maple.ports) |*port| {
-        if (port.main) |*peripheral| {
-            switch (peripheral.*) {
-                .Keyboard => |*keyboard| {
-                    if (zglfw_key_to_dc_key(key)) |dc_key| {
+    if (action == .repeat) return false;
+
+    if (zglfw_key_to_dc_key(key)) |dc_key| {
+        for (&self.dc.maple.ports) |*port| {
+            if (port.main) |*peripheral| {
+                switch (peripheral.*) {
+                    .Keyboard => |*keyboard| {
                         switch (action) {
                             .press => keyboard.press_key(dc_key),
                             .release => keyboard.release_key(dc_key),
                             else => {},
                         }
-                    }
-                },
-                else => {},
+                        // NOTE: Only send the key to the first connected keyboard.
+                        //       Multiple keyboards will most likely lead to unexpected behavior and are probably not intended.
+                        return self.running;
+                    },
+                    else => {},
+                }
             }
         }
     }
-    // FIXME: Should return true when the key should be captured by a running game.
-    //        Not entirely sure how to handle that yet.
     return false;
 }
 
@@ -1849,14 +1857,14 @@ pub fn zglfw_key_to_dc_key(key: zglfw.Key) ?DreamcastModule.Maple.Keyboard.KeySc
         .kp_enter => .KeypadEnter,
         .kp_equal => .KeypadEqual,
 
-        // .left_control => .LeftControl,
-        // .left_shift => .RightShift,
-        // .left_alt => .LeftAlt,
-        // .left_super => .LeftGui,
-        // .right_control => .RightControl,
-        // .right_shift => .RightShift2,
-        // .right_alt => .RightAlt,
-        // .right_super => .RightS3,
+        .left_control => .LeftControl,
+        .left_shift => .LeftShift,
+        .left_alt => .LeftAlt,
+        .left_super => .LeftS1,
+        .right_control => .RightControl,
+        .right_shift => .RightShift,
+        .right_alt => .RightAlt,
+        .right_super => .RightS3,
         else => null,
     };
 }

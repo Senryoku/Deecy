@@ -32,6 +32,22 @@ pub const InputCapabilities = packed struct(u32) {
     left: u1 = 0,
     right: u1 = 0,
 
+    pub const Standard = @This(){
+        .b = 1,
+        .a = 1,
+        .start = 1,
+        .up = 1,
+        .down = 1,
+        .left = 1,
+        .right = 1,
+        .y = 1,
+        .x = 1,
+        .analogRtrigger = 1,
+        .analogLtrigger = 1,
+        .analogHorizontal = 1,
+        .analogVertical = 1,
+    };
+
     pub fn as_u32(self: @This()) u32 {
         return @bitCast(self);
     }
@@ -61,22 +77,6 @@ pub const Buttons = packed struct(u16) {
     }
 };
 
-pub const StandardControllerCapabilities: InputCapabilities = .{
-    .b = 1,
-    .a = 1,
-    .start = 1,
-    .up = 1,
-    .down = 1,
-    .left = 1,
-    .right = 1,
-    .y = 1,
-    .x = 1,
-    .analogRtrigger = 1,
-    .analogLtrigger = 1,
-    .analogHorizontal = 1,
-    .analogVertical = 1,
-};
-
 pub const DualStickControllerCapabilities: InputCapabilities = .{
     .b = 1,
     .a = 1,
@@ -97,7 +97,7 @@ pub const DualStickControllerCapabilities: InputCapabilities = .{
 
 pub const Capabilities = FunctionCodesMask.Controller;
 
-subcapabilities: [3]u32 = .{ @bitCast(StandardControllerCapabilities), 0, 0 },
+subcapabilities: [3]u32 = .{ InputCapabilities.Standard.as_u32(), 0, 0 },
 
 buttons: Buttons = .{},
 axis: [6]u8 = @splat(0x80),
@@ -112,7 +112,7 @@ pub fn get_identity(self: *const @This()) DeviceInfoPayload {
     return .{
         .FunctionCodesMask = Capabilities,
         .SubFunctionCodesMasks = self.subcapabilities,
-        .DescriptionString = "Dreamcast Controller           ".*, // NOTE: dc-arm7wrestler checks for this, maybe some games do too?
+        .DescriptionString = "Dreamcast Controller          ".*, // NOTE: dc-arm7wrestler checks for this, maybe some games do too?
         .StandbyConsumption = 0x01AE,
         .MaximumConsumption = 0x01F4,
     };

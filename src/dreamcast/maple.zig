@@ -118,7 +118,7 @@ pub const DeviceInfoPayload = extern struct {
     SubFunctionCodesMasks: [3]u32 align(1),
     RegionCode: u8 align(1) = 0xFF,
     ConnectionDirectionCode: u8 align(1) = 0,
-    DescriptionString: [31]u8 align(1) = @splat(0),
+    DescriptionString: [30]u8 align(1) = @splat(0),
     ProducerString: [60]u8 align(1) = "Produced By or Under License From SEGA ENTERPRISES,LTD.     ".*,
     StandbyConsumption: u16 align(1) = 0,
     MaximumConsumption: u16 align(1) = 0,
