@@ -127,6 +127,7 @@ pub const DeviceInfoPayload = extern struct {
 
 pub const Controller = @import("maple/controller.zig");
 pub const Keyboard = @import("maple/keyboard.zig");
+pub const Mouse = @import("maple/mouse.zig");
 
 pub const VMU = @import("maple/vmu.zig");
 pub const VibrationPack = @import("maple/vibration_pack.zig");
@@ -134,6 +135,7 @@ pub const VibrationPack = @import("maple/vibration_pack.zig");
 const Peripheral = union(enum) {
     Controller: Controller,
     Keyboard: Keyboard,
+    Mouse: Mouse,
     VMU: VMU,
     VibrationPack: VibrationPack,
 
@@ -222,7 +224,7 @@ const MaplePort = struct {
                 },
                 .GetCondition => {
                     switch (target.*) {
-                        inline .Controller, .Keyboard, .VibrationPack => |*c| {
+                        inline .Controller, .Keyboard, .Mouse, .VibrationPack => |*c| {
                             std.debug.assert(command.payload_length == 1);
                             const condition = c.get_condition(function_type);
                             dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = @intCast(condition.len) }));
