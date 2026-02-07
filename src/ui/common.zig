@@ -2,6 +2,9 @@ const zgui = @import("zgui");
 
 pub const Icons = @import("font_awesome.zig");
 
+pub const White: [4]f32 = .{ 1.0, 1.0, 1.0, 1.0 };
+pub const Grey: [4]f32 = .{ 0.5, 0.5, 0.5, 1.0 };
+pub const Green: [4]f32 = .{ 0.51, 0.71, 0.212, 1.0 };
 pub const Yellow: [4]f32 = .{ 0.72, 0.55, 0.13, 1.0 };
 pub const Red: [4]f32 = .{ 0.60, 0.12, 0.15, 1.0 };
 

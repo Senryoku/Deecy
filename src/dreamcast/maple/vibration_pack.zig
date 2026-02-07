@@ -35,7 +35,7 @@ const Identity: DeviceInfoPayload = .{
     .FunctionCodesMask = Capabilities,
     .SubFunctionCodesMasks = Subcapabilities,
     .RegionCode = 0xFF,
-    .DescriptionString = "Puru Puru Pack                 ".*,
+    .DescriptionString = "Puru Puru Pack                ".*,
     .StandbyConsumption = 0x00CB,
     .MaximumConsumption = 0x0640,
 };

@@ -77,7 +77,7 @@ const Identity: DeviceInfoPayload = .{
     .FunctionCodesMask = Capabilities,
     .SubFunctionCodesMasks = Subcapabilities,
     .RegionCode = 0xFF,
-    .DescriptionString = "Visual Memory                  ".*,
+    .DescriptionString = "Visual Memory                 ".*,
     .StandbyConsumption = 0x007C,
     .MaximumConsumption = 0x0082,
 };
