@@ -189,7 +189,7 @@ pub const FunctionDefinition = packed struct(u32) {
     }
 };
 
-const ChangeKeyBits = packed struct(u8) {
+pub const ChangeKeyBits = packed struct(u8) {
     left_control: bool = false,
     left_shift: bool = false,
     left_alt: bool = false,

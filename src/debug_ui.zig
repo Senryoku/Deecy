@@ -4,6 +4,12 @@ const zgpu = @import("zgpu");
 const zgui = @import("zgui");
 const zglfw = @import("zglfw");
 
+const common = @import("ui/common.zig");
+const White = common.White;
+const Grey = common.Grey;
+const Green = common.Green;
+const Red = common.Red;
+
 const DreamcastModule = @import("dreamcast");
 const arm7 = DreamcastModule.AICAModule.arm7;
 
@@ -137,11 +143,6 @@ fn display(self: anytype) void {
         }
     }
 }
-
-const White: [4]f32 = .{ 1.0, 1.0, 1.0, 1.0 };
-const Grey: [4]f32 = .{ 0.5, 0.5, 0.5, 1.0 };
-const Green: [4]f32 = .{ 0.51, 0.71, 0.212, 1.0 };
-const Red: [4]f32 = .{ 0.973, 0.443, 0.408, 1.0 };
 
 fn inline_bool(value: bool, comptime fmt: []const u8) void {
     inline_colored(value, fmt, .{});

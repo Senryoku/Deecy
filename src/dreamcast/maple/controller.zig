@@ -83,6 +83,7 @@ subcapabilities: [3]u32 = .{ InputCapabilities.Standard.as_u32(), 0, 0 },
 
 buttons: Buttons = .{},
 axis: [6]u8 = @splat(0x80),
+
 pub fn press_buttons(self: *@This(), buttons: Buttons) void {
     self.buttons = @bitCast(self.buttons.as_u16() & buttons.as_u16());
 }
