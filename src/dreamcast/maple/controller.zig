@@ -77,24 +77,6 @@ pub const Buttons = packed struct(u16) {
     }
 };
 
-pub const DualStickControllerCapabilities: InputCapabilities = .{
-    .b = 1,
-    .a = 1,
-    .start = 1,
-    .up = 1,
-    .down = 1,
-    .left = 1,
-    .right = 1,
-    .y = 1,
-    .x = 1,
-    .analogRtrigger = 1,
-    .analogLtrigger = 1,
-    .analogHorizontal = 1,
-    .analogVertical = 1,
-    .analogHorizontal2 = 1,
-    .analogVertical2 = 1,
-};
-
 pub const Capabilities = FunctionCodesMask.Controller;
 
 subcapabilities: [3]u32 = .{ InputCapabilities.Standard.as_u32(), 0, 0 },
