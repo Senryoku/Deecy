@@ -11,6 +11,8 @@
 				--status-green: #10b981;
 				--status-orange: #f59e0b;
 				--status-red: #ef4444;
+
+				--status-color: var(--status-red);
 			}
 
 			.dashboard {
@@ -30,43 +32,52 @@
 
 			.sidebar-header {
 				padding: 20px;
+				padding-bottom: 4px;
 				border-bottom: 1px solid var(--border);
+
+				h1 {
+					font-size: 1.5em;
+					color: var(--accent-gold);
+					font-variant: small-caps;
+					margin-bottom: 15px;
+				}
+
+				p {
+					margin-bottom: 0.5em;
+					padding-left: 3em;
+				}
 			}
 
-			.sidebar-header h1 {
-				font-size: 1.5em;
-				color: var(--accent-gold);
-				font-variant: small-caps;
-				margin-bottom: 15px;
-			}
+			.search-container {
+				position: relative;
 
-			input#search {
-				width: 100%;
-				padding: 12px;
-				background: #111;
-				border: 1px solid var(--border);
-				border-radius: 6px;
-				color: white;
-				font-size: 0.95em;
-			}
-			#clear-search {
-				position: absolute;
-				right: 10px;
-				top: 50%;
-				transform: translateY(-50%);
-				background: none;
-				border: none;
-				color: var(--text-dim);
-				font-size: 1.5em;
-				cursor: pointer;
-				line-height: 1;
-			}
-
-			#clear-search:hover {
-				color: var(--accent-gold);
-			}
-			input#search {
-				padding-right: 35px;
+				input#search {
+					width: 100%;
+					padding: 12px;
+					background: #111;
+					border: 1px solid var(--border);
+					border-radius: 6px;
+					color: white;
+					font-size: 0.95em;
+				}
+				#clear-search {
+					position: absolute;
+					right: 10px;
+					top: 50%;
+					transform: translateY(-50%);
+					background: none;
+					border: none;
+					color: var(--text-dim);
+					font-size: 1.5em;
+					cursor: pointer;
+					line-height: 1;
+				}
+				#clear-search:hover {
+					color: var(--accent-gold);
+				}
+				input#search {
+					padding-right: 35px;
+				}
 			}
 
 			.table-wrapper {
@@ -176,27 +187,34 @@
 				display: flex;
 				justify-content: space-between;
 				margin-bottom: 10px;
-				font-family: monospace;
-				font-size: 0.9em;
+
 				border-bottom: 1px solid #333;
 				padding-bottom: 10px;
-			}
 
-			.status {
-				font-weight: bold;
-				font-variant: small-caps;
-				color: var(--status-red);
+				.commit,
+				.game-version {
+					font-family: monospace;
+				}
 			}
 
 			.status-playable {
-				color: var(--status-green);
+				--status-color: var(--status-green);
 			}
 			.status-ingame {
-				color: var(--status-orange);
+				--status-color: var(--status-orange);
 			}
 			.status-intro,
 			.status-nothing {
-				color: var(--status-red);
+				--status-color: var(--status-red);
+			}
+
+			.status-text {
+				font-weight: bold;
+				font-variant: small-caps;
+				color: var(--status-color);
+			}
+			.status-background {
+				background: var(--status-color);
 			}
 
 			.copy-link-btn {
@@ -221,6 +239,48 @@
 				display: inline-block;
 				margin: 0 4px;
 			}
+
+			#stats-panel {
+				padding: 0.5em 1em 0.5em 1em;
+
+				.stats-bar {
+					display: flex;
+					height: 8px;
+					border-radius: 4px;
+					overflow: hidden;
+					background: #333;
+					margin-top: 6px;
+					margin-bottom: 12px;
+				}
+
+				.stat-segment {
+					height: 100%;
+					transition: width 0.5s ease;
+				}
+
+				.stats-grid {
+					display: grid;
+					grid-template-columns: 1fr 1fr;
+					gap: 8px;
+				}
+
+				.stat-item {
+					display: flex;
+					justify-content: space-between;
+					align-items: center;
+				}
+
+				.stat-dot {
+					display: inline-block;
+					width: 8px;
+					height: 8px;
+					border-radius: 50%;
+					margin-right: 6px;
+				}
+
+				.stat-count {
+				}
+			}
 		</style>
 	</head>
 	<body>
@@ -236,15 +296,15 @@
 						/>
 						<h1>Deecy Compatibility</h1>
 					</div>
-					<div>
+					<p>
 						Compatibility list for the
 						<a
 							href="https://senryoku.github.io/Deecy/"
 							target="_blank"
 							>Deecy emulator</a
 						>.
-					</div>
-					<div>
+					</p>
+					<p>
 						Contribute to this list on
 						<a
 							href="https://github.com/Senryoku/Deecy-Compatibility"
@@ -258,9 +318,9 @@
 						>
 							GitHub issue tracker</a
 						>.
-					</div>
-					<br />
-					<div style="position: relative">
+					</p>
+					<div id="stats-panel"></div>
+					<div class="search-container">
 						<input
 							type="text"
 							id="search"
@@ -307,6 +367,7 @@
 					threshold: 0.3,
 				});
 				renderTable(gamesData);
+				renderStats(gamesData);
 
 				if (window.location.hash) {
 					const gameName = decodeURIComponent(
@@ -341,13 +402,13 @@
 									<span class="icon">🔗</span>
 								</button>
 			                    <div>${data.tags.map((t) => `<span class="tag">${t}</span>`).join("")}</div>
-			                 </div>
-							<div>
-								<a href="${githubIssueURL}" target="_blank" class="action-btn report-btn" title="Use Issue Template">
-									<span class="icon">⚠</span><span>Report an issue with this game</span>
-								</a>
-							</div>
-							 <div class="game-info">
+			                </div>
+							<div class="game-info">
+								<div>
+									<a href="${githubIssueURL}" target="_blank" class="action-btn report-btn" title="Use Issue Template">
+										<span class="icon">⚠</span><span>Report an issue with this game</span>
+									</a>
+								</div>
 			             `;
 
 				if (data.linked_issues?.length > 0) {
@@ -362,17 +423,21 @@
 
 				for (let report of data.status_reports) {
 					const headers = [];
-					if (report.version)
-						headers.push(`<div>${report.version}</div>`);
-					if (report.commit)
-						headers.push(
-							`<div><a href="https://github.com/Senryoku/Deecy/commit/${report.commit}" target="_blank">${report.commit.substring(0, 7)}</a></div>`,
-						);
-					if (report.game_version)
-						headers.push(`<div>${report.game_version}</div>`);
 					if (report.status)
 						headers.push(
-							`<div class="status status-${statusClass(report.status)}">${report.status}</div>`,
+							`<div class="status-${statusClass(report.status)} status-text">${report.status}</div>`,
+						);
+					if (report.version)
+						headers.push(
+							`<div class="deecy-version">${report.version}</div>`,
+						);
+					if (report.commit)
+						headers.push(
+							`<div class="commit"><a href="https://github.com/Senryoku/Deecy/commit/${report.commit}" target="_blank">${report.commit.substring(0, 7)}</a></div>`,
+						);
+					if (report.game_version)
+						headers.push(
+							`<div class="game-version">${report.game_version}</div>`,
 						);
 
 					html += `
@@ -404,11 +469,53 @@
 					row.innerHTML = `
 						<td><strong>${item.game}</strong></td>
 						<td><div style="overflow: hidden; text-overflow: ellipsis;">${item.tags.map((t) => `<span class="tag">${t}</span>`).join("")}</div></td>
-						<td><span class="status status-${statusClass(status)}">${status}</span></td>
+						<td><span class="status-${statusClass(status)} status-text">${status}</span></td>
 					`;
 					row.onclick = () => setDetails(item, row);
 					tbody.appendChild(row);
 				});
+			}
+
+			function renderStats(data) {
+				const total = data.length;
+				const counts = {};
+
+				data.forEach((game) => {
+					const lastReport =
+						game.status_reports[game.status_reports.length - 1];
+					const statusKey = lastReport.status;
+					if (!counts.hasOwnProperty(statusKey))
+						counts[statusKey] = 0;
+					counts[statusKey]++;
+				});
+				const percent = (count) =>
+					total > 0 ? ((count / total) * 100).toFixed(1) : 0;
+
+				let html = `
+			     <div class="stats-total">
+			         <span><strong>${total}</strong> Games Tracked</span>
+			     </div>
+
+			     <div class="stats-bar">`;
+
+				for (const key in counts) {
+					html += `<div class="stat-segment status-${statusClass(key)} status-background" style="width: ${percent(counts[key])}%"></div>`;
+				}
+
+				html += `</div><div class="stats-grid">`;
+
+				for (const key in counts) {
+					const className = statusClass(key);
+					html += `
+			        <div class="stat-item">
+			            <div><div class="stat-dot status-${className} status-background"></div><span class="status-${className} status-text">${key}</span></div>
+			            <div><span class="stat-count">${counts[key]} (${percent(counts[key])}%)</span></div>
+			        </div>
+					`;
+				}
+				html += `</div>`;
+
+				document.getElementById("stats-panel").innerHTML = html;
 			}
 
 			const searchInput = document.getElementById("search");
