@@ -461,7 +461,8 @@
 				tbody.innerHTML = "";
 
 				data.forEach((item) => {
-					const status = item.status_reports[0]?.status ?? "Unknown";
+					const status =
+						item.status_reports?.[0]?.status ?? "Unknown";
 
 					const row = document.createElement("tr");
 					row.id = item.game;
@@ -481,9 +482,8 @@
 				const counts = {};
 
 				data.forEach((game) => {
-					const lastReport =
-						game.status_reports[game.status_reports.length - 1];
-					const statusKey = lastReport.status;
+					const statusKey =
+						game.status_reports?.[0]?.status ?? "Unknown";
 					if (!counts.hasOwnProperty(statusKey))
 						counts[statusKey] = 0;
 					counts[statusKey]++;
