@@ -1677,12 +1677,13 @@ pub const Holly = struct {
             else => std.debug.panic("Invalid hblank_int_mode: {d}", .{spg_hblank_int.hblank_int_mode}),
         }) % max_scanline;
         // NOTE: Interlace does not matter here.
-        const line_diff: i64 = if (spg_status.scanline < target_scanline)
+        var line_diff: i64 = if (spg_status.scanline < target_scanline)
             target_scanline - spg_status.scanline
         else
             (if (max_scanline >= spg_status.scanline) max_scanline - spg_status.scanline else 0) + target_scanline;
         const pixel_diff: i64 = @as(i64, @intCast(spg_hblank_int.hblank_in_interrupt)) - @as(i64, @intCast(self._pixel));
         const hcount: i64 = spg_load.hcount;
+        if (line_diff == 0 and pixel_diff <= 0) line_diff = max_scanline;
         const pixels: u64 = @intCast((hcount + 1) * line_diff + pixel_diff);
 
         self._dc.schedule_event(.HBlankIn, self.pixels_to_sh4_cycles(pixels));
