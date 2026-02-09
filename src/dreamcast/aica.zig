@@ -1461,10 +1461,18 @@ pub const AICA = struct {
             state.play_position +%= 1;
             state.loop_start_check(registers);
 
-            if (state.play_position >= registers.loop_end & 0xFFFF) {
+            // NOTE: In 'ADPCM long stream processing', user is expected to set the two low bits of LSA/LEA to 0.
+            //       I guess the play position is advanced in 4 samples increments in this mode?
+            //       Simulating that by checking the end condition only every 4 samples.
+            //       Soul Reaver sets LEA to 0xFFFE for some clips, leading to misalignment if looping is triggered exactly at LEA (#185).
+            //         (It is never triggered with this implementation since play_position is a u16, but the result *sounds* correct).
+            const skip_loop_end = registers.play_control.sample_format == .ADPCMStream and state.play_position & 0b11 != 0;
+            if (!skip_loop_end and state.play_position >= registers.loop_end & 0xFFFF) {
                 state.loop_end_flag = true;
                 if (registers.play_control.sample_loop) {
                     state.play_position = @truncate(registers.loop_start);
+                    if (registers.play_control.sample_format == .ADPCMStream)
+                        state.play_position &= 0xFFFC;
                     // NOTE: ADPCM long stream mode expects the user to correctly handle this themselves.
                     if (registers.play_control.sample_format == .ADPCM) {
                         state.adpcm_state.step = state.adpcm_state.step_loopstart;
