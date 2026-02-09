@@ -1144,7 +1144,7 @@ fn InterpreterFallback(comptime mmu_enabled: bool, comptime instr_index: u8) typ
     } else {
         return struct {
             pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) callconv(Architecture.CallingConvention) void {
-                entry.fn_(cpu, instr) catch unreachable;
+                entry.fn_(cpu, instr) catch |err| sh4_jit_log.warn("Ignored exception in interpreter fallback: {t}", .{err});
             }
         };
     }
