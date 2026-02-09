@@ -12,7 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
-        cpu: [x86_64, x86_64_v2, x86_64_v3, x86_64_v4]
+        cpu: [x86_64]
         include:
           - os: windows-latest
             artifact_suffix: windows
@@ -42,7 +42,7 @@ jobs:
           version: ${{ steps.zigversion.outputs.version }}
 
       - name: Compile Deecy
-        run: zig build --release=fast -Dcpu=${{ matrix.cpu }}
+        run: zig build -Dcpu=${{ matrix.cpu }}
 
       - name: Prepare Artifacts
         shell: bash
