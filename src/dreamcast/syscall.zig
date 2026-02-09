@@ -78,25 +78,10 @@ pub fn syscall_flashrom(dc: *Dreamcast) void {
             dc.cpu.R(0).* = 0;
             const dest = dc.cpu.R(5).*;
             switch (dc.cpu.R(4).*) {
-                0 => {
-                    dc.cpu.write_physical(u32, dest, 0x1A000);
-                    dc.cpu.write_physical(u32, dest + 4, 8 * 1024);
-                },
-                1 => {
-                    dc.cpu.write_physical(u32, dest, 0x18000);
-                    dc.cpu.write_physical(u32, dest + 4, 8 * 1024);
-                },
-                2 => {
-                    dc.cpu.write_physical(u32, dest, 0x1C000);
-                    dc.cpu.write_physical(u32, dest + 4, 16 * 1024);
-                },
-                3 => {
-                    dc.cpu.write_physical(u32, dest, 0x10000);
-                    dc.cpu.write_physical(u32, dest + 4, 32 * 1024);
-                },
-                4 => {
-                    dc.cpu.write_physical(u32, dest, 0x00000);
-                    dc.cpu.write_physical(u32, dest + 4, 64 * 1024);
+                0, 1, 2, 3, 4 => |partition_number| {
+                    const partition = DreamcastModule.Flash.get_dc_partition(@enumFromInt(partition_number));
+                    dc.cpu.write_physical(u32, dest, partition.offset);
+                    dc.cpu.write_physical(u32, dest + 4, partition.size);
                 },
                 else => {
                     dc.cpu.R(0).* = @bitCast(@as(i32, @intCast(-1)));

@@ -16,6 +16,7 @@ pub const AICAModule = @import("aica.zig");
 pub const Maple = @import("maple.zig");
 pub const GDROM = @import("gdrom.zig");
 pub const GDROM_HLE = @import("gdrom_hle.zig");
+pub const Flash = @import("flash.zig");
 
 const HardwareRegister = HardwareRegisters.HardwareRegister;
 const SH4 = SH4Module.SH4;
@@ -23,7 +24,6 @@ const SH4JIT = SH4JITModule.SH4JIT;
 const Holly = HollyModule.Holly;
 const AICA = AICAModule.AICA;
 const MapleHost = Maple.MapleHost;
-const Flash = @import("flash.zig");
 
 pub const Region = enum(u8) {
     Japan = 0,

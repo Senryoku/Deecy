@@ -200,14 +200,6 @@ pub const PartitionHeader = extern struct {
     reserved: [46]u8 = @splat(0xFF),
 };
 
-pub const DCPartition = enum(u8) {
-    FactorySettings = 0, // Read-only
-    Reserved = 1, // Zeroes
-    SystemSettings = 2, // Block allocated
-    GameSettings = 3, // Block allocated
-    Unused = 4, // Block allocated
-};
-
 pub const Partition = struct {
     const BlockSize = 64; // bytes
     const BitmapSize = 512 / 8; // bytes
@@ -240,13 +232,23 @@ pub const FactorySettings = Partition{ .offset = 0x1A000, .size = 0x2000 };
 pub const GameSettings = Partition{ .offset = 0x10000, .size = 0x8000 };
 pub const SystemSettings = Partition{ .offset = 0x1C000, .size = 0x4000 };
 
-pub const Partitions = [5]Partition{
-    FactorySettings,
-    .{ .offset = 0x18000, .size = 0x4000 },
-    SystemSettings,
-    GameSettings,
-    .{ .offset = 0, .size = 0x10000 },
+pub const DCPartition = enum(u8) {
+    FactorySettings = 0, // Read-only
+    Reserved = 1, // Zeroes
+    SystemSettings = 2, // Block allocated
+    GameSettings = 3, // Block allocated
+    Unused = 4, // Block allocated
 };
+
+pub fn get_dc_partition(partition: DCPartition) Partition {
+    return switch (partition) {
+        .FactorySettings => FactorySettings,
+        .Reserved => .{ .offset = 0x18000, .size = 0x2000 },
+        .SystemSettings => SystemSettings,
+        .GameSettings => GameSettings,
+        .Unused => .{ .offset = 0, .size = 0x10000 },
+    };
+}
 
 pub fn UserBlock(comptime T: type) type {
     if (@sizeOf(T) != 60) @compileError("UserBlock payload size must be 60 bytes");
