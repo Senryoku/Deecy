@@ -3110,7 +3110,7 @@ pub const Renderer = struct {
                 if (self.ta_lists.items.len <= pass_idx) break;
                 const ta_lists = &self.ta_lists.items[pass_idx];
 
-                if (!render_pass.opaque_list_pointer.empty) {
+                if (!render_pass.opaque_list_pointer.empty or !render_pass.punchthrough_list_pointer.empty) {
                     {
                         const color_attachments = [_]wgpu.RenderPassColorAttachment{
                             .{
