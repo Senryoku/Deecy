@@ -341,9 +341,13 @@ pub const Dreamcast = struct {
 
         // Get current system config, update it with user preference and fix block crc.
         const system_bitmap = @as(*u512, @ptrCast(@alignCast(self.flash.data[0x1FFC0..0x20000].ptr)));
-        const last_entry = @ctz(system_bitmap.*);
-        if (last_entry == 0) return error.InvalidFlash;
-        var system_block = self.flash.get_system_block(last_entry - 1);
+        var first_free_block = @ctz(system_bitmap.*);
+        if (first_free_block == 0) {
+            // No block was allocated, allocate the first one.
+            system_bitmap.* &= ~@as(u512, 1);
+            first_free_block = 2;
+        }
+        var system_block = self.flash.get_system_block(first_free_block - 1);
 
         // Update saved time to avoid manual time adjustement screen on startup.
         const dc_timestamp = AICA.timestamp();
