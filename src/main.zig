@@ -41,7 +41,7 @@ pub const std_options: std.Options = .{
         .{ .scope = .maple, .level = .info },
         .{ .scope = .renderer, .level = .info },
         .{ .scope = .pipeline_cache, .level = .info },
-        .{ .scope = .flashrom, .level = .info },
+        .{ .scope = .flashrom, .level = .warn },
     },
 };
 

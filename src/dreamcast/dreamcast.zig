@@ -323,9 +323,9 @@ pub const Dreamcast = struct {
 
         defer flash_file.close();
         const flash_bytes_read = try flash_file.readAll(self.flash.data);
-        std.debug.assert(flash_bytes_read == 0x20000);
+        if (flash_bytes_read != 0x20000) return error.InvalidFlashSize;
 
-        // Adjust settings (read-only partition). Two identical copies of the settings.
+        // Adjust factory settings (read-only partition). Two identical copies of the settings.
         // Region
         self.flash.data[0x1A002] = @as(u8, '0') + @intFromEnum(region);
         self.flash.data[0x1A0A2] = @as(u8, '0') + @intFromEnum(region);
@@ -333,12 +333,12 @@ pub const Dreamcast = struct {
         self.flash.data[0x1A003] = @as(u8, '0') + @intFromEnum(bios_config.language);
         self.flash.data[0x1A0A3] = @as(u8, '0') + @intFromEnum(bios_config.language);
         // Broadcast format
-        const broacast: enum(u8) { NTSC = 0, PAL = 1, @"PAL-M" = 2, @"PAL-N" = 3 } = switch (region) {
+        const broadcast: enum(u8) { NTSC = 0, PAL = 1, @"PAL-M" = 2, @"PAL-N" = 3 } = switch (region) {
             .Europe => .PAL,
             else => .NTSC,
         };
-        self.flash.data[0x1A004] = @as(u8, '0') + @intFromEnum(broacast);
-        self.flash.data[0x1A0A4] = @as(u8, '0') + @intFromEnum(broacast);
+        self.flash.data[0x1A004] = @as(u8, '0') + @intFromEnum(broadcast);
+        self.flash.data[0x1A0A4] = @as(u8, '0') + @intFromEnum(broadcast);
 
         // Search system config block, or allocate it, and fill it with user preferences.
         const system_block = self.flash.get_or_allocate_logical_block(Flash.SystemConfigPayload, Flash.SystemSettings, Flash.SystemConfigPayload.LogicalBlockNumber);

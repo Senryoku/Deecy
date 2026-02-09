@@ -134,7 +134,7 @@ pub fn write(self: *@This(), addr: u32, data: u8) void {
                     } else self.unexpected_write(addr, data);
                 },
                 .Program => {
-                    flash_log.debug("  Program: @{X:0>8} = 0x{X:0>2} (was 0x{X:0>2})", .{ addr, data, self.data[addr] });
+                    flash_log.info("  Program: @{X:0>8} = 0x{X:0>2} (was 0x{X:0>2})", .{ addr, data, self.data[addr] });
                     self.mode = .Normal;
                     self.write_cycle = 0;
                     self.data[addr] &= data;
