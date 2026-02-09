@@ -1,7 +1,7 @@
 .{
     .name = .Deecy,
     .fingerprint = 0x4ebcf6922b758411,
-    .version = "0.6.0",
+    .version = "0.6.1",
     .minimum_zig_version = "0.15.2",
     .paths = .{""},
     .dependencies = .{
