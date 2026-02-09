@@ -31,7 +31,7 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
     try self.tracks.resize(allocator, track_count);
 
     for (0..track_count) |i| {
-        var vals = std.mem.splitSequence(u8, lines.next() orelse return error.EoF, " ");
+        var vals = std.mem.tokenizeAny(u8, lines.next() orelse return error.EoF, " \t");
 
         const num = try std.fmt.parseUnsigned(u32, vals.next() orelse return error.EoF, 10);
         if (num > track_count) return error.InvalidTrackNumber;
@@ -39,15 +39,15 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
         const track_type_int = try std.fmt.parseUnsigned(u8, vals.next() orelse return error.EoF, 10);
         if (track_type_int != 0 and track_type_int != 4) return error.UnsupportedTrackType;
         const format = try std.fmt.parseUnsigned(u32, vals.next() orelse return error.EoF, 10);
-        var filename = vals.next() orelse return error.EoF;
+        var filename = vals.peek() orelse return error.EoF;
         // Handle quoted filenames
         if (std.mem.startsWith(u8, filename, "\"")) {
-            var filename_len = filename.len;
-            while (vals.next()) |next| {
-                filename_len += 1 + next.len; // Space plus the next token.
-                if (std.mem.endsWith(u8, next, "\"")) break;
-            }
-            filename = @as([*]const u8, @ptrCast(filename.ptr))[1 .. filename_len - 1]; // Remove quotes
+            const rest = vals.rest()[1..];
+            const end_quote_index = std.mem.indexOfScalar(u8, rest, '\"') orelse return error.InvalidFilename;
+            vals = std.mem.tokenizeAny(u8, rest[end_quote_index + 1 ..], " \t");
+            filename = rest[0..end_quote_index];
+        } else {
+            filename = vals.next() orelse return error.EoF;
         }
         const pregap = try std.fmt.parseUnsigned(u32, vals.next() orelse return error.EoF, 10);
         if (pregap != 0) return error.UnsupportedNonZeroPregap; // FIXME: Not handled.
