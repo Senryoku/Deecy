@@ -397,6 +397,23 @@ pub const AICAChannelState = struct {
         prev: i32 = 0,
         prev_loopstart: i32 = 0,
         loop_init: bool = false,
+
+        pub fn next(self: *@This(), adpcm_sample: u4) i32 {
+            var delta = (self.step * ADPCMDiff[adpcm_sample & 7]) >> 3;
+            delta = std.math.clamp(delta, 0, 0x7FFF);
+            if (adpcm_sample & 8 != 0) delta = -delta;
+
+            self.prev += delta;
+            self.prev = std.math.clamp(self.prev, -0x8000, 0x7FFF);
+
+            self.step = (self.step * ADPCMScale[adpcm_sample & 7]) >> 8;
+            self.step = std.math.clamp(self.step, 0x007F, 0x6000);
+
+            return self.prev;
+        }
+
+        const ADPCMScale: [8]i32 = .{ 0xE6, 0xE6, 0xE6, 0xE6, 0x133, 0x199, 0x200, 0x266 };
+        const ADPCMDiff: [8]i32 = .{ 1, 3, 5, 7, 9, 11, 13, 15 };
     } = .{},
 
     // Unnecessary, but useful for debugging. Not serialized.
@@ -457,21 +474,6 @@ pub const AICAChannelState = struct {
         const bitplace = (sample >> shift) & 0x7;
         return (@as(u32, 0xFFFDDDD5) >> @intCast(pattern * 8 + bitplace)) & 1 != 0;
     }
-
-    pub fn compute_adpcm(self: *AICAChannelState, adpcm_sample: u4) i32 {
-        var val = self.adpcm_state.step * ADPCMDiff[adpcm_sample & 7] >> 3;
-        val = @min(val, 0x7FFF);
-        val *= @as(i32, 1) - ((adpcm_sample >> 2) & 2);
-        val += self.adpcm_state.prev;
-        val = std.math.clamp(val, -0x8000, 0x7FFF);
-        self.adpcm_state.step = (self.adpcm_state.step * ADPCMScale[adpcm_sample & 7]) >> 8;
-        self.adpcm_state.step = std.math.clamp(self.adpcm_state.step, 0x007F, 0x6000);
-        self.adpcm_state.prev = val;
-        return val;
-    }
-
-    const ADPCMScale: [8]i32 = .{ 0xE6, 0xE6, 0xE6, 0xE6, 0x133, 0x199, 0x200, 0x266 };
-    const ADPCMDiff: [8]i32 = .{ 1, 3, 5, 7, 9, 11, 13, 15 };
 
     pub fn lfo(self: *@This(), form: Waveform) u8 {
         return @truncate(switch (form) {
@@ -1447,13 +1449,12 @@ pub const AICA = struct {
             state.curr_sample = switch (registers.play_control.sample_format) {
                 .i16 => @as([*]const i16, @ptrCast(@alignCast(sample_ram.ptr)))[state.play_position],
                 .i8 => @as(i32, @as(i8, @bitCast(sample_ram[state.play_position]))) << 8,
-                // FIXME: ADPCMStream, how does it work?
                 .ADPCM, .ADPCMStream => adpcm: {
                     // 4 bits per sample
                     var s: u8 = sample_ram[state.play_position >> 1];
                     if (state.play_position & 1 == 1)
                         s >>= 4;
-                    break :adpcm state.compute_adpcm(@truncate(s));
+                    break :adpcm state.adpcm_state.next(@truncate(s));
                 },
             };
 
