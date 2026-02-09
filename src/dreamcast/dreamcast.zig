@@ -32,15 +32,7 @@ pub const Region = enum(u8) {
     Unknown = 3,
 };
 
-pub const Language = enum(u8) {
-    Japanese = 0,
-    English = 1,
-    German = 2,
-    French = 3,
-    Spanish = 4,
-    Italian = 5,
-    Unknown = 6,
-};
+pub const Language = enum(u8) { Japanese = 0, English = 1, German = 2, French = 3, Spanish = 4, Italian = 5, Unknown = 6, _ };
 
 const VideoMode = enum(u8) {
     NTSC = 0,
@@ -335,19 +327,13 @@ pub const Dreamcast = struct {
         const flash_bytes_read = try flash_file.readAll(self.flash.data);
         std.debug.assert(flash_bytes_read == 0x20000);
 
-        // Adjust region.
+        // Adjust region in the factory settings (read-only partition).
         self.flash.data[0x1A002] = @as(u8, '0') + @intFromEnum(region);
         self.flash.data[0x1A0A2] = @as(u8, '0') + @intFromEnum(region);
 
-        // Get current system config, update it with user preference and fix block crc.
-        const system_bitmap = @as(*u512, @ptrCast(@alignCast(self.flash.data[0x1FFC0..0x20000].ptr)));
-        var first_free_block = @ctz(system_bitmap.*);
-        if (first_free_block == 0) {
-            // No block was allocated, allocate the first one.
-            system_bitmap.* &= ~@as(u512, 1);
-            first_free_block = 2;
-        }
-        var system_block = self.flash.get_system_block(first_free_block - 1);
+        // Search system config block, or allocate it, and fill it with user preferences.
+        const system_block = self.flash.get_or_allocate_logical_block(Flash.SystemConfigPayload, Flash.SystemSettings, Flash.SystemConfigPayload.LogicalBlockNumber);
+        system_block.user_payload = .{};
 
         // Update saved time to avoid manual time adjustement screen on startup.
         const dc_timestamp = AICA.timestamp();

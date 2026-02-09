@@ -200,12 +200,52 @@ pub const PartitionHeader = extern struct {
     reserved: [46]u8 = @splat(0xFF),
 };
 
-pub const Partition = enum(u8) {
-    FactorySettings = 0,
-    Reserved = 1,
-    SystemSettings = 2,
-    GameSettings = 3,
-    Unknown = 4,
+pub const DCPartition = enum(u8) {
+    FactorySettings = 0, // Read-only
+    Reserved = 1, // Zeroes
+    SystemSettings = 2, // Block allocated
+    GameSettings = 3, // Block allocated
+    Unused = 4, // Block allocated
+};
+
+pub const Partition = struct {
+    const BlockSize = 64; // bytes
+    const BitmapSize = 512 / 8; // bytes
+
+    offset: u32,
+    size: u32,
+
+    pub fn block(self: @This(), block_num: u32) u32 {
+        return self.offset + (block_num + 1) * BlockSize;
+    }
+
+    pub fn bitmap_count(self: @This()) u32 {
+        return (self.size + (32768 - 1)) / 32768;
+    }
+
+    pub fn bitmaps(self: @This()) u32 {
+        return self.offset + self.size - (BitmapSize * self.bitmap_count());
+    }
+
+    pub fn header(self: @This()) u32 {
+        return self.offset;
+    }
+
+    pub fn end(self: @This()) u32 {
+        return self.offset + self.size;
+    }
+};
+
+pub const FactorySettings = Partition{ .offset = 0x1A000, .size = 0x2000 };
+pub const GameSettings = Partition{ .offset = 0x10000, .size = 0x8000 };
+pub const SystemSettings = Partition{ .offset = 0x1C000, .size = 0x4000 };
+
+pub const Partitions = [5]Partition{
+    FactorySettings,
+    .{ .offset = 0x18000, .size = 0x4000 },
+    SystemSettings,
+    GameSettings,
+    .{ .offset = 0, .size = 0x10000 },
 };
 
 pub fn UserBlock(comptime T: type) type {
@@ -216,27 +256,81 @@ pub fn UserBlock(comptime T: type) type {
         crc: u16 align(1),
 
         pub fn update_crc(self: *@This()) void {
-            self.crc = block_crc(@as([*]u8, @ptrCast(self))[0..62]);
+            self.crc = block_crc(std.mem.asBytes(self)[0..62]);
+        }
+
+        pub fn check_crc(self: *const @This()) bool {
+            return self.crc == block_crc(std.mem.asBytes(self)[0..62]);
         }
     };
 }
 
 pub const SystemConfigPayload = extern struct {
-    time_low: u16 align(1),
-    time_high: u16 align(1),
+    pub const LogicalBlockNumber = 0x5;
+
+    time_low: u16 align(1) = 0,
+    time_high: u16 align(1) = 0,
     unknown_2: u8 align(1) = 0xFF,
     language: Language align(1) = .English,
-    sound: enum(u8) { Stereo = 0x00, Mono = 0x01 } align(1) = .Stereo,
-    auto_start: enum(u8) { On = 0x00, Off = 0x01 } align(1) = .On,
-    unknown_6: u32 align(1) = 0x61620A7D,
+    sound: enum(u8) { Stereo = 0x00, Mono = 0x01, _ } align(1) = .Stereo,
+    auto_start: enum(u8) { On = 0x00, Off = 0x01, _ } align(1) = .On,
+    unknown_6: u32 align(1) = 0xFFFFFFFF,
     unknown_7: [3 * 16]u8 align(1) = @splat(0xFF),
 };
 
-pub fn get_system_block(self: *@This(), index: usize) *UserBlock(SystemConfigPayload) {
-    return @ptrCast(@alignCast(&self.data[0x1C000 + (index + 1) * 0x40]));
+pub fn allocated_block_count(self: *@This(), partition: Partition) u32 {
+    var count: u32 = 0;
+    var bitmap_offset = partition.bitmaps();
+    while (bitmap_offset < partition.end() and self.data[bitmap_offset] == 0) {
+        bitmap_offset += 1;
+        count += 8;
+    }
+    if (bitmap_offset < partition.end())
+        count += @clz(self.data[bitmap_offset]);
+    return count;
 }
 
-pub fn block_crc(block: []u8) u16 {
+/// Search the most recent allocated block with the given logical block number.
+pub fn get_logical_block(self: *@This(), comptime T: type, partition: Partition, logical_block_number: u16) ?*UserBlock(T) {
+    const block_count = self.allocated_block_count(partition);
+    if (block_count == 0) return null;
+    var physical_block_number: i32 = @intCast(block_count - 1);
+    while (physical_block_number >= 0) {
+        const block = self.get_physical_block(T, partition, @intCast(physical_block_number));
+        if (block.logical_block_number == logical_block_number and block.check_crc()) return block;
+        physical_block_number -= 1;
+    }
+    return null;
+}
+
+/// Allocates the next available block.
+/// Assumes the partition is not full.
+pub fn allocate_block(self: *@This(), comptime T: type, partition: Partition) *UserBlock(T) {
+    const block_count = self.allocated_block_count(partition);
+    self.allocate_physical_block(partition, block_count);
+    std.debug.assert(block_count + 1 == self.allocated_block_count(partition));
+    return self.get_physical_block(T, partition, block_count);
+}
+
+/// Assumes the partition is not full.
+pub fn get_or_allocate_logical_block(self: *@This(), comptime T: type, partition: Partition, logical_block_number: u16) *UserBlock(T) {
+    return self.get_logical_block(T, partition, logical_block_number) orelse {
+        var block = self.allocate_block(T, partition);
+        block.logical_block_number = logical_block_number;
+        return block;
+    };
+}
+
+pub fn get_physical_block(self: *@This(), comptime T: type, partition: Partition, physical_block_number: u32) *UserBlock(T) {
+    return @ptrCast(@alignCast(&self.data[partition.block(physical_block_number)]));
+}
+
+pub fn allocate_physical_block(self: *@This(), partition: Partition, physical_block_number: u32) void {
+    const bitmap_offset = partition.bitmaps() + (physical_block_number / 8);
+    self.data[bitmap_offset] &= ~(@as(u8, 1) << @intCast(7 - (physical_block_number % 8)));
+}
+
+pub fn block_crc(block: []const u8) u16 {
     var n: u16 = 0xFFFF;
     for (block) |b| {
         n ^= (@as(u16, b) << 8);
@@ -248,5 +342,5 @@ pub fn block_crc(block: []u8) u16 {
             }
         }
     }
-    return (~n) & 0xFFFF;
+    return ~n;
 }
