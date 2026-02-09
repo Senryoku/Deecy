@@ -607,12 +607,21 @@ pub fn draw(self: *@This()) !void {
             zgui.separator();
 
             if (menu_from_enum("Region", &d.config.region, .{ .enabled = !d.running })) {
-                try d.dc.set_region(d.config.region.to_dreamcast());
+                try d.dc.load_flash(d.config.region.to_dreamcast(), d.config.bios_config);
             }
             zgui.separator();
 
             if (menu_from_enum("Cable", &d.config.video_cable, .{})) {
                 d.dc.cable_type = d.config.video_cable.to_dreamcast();
+            }
+            if (zgui.beginMenu("Bios Config", !d.running)) {
+                if (menu_from_enum("Language", &d.config.bios_config.language, .{}))
+                    try d.dc.load_flash(d.config.region.to_dreamcast(), d.config.bios_config);
+                if (menu_from_enum("Sound Mode", &d.config.bios_config.sound_mode, .{}))
+                    try d.dc.load_flash(d.config.region.to_dreamcast(), d.config.bios_config);
+                if (menu_from_enum("Auto Start", &d.config.bios_config.auto_start, .{}))
+                    try d.dc.load_flash(d.config.region.to_dreamcast(), d.config.bios_config);
+                zgui.endMenu();
             }
             zgui.separator();
 

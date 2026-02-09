@@ -32,7 +32,7 @@ pub const Region = enum(u8) {
     Unknown = 3,
 };
 
-pub const Language = enum(u8) { Japanese = 0, English = 1, German = 2, French = 3, Spanish = 4, Italian = 5, Unknown = 6, _ };
+pub const Language = enum(u8) { Japanese = 0, English = 1, German = 2, French = 3, Spanish = 4, Italian = 5, Unknown = 6 };
 
 const VideoMode = enum(u8) {
     NTSC = 0,
@@ -287,10 +287,6 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_TFREM).* = 8;
     }
 
-    pub fn set_region(self: *@This(), region: Region) !void {
-        try self.load_flash(region);
-    }
-
     pub fn load_bios(self: *@This(), boot_path: []const u8) !void {
         var boot_file = std.fs.cwd().openFile(boot_path, .{}) catch |err| {
             dc_log.err(termcolor.red("Failed to open boot ROM at '{s}', error: {t}."), .{ boot_path, err });
@@ -301,7 +297,9 @@ pub const Dreamcast = struct {
         std.debug.assert(bytes_read == 0x200000);
     }
 
-    pub fn load_flash(self: *@This(), region: Region) !void {
+    pub const BiosConfig = struct { language: Language = .English, sound_mode: Flash.SystemConfigPayload.SoundMode = .Stereo, auto_start: Flash.SystemConfigPayload.AutoStart = .On };
+
+    pub fn load_flash(self: *@This(), region: Region, bios_config: BiosConfig) !void {
         // FIXME: User flash is sometimes corrupted. Always load default until I understand what's going on.
         const default_flash_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_data_path(), "dc_flash.bin" });
         defer self._allocator.free(default_flash_path);
@@ -333,7 +331,11 @@ pub const Dreamcast = struct {
 
         // Search system config block, or allocate it, and fill it with user preferences.
         const system_block = self.flash.get_or_allocate_logical_block(Flash.SystemConfigPayload, Flash.SystemSettings, Flash.SystemConfigPayload.LogicalBlockNumber);
-        system_block.user_payload = .{};
+        system_block.user_payload = .{
+            .language = bios_config.language,
+            .sound = bios_config.sound_mode,
+            .auto_start = bios_config.auto_start,
+        };
 
         // Update saved time to avoid manual time adjustement screen on startup.
         const dc_timestamp = AICA.timestamp();

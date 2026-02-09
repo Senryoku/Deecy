@@ -265,6 +265,7 @@ const Configuration = struct {
             };
         }
     } = .Auto,
+    bios_config: Dreamcast.BiosConfig = .{},
 
     audio_volume: f32 = 0.3,
     dsp_emulation: DreamcastModule.AICAModule.DSPEmulation = .JIT,
@@ -524,7 +525,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
 
     try self.check_save_state_slots();
 
-    try self.dc.set_region(config.region.to_dreamcast());
+    try self.dc.load_flash(config.region.to_dreamcast(), config.bios_config);
 
     return self;
 }
@@ -1051,7 +1052,7 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
     }
 
     if (self.config.region == .Auto) {
-        self.dc.set_region(self.dc.gdrom.disc.?.get_region()) catch |err| {
+        self.dc.load_flash(self.dc.gdrom.disc.?.get_region(), self.config.bios_config) catch |err| {
             switch (err) {
                 error.FileNotFound => return error.MissingFlash,
                 else => return err,

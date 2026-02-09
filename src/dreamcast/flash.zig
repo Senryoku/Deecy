@@ -270,12 +270,15 @@ pub fn UserBlock(comptime T: type) type {
 pub const SystemConfigPayload = extern struct {
     pub const LogicalBlockNumber = 0x5;
 
+    pub const SoundMode = enum(u8) { Stereo = 0x00, Mono = 0x01 };
+    pub const AutoStart = enum(u8) { On = 0x00, Off = 0x01 };
+
     time_low: u16 align(1) = 0,
     time_high: u16 align(1) = 0,
     unknown_2: u8 align(1) = 0xFF,
     language: Language align(1) = .English,
-    sound: enum(u8) { Stereo = 0x00, Mono = 0x01, _ } align(1) = .Stereo,
-    auto_start: enum(u8) { On = 0x00, Off = 0x01, _ } align(1) = .On,
+    sound: SoundMode align(1) = .Stereo,
+    auto_start: AutoStart align(1) = .On,
     unknown_6: u32 align(1) = 0xFFFFFFFF,
     unknown_7: [3 * 16]u8 align(1) = @splat(0xFF),
 };
