@@ -1358,12 +1358,23 @@ pub const AICA = struct {
 
         // Apply resonant low pass filter
         if (!registers.env_settings.lpoff) {
-            // FIXME: This was barely tested.
-            const f: i32 = (((state.filter_env_level & 0xFF) | 0x100) << 4) >> @truncate(@as(u5, @truncate(state.filter_env_level >> 8)) ^ 0x1F);
-            const q = 0x0E00 + 0x80 * @as(i32, registers.env_settings.q);
-            sample = f * sample + (0x2000 - f + q) * state.low_pass_filter_samples[0] - q * state.low_pass_filter_samples[1];
-            sample >>= 13;
-            sample = std.math.clamp(sample, std.math.minInt(i16), std.math.maxInt(i16));
+            const exponent: u4 = @truncate(state.filter_env_level >> 9);
+            const mantissa: u9 = @truncate(state.filter_env_level);
+            const f_raw: f32 = @as(f32, @floatFromInt(@as(u10, 0x200) | mantissa));
+            const shift: u5 = @as(u5, 16) - exponent;
+            var f: f32 = (f_raw / 0x200) / @as(f32, @floatFromInt(@as(u32, 1) << shift));
+            f = std.math.clamp(f, 0.0, 1.0);
+
+            const fsample: f32 = @floatFromInt(sample);
+            const prev: f32 = @floatFromInt(state.low_pass_filter_samples[0]);
+            const tmp = f * fsample + (1.0 - f) * prev;
+
+            // TODO: Figure out the resonant part.
+            // const q = ...[registers.env_settings.q];
+            // const prev2: f32 =  @floatFromInt(state.low_pass_filter_samples[1]);
+            // const tmp = f * fsample + (1.0 - f + q) * prev - q * prev2;
+
+            sample = std.math.clamp(@as(i32, @intFromFloat(tmp)), std.math.minInt(i16), std.math.maxInt(i16));
             state.low_pass_filter_samples[1] = state.low_pass_filter_samples[0];
             state.low_pass_filter_samples[0] = sample;
         }
