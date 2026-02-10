@@ -164,6 +164,12 @@
 				flex-direction: column;
 				gap: 20px;
 				margin-bottom: 20px;
+
+				.notes {
+					p {
+						padding: 0.5em;
+					}
+				}
 			}
 
 			.tag {
@@ -415,6 +421,15 @@
 					html += `
 						<div class="linked-issues">
 							Linked issues: ${data.linked_issues.map((i) => `<a href="https://github.com/Senryoku/Deecy/issues/${i}" target="_blank">#${i}</a>`).join(", ")}
+						</div>
+					`;
+				}
+
+				if (data.notes?.length > 0) {
+					html += `
+						<div class="notes">
+							<h3>Notes</h3>
+							<p>${data.notes}</p>
 						</div>
 					`;
 				}
