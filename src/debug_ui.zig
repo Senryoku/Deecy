@@ -912,7 +912,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
                     colored(!channel.env_settings.lpoff, "FilEnv ", .{});
                     zgui.sameLine(.{});
-                    zgui.text("{s: >7} - level: {X: >4}", .{ @tagName(state.filter_env_state), state.filter_env_level });
+                    zgui.text("{s: >7} - level: {X: >4} - Q: {X: >2}", .{ @tagName(state.filter_env_state), state.filter_env_level, channel.env_settings.q });
                     zgui.text("Steps: {X: >4} - {X: >4} - {X: >4} - {X: >4} - {X: >4}", .{ channel.flv0, channel.flv1, channel.flv2, channel.flv3, channel.flv4 });
                     try self.audio_channels[i].filter_envelope.add(self._allocator, dc_time, state.filter_env_level);
                     if (zgui.plot.beginPlot("Filter Envelope", .{ .flags = plot_flags, .h = 128.0 })) {
