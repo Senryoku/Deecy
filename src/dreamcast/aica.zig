@@ -1369,10 +1369,7 @@ pub const AICA = struct {
             const prev: f32 = @floatFromInt(state.low_pass_filter_samples[0]);
             const tmp = f * fsample + (1.0 - f) * prev;
 
-            // TODO: Figure out the resonant part.
-            // const q = ...[registers.env_settings.q];
-            // const prev2: f32 =  @floatFromInt(state.low_pass_filter_samples[1]);
-            // const tmp = f * fsample + (1.0 - f + q) * prev - q * prev2;
+            // TODO: Figure out the resonant part and the exact contribution of the Q register (registers.env_settings.q).
 
             sample = std.math.clamp(@as(i32, @intFromFloat(tmp)), std.math.minInt(i16), std.math.maxInt(i16));
             state.low_pass_filter_samples[1] = state.low_pass_filter_samples[0];

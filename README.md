@@ -97,13 +97,15 @@ sudo apt install libgtk-3-dev
         -   Optimize.
 -   AICA:
     -   Debug
+    -   More accurate low pass filter (Q is currently ignored. Test case: the bios)
 -   Renderer:
     -   Framebuffer:
-        -   Improve detection of writes to framebuffer (false positives?)
-        -   Write back for games that need it.
+        -   Improve detection of writes to framebuffer.
+        -   Use the correct texture parameters when rendering to the host texture cache (skipping the copy to guest VRAM).
     -   Modifier Volumes.
         -   Implemented: Inclusion volumes and shadow bit over opaque and transparent geometry.
         -   Missing: Exclusion volumes.
+        -   Missing: Open Translucent MVs. I've seen some uses, but no easy way to check an hypothetical implementation.
         -   Missing: Translucent MV in pre-sort mode.
     -   Region Array Data Configuration are mostly ignored.
     -   Fog LUT Mode 2.
