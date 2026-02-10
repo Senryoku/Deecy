@@ -421,6 +421,12 @@ pub const AICAChannelState = struct {
         mute: bool = false, // Don't output sample (but run normally otherwise)
     } = .{},
 
+    pub fn reset(self: *@This()) void {
+        const debug = self.debug;
+        self.* = .{};
+        self.debug = debug;
+    }
+
     pub fn key_on(self: *@This(), registers: *const AICAChannel) void {
         if (self.amp_env_state != .Release) return;
 
@@ -703,7 +709,8 @@ pub const AICA = struct {
         @memset(self.regs, 0);
         @memset(self.wave_memory, 0);
 
-        @memset(self.channel_states, .{});
+        for (self.channel_states) |*c|
+            c.reset();
 
         @memset(self.sample_buffer, 0);
         self.sample_read_offset = 0;

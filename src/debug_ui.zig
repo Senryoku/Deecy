@@ -42,6 +42,10 @@ fn DebugBuffer(comptime SampleType: type) type {
             }
             if (self.xv.items.len > 0 and self.xv.items[self.xv.items.len - 1] >= time) return;
             if (self.xv.items.len > 0) {
+                if (self.xv.items[self.xv.items.len - 1] >= time) {
+                    self.xv.clearRetainingCapacity();
+                    self.yv.clearRetainingCapacity();
+                }
                 try self.xv.append(allocator, @intCast(time - self.start_time));
             } else {
                 self.start_time = time;
