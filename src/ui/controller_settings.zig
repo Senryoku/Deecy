@@ -243,7 +243,7 @@ pub fn draw_controller_settings(d: *Deecy, comptime port: u8) !void {
             capabilities.analogHorizontal2 = 0;
         }
         guest_controller.subcapabilities[0] = @bitCast(capabilities);
-        d.config.controllers[port].subcapabilities = capabilities;
+        d.config.controllers[port].device.Controller.subcapabilities = capabilities;
     }
 
     const trigger_size = [2]f32{ s * 15.0, s * 20.0 };

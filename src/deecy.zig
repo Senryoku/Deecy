@@ -51,12 +51,67 @@ fn glfw_key_callback(window: *zglfw.Window, key: zglfw.Key, scancode: i32, actio
 
     if (maybe_app) |app| {
         if (zgui.io.getWantCaptureKeyboard()) return;
+        // While a game is running and a keyboard is connected, all keyboard shortcut are disabled, with the exception of Escape (otherwise we'd have no way to pause the game).
+        // This isn't ideal, but I'm not sure what's the best way to handle this yet.
+        if (app.update_dc_keyboard(key, action) and key != .escape) return;
 
         if (action == .press) {
             // Escape is a special case in all "wait for input" functions. I'll keep it as the only non-modifiable shortcut.
             if (key == .escape) {
                 app.toggle_ui();
             } else app.shortcuts.on_key(.{ .keyboard = .{ .key = key, .mods = .from_glfw(mods) } });
+        }
+    }
+}
+
+fn glfw_mouse_button_callback(window: *zglfw.Window, button: zglfw.MouseButton, action: zglfw.Action, mods: zglfw.Mods) callconv(.c) void {
+    const maybe_app = window.getUserPointer(@This());
+    _ = mods;
+    if (maybe_app) |app| {
+        if (app.running) {
+            if (zgui.io.getWantCaptureMouse()) return;
+            if (app.get_dc_mouse()) |mouse| {
+                const value = switch (action) {
+                    .press => false, // Active low
+                    .release => true,
+                    else => return,
+                };
+                switch (button) {
+                    .left => mouse.button_status.a = value,
+                    .right => mouse.button_status.b = value,
+                    .middle => mouse.button_status.w = value,
+                    else => return,
+                }
+            }
+        }
+    }
+}
+
+fn glfw_cursor_pos_callback(window: *zglfw.Window, xpos: f64, ypos: f64) callconv(.c) void {
+    const maybe_app = window.getUserPointer(@This());
+
+    if (maybe_app) |app| {
+        if (app.running and !app.display_ui) {
+            if (app.get_dc_mouse()) |mouse| {
+                mouse.move_to(xpos, ypos);
+                return;
+            }
+        }
+    }
+}
+
+fn glfw_scroll_callback(window: *zglfw.Window, xoffset: f64, yoffset: f64) callconv(.c) void {
+    const maybe_app = window.getUserPointer(@This());
+
+    _ = xoffset;
+
+    if (maybe_app) |app| {
+        if (app.running) {
+            if (zgui.io.getWantCaptureMouse()) return;
+            if (app.get_dc_mouse()) |mouse| {
+                mouse.scroll(yoffset);
+                return;
+            }
         }
     }
 }
@@ -196,7 +251,17 @@ pub const DefaultVMUPaths = default_vmu_paths: {
 
 const ControllerSettings = struct {
     enabled: bool,
-    subcapabilities: DreamcastModule.Maple.Controller.InputCapabilities = DreamcastModule.Maple.Controller.StandardControllerCapabilities,
+    device: union(enum) {
+        Controller: struct {
+            subcapabilities: DreamcastModule.Maple.Controller.InputCapabilities = .Standard,
+        },
+        Keyboard: struct {
+            subcapabilities: u32 = (DreamcastModule.Maple.Keyboard.FunctionDefinition{}).as_u32(),
+        },
+        Mouse: struct {
+            subcapabilities: u32 = (DreamcastModule.Maple.Mouse.FunctionDefinition{}).as_u32(),
+        },
+    } = .{ .Controller = .{} },
     subperipherals: [2]union(enum) { None, VMU: struct { filename: []const u8 }, VibrationPack } = .{ .None, .None },
 };
 
@@ -419,6 +484,9 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
 
             self.window.setUserPointer(self);
             _ = self.window.setKeyCallback(glfw_key_callback);
+            _ = self.window.setMouseButtonCallback(glfw_mouse_button_callback);
+            _ = self.window.setCursorPosCallback(glfw_cursor_pos_callback);
+            _ = self.window.setScrollCallback(glfw_scroll_callback);
             _ = self.window.setFramebufferSizeCallback(glfw_resize_callback);
             _ = zglfw.setDropCallback(self.window, glfw_drop_callback);
 
@@ -798,7 +866,17 @@ pub fn load_vmu(self: *@This(), port: u8, slot: u8, vmu_path: []const u8) !void 
 pub fn enable_controller(self: *@This(), port: u8, value: bool) !void {
     const config = &self.config.controllers[port];
     if (value) {
-        self.dc.maple.ports[port].main = .{ .Controller = .{ .subcapabilities = .{ @bitCast(config.subcapabilities), 0, 0 } } };
+        switch (config.device) {
+            .Controller => |controller| {
+                self.dc.maple.ports[port].main = .{ .Controller = .{ .subcapabilities = .{ @bitCast(controller.subcapabilities), 0, 0 } } };
+            },
+            .Keyboard => |keyboard| {
+                self.dc.maple.ports[port].main = .{ .Keyboard = .{ .subcapabilities = .{ keyboard.subcapabilities, 0, 0 } } };
+            },
+            .Mouse => |mouse| {
+                self.dc.maple.ports[port].main = .{ .Mouse = .{ .subcapabilities = .{ mouse.subcapabilities, 0, 0 } } };
+            },
+        }
         inline for (0..config.subperipherals.len) |slot| {
             try self.init_peripheral(port, slot);
         }
@@ -1005,12 +1083,49 @@ pub fn poll_controllers(self: *@This()) void {
     }
 }
 
+pub fn get_dc_keyboard(self: *@This()) ?*DreamcastModule.Maple.Keyboard {
+    for (&self.dc.maple.ports) |*port| {
+        if (port.main) |*peripheral| {
+            if (peripheral.* == .Keyboard) return &peripheral.Keyboard;
+        }
+    }
+    return null;
+}
+
+pub fn get_dc_mouse(self: *@This()) ?*DreamcastModule.Maple.Mouse {
+    for (&self.dc.maple.ports) |*port| {
+        if (port.main) |*peripheral| {
+            if (peripheral.* == .Mouse) return &peripheral.Mouse;
+        }
+    }
+    return null;
+}
+
+/// Returns true when the key might be used by a running game.
+pub fn update_dc_keyboard(self: *@This(), key: zglfw.Key, action: zglfw.Action) bool {
+    if (action == .repeat) return false;
+
+    if (zglfw_key_to_dc_key(key)) |dc_key| {
+        if (self.get_dc_keyboard()) |keyboard| {
+            switch (action) {
+                .press => keyboard.press_key(dc_key),
+                .release => keyboard.release_key(dc_key),
+                else => {},
+            }
+            // NOTE: Only send the key to the first connected keyboard.
+            //       Multiple keyboards will most likely lead to unexpected behavior and are probably not intended.
+            return self.running;
+        }
+    }
+    return false;
+}
+
 pub fn load_and_start(self: *@This(), path: []const u8) !void {
     self.pause();
     try self.load_disc(path);
     try self.dc.reset();
     self.start();
-    self.display_ui = false;
+    self.set_display_ui(false);
 }
 
 pub fn load_disc(self: *@This(), path: []const u8) !void {
@@ -1135,7 +1250,7 @@ pub fn start_pause(self: *@This()) void {
     }
 }
 pub fn toggle_ui(self: *@This()) void {
-    self.display_ui = !self.display_ui;
+    self.set_display_ui(!self.display_ui);
 }
 pub fn toggle_debug_ui(self: *@This()) void {
     self.config.display_debug_ui = !self.config.display_debug_ui;
@@ -1202,6 +1317,7 @@ pub fn load_state_idx(comptime idx: u8) fn (*Self) void {
 }
 
 pub fn start(self: *@This()) void {
+    defer self.check_cursor_state();
     if (!self.running) {
         if (!self.realtime) {
             self.running = true;
@@ -1229,6 +1345,7 @@ pub fn start(self: *@This()) void {
 }
 
 pub fn pause(self: *@This()) void {
+    defer self.check_cursor_state();
     if (self.running) {
         if (!self.realtime) {
             self.running = false;
@@ -1251,6 +1368,23 @@ pub fn set_realtime(self: *@This(), realtime: bool) void {
     if (was_running) self.pause();
     defer if (was_running) self.start();
     self.realtime = realtime;
+}
+
+pub fn set_display_ui(self: *@This(), value: bool) void {
+    if (self.display_ui == value) return;
+    self.display_ui = value;
+    self.check_cursor_state();
+}
+
+fn check_cursor_state(self: *@This()) void {
+    // If the UI is not visible, and we use an emulated mouse: Capture the mouse.
+    if (self.running and !self.display_ui) {
+        if (self.get_dc_mouse()) |_| {
+            zglfw.setInputMode(self.window, .cursor, .disabled) catch |err| deecy_log.err("Failed to disable cursor: {t}", .{err});
+            return;
+        }
+    }
+    zglfw.setInputMode(self.window, .cursor, .normal) catch |err| deecy_log.err("Failed to set cursor input mode: {t}", .{err});
 }
 
 pub fn on_resize(self: *@This()) void {
@@ -1696,4 +1830,133 @@ pub fn wait_async_jobs(self: *@This()) void {
 pub fn launch_async(self: *@This(), func: anytype, args: anytype) !void {
     self.wait_async_jobs();
     self._thread = try std.Thread.spawn(.{}, func, args);
+}
+
+pub fn zglfw_key_to_dc_key(key: zglfw.Key) ?DreamcastModule.Maple.Keyboard.KeyScanCode {
+    return switch (key) {
+        .a => .A,
+        .b => .B,
+        .c => .C,
+        .d => .D,
+        .e => .E,
+        .f => .F,
+        .g => .G,
+        .h => .H,
+        .i => .I,
+        .j => .J,
+        .k => .K,
+        .l => .L,
+        .m => .M,
+        .n => .N,
+        .o => .O,
+        .p => .P,
+        .q => .Q,
+        .r => .R,
+        .s => .S,
+        .t => .T,
+        .u => .U,
+        .v => .V,
+        .w => .W,
+        .x => .X,
+        .y => .Y,
+        .z => .Z,
+
+        .zero => .@"0",
+        .one => .@"1",
+        .two => .@"2",
+        .three => .@"3",
+        .four => .@"4",
+        .five => .@"5",
+        .six => .@"6",
+        .seven => .@"7",
+        .eight => .@"8",
+        .nine => .@"9",
+
+        .F1 => .F1,
+        .F2 => .F2,
+        .F3 => .F3,
+        .F4 => .F4,
+        .F5 => .F5,
+        .F6 => .F6,
+        .F7 => .F7,
+        .F8 => .F8,
+        .F9 => .F9,
+        .F10 => .F10,
+        .F11 => .F11,
+        .F12 => .F12,
+        .F13 => .F13,
+        .F14 => .F14,
+        .F15 => .F15,
+        .F16 => .F16,
+        .F17 => .F17,
+        .F18 => .F18,
+        .F19 => .F19,
+        .F20 => .F20,
+        .F21 => .F21,
+        .F22 => .F22,
+        .F23 => .F23,
+        .F24 => .F24,
+
+        .enter => .Return,
+        .escape => .Escape,
+        .backspace => .Delete,
+        .tab => .Tab,
+        .space => .Spacebar,
+        .insert => .Insert,
+        .delete => .DeleteForward,
+        .right => .RightArrow,
+        .left => .LeftArrow,
+        .down => .DownArrow,
+        .up => .UpArrow,
+        .page_up => .PageUp,
+        .page_down => .PageDown,
+        .home => .Home,
+        .end => .End,
+        .caps_lock => .CapsLock,
+        .scroll_lock => .ScrollLock,
+        .num_lock => .KeypadNumLock,
+        .print_screen => .PrintScreen,
+        .pause => .Pause,
+        .menu => .Menu,
+
+        .minus => .Minus,
+        .equal => .Equal,
+        .left_bracket => .LeftBracket,
+        .right_bracket => .RightBracket,
+        .backslash => .Backslash,
+        .semicolon => .Semicolon,
+        .apostrophe => .Quote,
+        .grave_accent => .Tilde, // Grave Accent/Tilde
+        .comma => .Comma,
+        .period => .Period,
+        .slash => .Slash,
+
+        .kp_0 => .Keypad0,
+        .kp_1 => .Keypad1,
+        .kp_2 => .Keypad2,
+        .kp_3 => .Keypad3,
+        .kp_4 => .Keypad4,
+        .kp_5 => .Keypad5,
+        .kp_6 => .Keypad6,
+        .kp_7 => .Keypad7,
+        .kp_8 => .Keypad8,
+        .kp_9 => .Keypad9,
+        .kp_decimal => .KeypadPeriod,
+        .kp_divide => .KeypadSlash,
+        .kp_multiply => .KeypadAsterisk,
+        .kp_subtract => .KeypadMinus,
+        .kp_add => .KeypadPlus,
+        .kp_enter => .KeypadEnter,
+        .kp_equal => .KeypadEqual,
+
+        .left_control => .LeftControl,
+        .left_shift => .LeftShift,
+        .left_alt => .LeftAlt,
+        .left_super => .LeftS1,
+        .right_control => .RightControl,
+        .right_shift => .RightShift,
+        .right_alt => .RightAlt,
+        .right_super => .RightS3,
+        else => null,
+    };
 }
