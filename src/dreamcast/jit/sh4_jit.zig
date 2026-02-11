@@ -686,6 +686,7 @@ pub const SH4JIT = struct {
     const BlockHashPrime: u64 = 0x100000001b3; // FNV prime
 
     fn block_hash(ram: [*]const u8, start: u32, end: u32) callconv(Architecture.CallingConvention) u64 {
+        // std.debug.print("hashing {X:0>8}-{X:0>8}; len: {d}\n", .{ start, end, end - start });
         const aligned_start = std.mem.alignBackward(u32, start, 8) / @sizeOf(u64);
         const aligned_end = std.mem.alignForward(u32, end, 8) / @sizeOf(u64);
         const slice: []const u64 = @as([*]const u64, @ptrCast(@alignCast(ram)))[aligned_start..aligned_end];
@@ -715,6 +716,36 @@ pub const SH4JIT = struct {
                 fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
                     const slice = @as([*]align(1) const u64, @ptrCast(&ram[start]));
                     return slice[0] ^ slice[1] ^ slice[2];
+                }
+            },
+            13...16 => struct {
+                fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
+                    const slice = @as([*]align(1) const u64, @ptrCast(&ram[start]));
+                    return slice[0] ^ slice[1] ^ slice[2] ^ slice[3];
+                }
+            },
+            17...20 => struct {
+                fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
+                    const slice = @as([*]align(1) const u64, @ptrCast(&ram[start]));
+                    return slice[0] ^ slice[1] ^ slice[2] ^ slice[3] ^ slice[4];
+                }
+            },
+            21...24 => struct {
+                fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
+                    const slice = @as([*]align(1) const u64, @ptrCast(&ram[start]));
+                    return slice[0] ^ slice[1] ^ slice[2] ^ slice[3] ^ slice[4] ^ slice[5];
+                }
+            },
+            25...28 => struct {
+                fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
+                    const slice = @as([*]align(1) const u64, @ptrCast(&ram[start]));
+                    return slice[0] ^ slice[1] ^ slice[2] ^ slice[3] ^ slice[4] ^ slice[5] ^ slice[6];
+                }
+            },
+            29...32 => struct {
+                fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
+                    const slice = @as([*]align(1) const u64, @ptrCast(&ram[start]));
+                    return slice[0] ^ slice[1] ^ slice[2] ^ slice[3] ^ slice[4] ^ slice[5] ^ slice[6] ^ slice[7];
                 }
             },
             else => return block_hash,
@@ -829,6 +860,11 @@ pub const SH4JIT = struct {
                     try call(b, &ctx, block_hash);
                     try b.append(.Nop); // For small blocks inlined hash
                     try b.append(.Nop);
+                    try b.append(.Nop);
+                    try b.append(.Nop);
+                    try b.append(.Nop);
+                    try b.append(.Nop);
+                    try b.append(.Nop);
                     hash_invalidation_value_offset = b.instructions.items.len;
                     try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .imm64 = 0xDEADCAFEDEADCAFE });
                     try b.cmp(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[0] });
@@ -890,29 +926,23 @@ pub const SH4JIT = struct {
                     const end = (if (ctx.current_physical_pc < ctx.start_physical_pc) ctx.start_physical_pc + 16 else ctx.current_physical_pc) - 0x0C00_0000;
                     const instruction_len = (end - (ctx.start_physical_pc - 0x0C00_0000)) >> 1;
                     const hash = switch (instruction_len) {
-                        inline 1...12 => |len| h: {
+                        inline 1...24 => |len| h: {
                             // Patch out the function call and inline the 'hash' computation.
-                            b.instructions.items[hash_invalidation_value_offset - 3] = .{
+                            b.instructions.items[hash_invalidation_value_offset - 8] = .{
                                 .Mov = .{
                                     .dst = .{ .reg64 = ReturnRegister },
-                                    // .src = .{ .mem = .{ .base = ArgRegisters[0], .displacement = ctx.start_physical_pc - 0x0C00_0000, .size = 64 } },
                                     .src = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .size = 64 } },
                                 },
                             };
-                            if (len > 4)
-                                b.instructions.items[hash_invalidation_value_offset - 2] = .{
-                                    .Xor = .{
-                                        .dst = .{ .reg64 = ReturnRegister },
-                                        .src = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .displacement = 8, .size = 64 } },
-                                    },
-                                };
-                            if (len > 8)
-                                b.instructions.items[hash_invalidation_value_offset - 1] = .{
-                                    .Xor = .{
-                                        .dst = .{ .reg64 = ReturnRegister },
-                                        .src = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .displacement = 16, .size = 64 } },
-                                    },
-                                };
+                            for (0..7) |i| {
+                                if (len > 4 * (i + 1))
+                                    b.instructions.items[hash_invalidation_value_offset - (7 - i)] = .{
+                                        .Xor = .{
+                                            .dst = .{ .reg64 = ReturnRegister },
+                                            .src = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .displacement = @intCast((i + 1) * 8), .size = 64 } },
+                                        },
+                                    };
+                            }
                             break :h block_hash_function(len)(@ptrCast(ctx.cpu._dc.?.ram), ctx.start_physical_pc - 0x0C00_0000, end);
                         },
                         else => block_hash(@ptrCast(ctx.cpu._dc.?.ram), ctx.start_physical_pc - 0x0C00_0000, end),
