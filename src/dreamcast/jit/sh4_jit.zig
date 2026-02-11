@@ -700,7 +700,7 @@ pub const SH4JIT = struct {
 
     fn block_hash_function(comptime instruction_size: u32) fn (ram: [*]const u8, start: u32, end: u32) callconv(Architecture.CallingConvention) u64 {
         return (switch (instruction_size) {
-            1...4 => struct {
+            inline 1...4 => struct {
                 fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
                     return @as([*]align(1) const u64, @ptrCast(&ram[start]))[0];
                 }
@@ -827,6 +827,8 @@ pub const SH4JIT = struct {
                     hash_invalidation_end_offset = b.instructions.items.len;
                     try b.mov(.{ .reg = ArgRegisters[2] }, .{ .imm32 = 0xDEADCAFE });
                     try call(b, &ctx, block_hash);
+                    try b.append(.Nop); // For small blocks inlined hash
+                    try b.append(.Nop);
                     hash_invalidation_value_offset = b.instructions.items.len;
                     try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .imm64 = 0xDEADCAFEDEADCAFE });
                     try b.cmp(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[0] });
@@ -886,10 +888,31 @@ pub const SH4JIT = struct {
                     // Patch end address of the block, and expected hash value.
                     //          This can happen because of some optimisations (inline_backwards_bra). Solution is hackish for now.
                     const end = (if (ctx.current_physical_pc < ctx.start_physical_pc) ctx.start_physical_pc + 16 else ctx.current_physical_pc) - 0x0C00_0000;
-                    const instruction_len = (end - (ctx.start_physical_pc - 0x0C00_0000)) >> 2;
+                    const instruction_len = (end - (ctx.start_physical_pc - 0x0C00_0000)) >> 1;
                     const hash = switch (instruction_len) {
-                        inline 0...24 => |len| h: {
-                            b.instructions.items[hash_invalidation_value_offset - 1].FunctionCall = block_hash_function(len);
+                        inline 1...12 => |len| h: {
+                            // Patch out the function call and inline the 'hash' computation.
+                            b.instructions.items[hash_invalidation_value_offset - 3] = .{
+                                .Mov = .{
+                                    .dst = .{ .reg64 = ReturnRegister },
+                                    // .src = .{ .mem = .{ .base = ArgRegisters[0], .displacement = ctx.start_physical_pc - 0x0C00_0000, .size = 64 } },
+                                    .src = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .size = 64 } },
+                                },
+                            };
+                            if (len > 4)
+                                b.instructions.items[hash_invalidation_value_offset - 2] = .{
+                                    .Xor = .{
+                                        .dst = .{ .reg64 = ReturnRegister },
+                                        .src = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .displacement = 8, .size = 64 } },
+                                    },
+                                };
+                            if (len > 8)
+                                b.instructions.items[hash_invalidation_value_offset - 1] = .{
+                                    .Xor = .{
+                                        .dst = .{ .reg64 = ReturnRegister },
+                                        .src = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .displacement = 16, .size = 64 } },
+                                    },
+                                };
                             break :h block_hash_function(len)(@ptrCast(ctx.cpu._dc.?.ram), ctx.start_physical_pc - 0x0C00_0000, end);
                         },
                         else => block_hash(@ptrCast(ctx.cpu._dc.?.ram), ctx.start_physical_pc - 0x0C00_0000, end),
