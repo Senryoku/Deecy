@@ -1093,10 +1093,7 @@ pub const Emitter = struct {
                         }
                     },
                     .mem => |src_m| try self.mov_reg_mem(.MemToReg, dst, src_m),
-                    else => {
-                        std.debug.print("Mov Unimplemented: {f}, {f}\n", .{ dst, src });
-                        return error.Unimplemented;
-                    },
+                    else => return error.InvalidMovSource,
                 }
             },
             .freg32 => |dst_reg| {

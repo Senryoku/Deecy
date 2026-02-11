@@ -682,8 +682,43 @@ pub const SH4JIT = struct {
         try self.init_compile_and_run_handler();
     }
 
-    fn block_hash(ram: [*]u8, start: u32, end: u32) callconv(Architecture.CallingConvention) u64 {
-        return std.hash.CityHash64.hash(ram[start..end]);
+    const BlockHashInit: u64 = 0xcbf29ce484222325;
+    const BlockHashPrime: u64 = 0x100000001b3; // FNV prime
+
+    fn block_hash(ram: [*]const u8, start: u32, end: u32) callconv(Architecture.CallingConvention) u64 {
+        const aligned_start = std.mem.alignBackward(u32, start, 8) / @sizeOf(u64);
+        const aligned_end = std.mem.alignForward(u32, end, 8) / @sizeOf(u64);
+        const slice: []const u64 = @as([*]const u64, @ptrCast(@alignCast(ram)))[aligned_start..aligned_end];
+        var hash: u64 = BlockHashInit;
+        const prime: u64 = BlockHashPrime;
+        for (slice) |val| {
+            hash ^= val;
+            hash = hash *% prime;
+        }
+        return hash;
+    }
+
+    fn block_hash_function(comptime instruction_size: u32) fn (ram: [*]const u8, start: u32, end: u32) callconv(Architecture.CallingConvention) u64 {
+        return (switch (instruction_size) {
+            1...4 => struct {
+                fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
+                    return @as([*]align(1) const u64, @ptrCast(&ram[start]))[0];
+                }
+            },
+            5...8 => struct {
+                fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
+                    const slice = @as([*]align(1) const u64, @ptrCast(&ram[start]));
+                    return slice[0] ^ slice[1];
+                }
+            },
+            9...12 => struct {
+                fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
+                    const slice = @as([*]align(1) const u64, @ptrCast(&ram[start]));
+                    return slice[0] ^ slice[1] ^ slice[2];
+                }
+            },
+            else => return block_hash,
+        }).block_hash;
     }
 
     pub fn execute(self: *@This(), cpu: *sh4.SH4) !u32 {
@@ -851,7 +886,14 @@ pub const SH4JIT = struct {
                     // Patch end address of the block, and expected hash value.
                     //          This can happen because of some optimisations (inline_backwards_bra). Solution is hackish for now.
                     const end = (if (ctx.current_physical_pc < ctx.start_physical_pc) ctx.start_physical_pc + 16 else ctx.current_physical_pc) - 0x0C00_0000;
-                    const hash = block_hash(@ptrCast(ctx.cpu._dc.?.ram), ctx.start_physical_pc - 0x0C00_0000, end);
+                    const instruction_len = (end - (ctx.start_physical_pc - 0x0C00_0000)) >> 2;
+                    const hash = switch (instruction_len) {
+                        inline 0...24 => |len| h: {
+                            b.instructions.items[hash_invalidation_value_offset - 1].FunctionCall = block_hash_function(len);
+                            break :h block_hash_function(len)(@ptrCast(ctx.cpu._dc.?.ram), ctx.start_physical_pc - 0x0C00_0000, end);
+                        },
+                        else => block_hash(@ptrCast(ctx.cpu._dc.?.ram), ctx.start_physical_pc - 0x0C00_0000, end),
+                    };
                     b.instructions.items[hash_invalidation_end_offset].Mov.src.imm32 = end;
                     b.instructions.items[hash_invalidation_value_offset].Mov.src.imm64 = hash;
                 },

@@ -244,7 +244,7 @@ pub fn build(b: *std.Build) !void {
                 .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
             }),
         });
-        jit_perf.root_module.strip = true;
+        // jit_perf.root_module.strip = true;
         jit_perf.lto = .full;
         jit_perf.link_gc_sections = true;
         jit_perf.root_module.addImport("termcolor", termcolor_module);
