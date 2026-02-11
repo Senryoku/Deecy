@@ -665,10 +665,16 @@ pub const SH4JIT = struct {
         }
     }
 
+    pub fn reset_mmu_cache(self: *@This()) void {
+        _ = self;
+        if (Optimizations.mmu_translation_cache) {
+            MMUCacheEntries = @splat(.{});
+        }
+    }
+
     /// Resets block offsets without resetting the block cache immediately. Intended to be used from JITed code.
     pub fn safe_reset(self: *@This()) void {
-        MMUCacheRead = @splat(.{});
-        MMUCacheWrite = @splat(.{});
+        self.reset_mmu_cache();
 
         sh4_jit_log.debug("Reset requested.", .{});
         self.block_cache.reset_blocks() catch {
@@ -677,8 +683,7 @@ pub const SH4JIT = struct {
     }
 
     pub fn reset(self: *@This()) !void {
-        MMUCacheRead = @splat(.{});
-        MMUCacheWrite = @splat(.{});
+        self.reset_mmu_cache();
 
         try self.block_cache.reset();
         try self.init_compile_and_run_handler();
@@ -688,7 +693,6 @@ pub const SH4JIT = struct {
     const BlockHashPrime: u64 = 0x100000001b3; // FNV prime
 
     fn block_hash(ram: [*]const u8, start: u32, end: u32) callconv(Architecture.CallingConvention) u64 {
-        // std.debug.print("hashing {X:0>8}-{X:0>8}; len: {d}\n", .{ start, end, end - start });
         const aligned_start = std.mem.alignBackward(u32, start, 8) / @sizeOf(u64);
         const aligned_end = std.mem.alignForward(u32, end, 8) / @sizeOf(u64);
         const slice: []const u64 = @as([*]const u64, @ptrCast(@alignCast(ram)))[aligned_start..aligned_end];
@@ -1584,16 +1588,16 @@ fn runtime_instruction_mmu_translation() callconv(Architecture.CallingConvention
 
 const MMUCacheType = struct {
     vpn: u32 = 0xDEADBEEF,
-    ppn: u32 = 0,
+    ppn: u32 = 0xDEADBEEF,
 
     pub fn reset(self: *@This()) void {
         self.vpn = 0xDEADBEEF;
-        self.ppn = 0;
+        self.ppn = 0xDEADBEEF;
     }
 };
 
-var MMUCacheRead: [4]MMUCacheType = @splat(.{});
-var MMUCacheWrite: [4]MMUCacheType = @splat(.{});
+const MMUCacheEntryCount = 64;
+var MMUCacheEntries: [MMUCacheEntryCount]MMUCacheType = @splat(.{});
 
 /// A call to the handler will return the physical address in the lower 32bits, and a non-zero value in the upper 32bits if an exception occurred.
 fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_size: u32) type {
@@ -1632,9 +1636,12 @@ fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime ac
                 cpu.jump_to_exception(exception);
                 return .{ .address = 0, .exception = 1 };
             };
-            const MMUCache = if (access_type == .Read) &MMUCacheRead[@ctz(access_size) - 3] else &MMUCacheWrite[@ctz(access_size) - 3];
-            MMUCache.vpn = virtual_addr >> 10;
-            MMUCache.ppn = physical & ~@as(u32, 0x3FF);
+            if (Optimizations.mmu_translation_cache) {
+                const cache_entry = (virtual_addr >> 10) & (MMUCacheEntryCount - 1);
+                const MMUCache = &MMUCacheEntries[cache_entry];
+                MMUCache.vpn = virtual_addr >> 10;
+                MMUCache.ppn = physical & ~@as(u32, 0x3FF);
+            }
             return .{ .address = physical, .exception = 0 };
         }
     };
@@ -1653,8 +1660,16 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
         std.debug.assert(addr != ArgRegisters[3]);
         std.debug.assert(register_to_save != ArgRegisters[2]);
         std.debug.assert(register_to_save != ArgRegisters[3]);
-        const MMUCache = if (access_type == .Read) &MMUCacheRead[@ctz(access_size) - 3] else &MMUCacheWrite[@ctz(access_size) - 3];
+
+        const MMUCache = &MMUCacheEntries[0];
         try block.mov(.{ .reg64 = ArgRegisters[2] }, .{ .imm64 = @intFromPtr(MMUCache) });
+
+        // Select the cache entry based on the VPN
+        try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = addr });
+        try block.shr(.{ .reg = ArgRegisters[0] }, 10 - 3); // We'd shift it by 3 afterward to multiply to by the size of an MMUCache entry
+        try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[0] }, .src = .{ .imm32 = (MMUCacheEntryCount - 1) << 3 } } });
+        try block.add(.{ .reg64 = ArgRegisters[2] }, .{ .reg64 = ArgRegisters[0] });
+
         // Compute possible physical address from cached PPN
         const CandidatePhysicalAddress = JIT.Operand{ .reg = ArgRegisters[3] };
         try block.mov(CandidatePhysicalAddress, .{ .reg = addr });

@@ -477,6 +477,9 @@ pub const SH4 = struct {
     }
 
     pub fn set_sr(self: *@This(), value: SR) callconv(JITCallingConvention) void {
+        if (value.md != self.sr.md)
+            if (self._dc) |dc| dc.sh4_jit.reset_mmu_cache();
+
         const prev_rb = if (self.sr.md == 1) self.sr.rb else 0;
         const new_rb = if (value.md == 1) value.rb else 0;
         if (new_rb != prev_rb) {
@@ -992,6 +995,8 @@ pub const SH4 = struct {
     }
 
     fn reset_utlb_fast_lookup(self: *@This()) void {
+        if (self._dc) |dc| dc.sh4_jit.reset_mmu_cache();
+
         if (!EnableUTLBFastLookup) return;
         host_memory.virtual_dealloc(self._fast_utlb_lookup);
         self._fast_utlb_lookup = host_memory.virtual_alloc(u8, @as(u32, 1) << (22 + 8)) catch |err| {
@@ -1002,11 +1007,15 @@ pub const SH4 = struct {
     }
 
     pub fn invalidate_utlb_fast_lookup(self: *@This(), entry: mmu.TLBEntry) void {
+        if (self._dc) |dc| dc.sh4_jit.reset_mmu_cache();
+
         if (!EnableUTLBFastLookup) return;
         if (entry.valid())
             self.update_utlb_fast_lookup(entry, 0);
     }
     pub fn sync_utlb_fast_lookup(self: *@This(), idx: u8) void {
+        if (self._dc) |dc| dc.sh4_jit.reset_mmu_cache();
+
         if (!EnableUTLBFastLookup) return;
         if (self.utlb[idx].valid())
             self.update_utlb_fast_lookup(self.utlb[idx], idx + 1);
@@ -1437,8 +1446,14 @@ pub const SH4 = struct {
                     const entry: u2 = @truncate(virtual_addr >> 8);
                     const val: mmu.UTLBArrayData2 = @bitCast(value);
                     sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {}"), .{ entry, val });
+
+                    const before = self.itlb[entry];
+
                     self.itlb[entry].sa = val.sa;
                     self.itlb[entry].tc = val.tc;
+
+                    if (!std.meta.eql(before, self.itlb[entry]))
+                        if (self._dc) |dc| dc.sh4_jit.safe_reset();
                 }
             },
             0xF4000000...0xF4FFFFFF => {
@@ -1520,8 +1535,18 @@ pub const SH4 = struct {
                     const entry: u6 = @truncate(virtual_addr >> 8);
                     const val: mmu.UTLBArrayData2 = @bitCast(value);
                     sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {}"), .{ entry, val });
+
+                    const before = self.utlb[entry];
+
                     self.utlb[entry].sa = val.sa;
                     self.utlb[entry].tc = val.tc;
+
+                    if (!std.meta.eql(before, self.utlb[entry])) {
+                        self.invalidate_utlb_fast_lookup(before);
+                        self.sync_utlb_fast_lookup(entry);
+                        self.check_mmu_state();
+                        // if (self._dc) |dc| dc.sh4_jit.safe_reset();
+                    }
                 }
             },
             0xF8000000...0xFBFFFFFF => {
@@ -1553,6 +1578,15 @@ pub const SH4 = struct {
                             } else {
                                 sh4_log.warn("Write({}) to MMUCR: {X}", .{ T, value });
                             }
+                        },
+                        @intFromEnum(P4Register.PTEH) => {
+                            // NOTE/FIXME: This make some sense with the current implementation of the cache that doesn't check ASID.
+                            //             However, I wrote some versions of the cache that did check ASID and it still didn't work properly without this.
+                            //             This makes me think that this mostly happens to work by reseting the cache often enough to hide
+                            //             another bug. I have no clue what invalidation case I might be missing though... Every single modification
+                            //             of the UTLB seem to be covered. Unless it was the reset on mode change that was missing (in set_sr), but I
+                            //             only thought of this possibility after settling on the current per-process cache which seems to be faster anyway.
+                            if (self._dc) |dc| dc.sh4_jit.reset_mmu_cache();
                         },
                         // SDMR2/SDMR3
                         0xFF900000...0xFF90FFFF, 0xFF940000...0xFF94FFFF => {
