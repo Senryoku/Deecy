@@ -114,7 +114,7 @@ pub const IRBlock = struct {
 
     pub fn shr(self: *@This(), dst: Operand, amount: anytype) !void {
         switch (@TypeOf(amount)) {
-            comptime_int, u8 => try self._shr(dst, .{ .imm8 = amount }),
+            comptime_int, u8, u5 => try self._shr(dst, .{ .imm8 = amount }),
             Register => try self._shr(dst, .{ .reg = amount }),
             Operand => try self._shr(dst, amount),
             else => @compileError("Invalid Type used as SHR amount"),

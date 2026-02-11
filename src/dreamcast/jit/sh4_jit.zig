@@ -973,13 +973,36 @@ pub const SH4JIT = struct {
                 // NOTE: In some cases we could easily convince ourselves that the PC cannot possibly cross a page boundary here.
                 //       This could be used to completely skip MMU translation and further optimize this.
                 try b.mov(.{ .reg = ReturnRegister }, sh4_mem("pc"));
+                // Get the current page size to quickly check if we cross a page boundary.
+                const page_size: u5 = switch (ps: {
+                    // NOTE: Sadly this search mostly negates the performance gain of the less frequent TLB lookups in the JITed code...
+                    // for (ctx.cpu.utlb) |entry| {
+                    //     if (entry.match(false, 0, @truncate(ctx.start_pc >> 10))) {
+                    //         break :ps entry.sz;
+                    //     }
+                    // }
+                    // // Not sure in which case the lookup can fail here, but assuming a page 1kB page will be safe in this case.
+                    // break :ps 10;
+
+                    // This is less precise, but mesurably faster. Afaik the smallest page will be 4kB most of the time, not 1kB.
+                    var p: u2 = 0b11;
+                    for (ctx.cpu.utlb) |entry|
+                        p = @min(p, entry.sz);
+                    break :ps p;
+                }) {
+                    0b00 => 10, // 1-Kbyte page
+                    0b01 => 12, // 4-Kbyte page
+                    0b10 => 16, // 64-Kbyte page
+                    0b11 => 20, // 1-Mbyte page
+                };
+                const mask = (@as(u32, 1) << page_size) - 1;
                 // Compute the physical PC assuming we're still on the same 1K page (and the TLB did not change).
                 try b.mov(Key, .{ .reg = ReturnRegister });
-                try b.append(.{ .And = .{ .dst = Key, .src = .{ .imm32 = 0x0000_03FF } } });
-                try b.append(.{ .Or = .{ .dst = Key, .src = .{ .imm32 = ctx.start_physical_pc & 0xFFFF_FC00 } } });
+                try b.append(.{ .And = .{ .dst = Key, .src = .{ .imm32 = mask } } });
+                try b.append(.{ .Or = .{ .dst = Key, .src = .{ .imm32 = ctx.start_physical_pc & (~mask) } } });
                 // Compare next virtual page with the current one (conservatively assuming a 1K page)
-                try b.shr(.{ .reg = ReturnRegister }, 10);
-                try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.start_pc >> 10 });
+                try b.shr(.{ .reg = ReturnRegister }, page_size);
+                try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.start_pc >> page_size });
                 const same_page = try b.jmp(.Equal);
                 // Might cross a page boundary: Fallback to MMU translation
                 try call(b, &ctx, runtime_instruction_mmu_translation);
