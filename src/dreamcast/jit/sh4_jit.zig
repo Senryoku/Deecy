@@ -667,7 +667,8 @@ pub const SH4JIT = struct {
 
     /// Resets block offsets without resetting the block cache immediately. Intended to be used from JITed code.
     pub fn safe_reset(self: *@This()) void {
-        MMUCache.reset();
+        MMUCacheRead = @splat(.{});
+        MMUCacheWrite = @splat(.{});
 
         sh4_jit_log.debug("Reset requested.", .{});
         self.block_cache.reset_blocks() catch {
@@ -676,7 +677,8 @@ pub const SH4JIT = struct {
     }
 
     pub fn reset(self: *@This()) !void {
-        MMUCache.reset();
+        MMUCacheRead = @splat(.{});
+        MMUCacheWrite = @splat(.{});
 
         try self.block_cache.reset();
         try self.init_compile_and_run_handler();
@@ -1590,7 +1592,8 @@ const MMUCacheType = struct {
     }
 };
 
-var MMUCache: MMUCacheType = .{};
+var MMUCacheRead: [4]MMUCacheType = @splat(.{});
+var MMUCacheWrite: [4]MMUCacheType = @splat(.{});
 
 /// A call to the handler will return the physical address in the lower 32bits, and a non-zero value in the upper 32bits if an exception occurred.
 fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_size: u32) type {
@@ -1629,6 +1632,7 @@ fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime ac
                 cpu.jump_to_exception(exception);
                 return .{ .address = 0, .exception = 1 };
             };
+            const MMUCache = if (access_type == .Read) &MMUCacheRead[@ctz(access_size) - 3] else &MMUCacheWrite[@ctz(access_size) - 3];
             MMUCache.vpn = virtual_addr >> 10;
             MMUCache.ppn = physical & ~@as(u32, 0x3FF);
             return .{ .address = physical, .exception = 0 };
@@ -1649,7 +1653,8 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
         std.debug.assert(addr != ArgRegisters[3]);
         std.debug.assert(register_to_save != ArgRegisters[2]);
         std.debug.assert(register_to_save != ArgRegisters[3]);
-        try block.mov(.{ .reg64 = ArgRegisters[2] }, .{ .imm64 = @intFromPtr(&MMUCache) });
+        const MMUCache = if (access_type == .Read) &MMUCacheRead[@ctz(access_size) - 3] else &MMUCacheWrite[@ctz(access_size) - 3];
+        try block.mov(.{ .reg64 = ArgRegisters[2] }, .{ .imm64 = @intFromPtr(MMUCache) });
         // Compute possible physical address from cached PPN
         const CandidatePhysicalAddress = JIT.Operand{ .reg = ArgRegisters[3] };
         try block.mov(CandidatePhysicalAddress, .{ .reg = addr });
