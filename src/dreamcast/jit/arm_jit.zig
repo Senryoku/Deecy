@@ -403,7 +403,7 @@ fn load_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Regi
             };
             try b.test_(.{ .reg = addr_reg }, .{ .imm32 = mask });
             if (UseCMOV)
-                try b.cmov(.Zero, .{ .reg = dst }, .{ .mem = .{ .base = MemPointer, .index = dst, .size = @bitSizeOf(T) } });
+                try b.cmov(.Zero, .Reg(dst, @bitSizeOf(T)), .{ .mem = .{ .base = MemPointer, .index = dst, .size = @bitSizeOf(T) } });
             var wave_mem = try b.jmp(.Zero);
 
             // Fallback to function call

@@ -2776,7 +2776,7 @@ pub fn macl_atRmInc_atRnInc(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr)
     try block.append(.{ .Mul = .{ .dst = .{ .reg64 = ReturnRegister }, .src = .{ .reg64 = ArgRegisters[0] } } });
 
     std.debug.assert(@offsetOf(sh4.SH4, "macl") + 4 == @offsetOf(sh4.SH4, "mach"));
-    try block.add(.{ .mem = .{ .base = SH4PtrRegister, .displacement = @offsetOf(sh4.SH4, "macl"), .size = 64 } }, .{ .reg = ReturnRegister });
+    try block.add(.{ .mem = .{ .base = SH4PtrRegister, .displacement = @offsetOf(sh4.SH4, "macl"), .size = 64 } }, .{ .reg64 = ReturnRegister });
 
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
@@ -2804,7 +2804,7 @@ pub fn macw_atRmInc_atRnInc(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr)
     try block.append(.{ .Mul = .{ .dst = .{ .reg64 = ReturnRegister }, .src = .{ .reg64 = ArgRegisters[0] } } });
 
     std.debug.assert(@offsetOf(sh4.SH4, "macl") + 4 == @offsetOf(sh4.SH4, "mach"));
-    try block.add(.{ .mem = .{ .base = SH4PtrRegister, .displacement = @offsetOf(sh4.SH4, "macl"), .size = 64 } }, .{ .reg = ReturnRegister });
+    try block.add(.{ .mem = .{ .base = SH4PtrRegister, .displacement = @offsetOf(sh4.SH4, "macl"), .size = 64 } }, .{ .reg64 = ReturnRegister });
 
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.add(.{ .reg = rn }, .{ .imm32 = 2 });

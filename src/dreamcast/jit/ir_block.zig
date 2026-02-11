@@ -67,6 +67,8 @@ pub const IRBlock = struct {
     }
 
     pub fn cmov(self: *@This(), condition: Condition, dst: Operand, src: Operand) !void {
+        if (dst.size() != src.size())
+            return error.OperandSizeMismatch;
         try self.instructions.append(self._allocator, .{ .Cmov = .{ .condition = condition, .dst = dst, .src = src } });
     }
 

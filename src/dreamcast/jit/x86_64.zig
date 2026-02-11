@@ -832,15 +832,44 @@ pub const Emitter = struct {
             try self.emit(u8, @bitCast(rex));
     }
 
+    fn emit_rex_if_needed_or_required(self: *@This(), required: bool, rex: REX) !void {
+        if (required or @as(u8, @bitCast(rex)) != @as(u8, @bitCast(REX{})))
+            try self.emit(u8, @bitCast(rex));
+    }
+
     /// Assumes both registers are of the same size.
-    fn binary_reg_reg(self: *@This(), size: OperandSize, opcode: []const u8, reg: Register, r_m: Register) !void {
-        if (size == ._8 and (r_m.require_rex_8bit() or reg.require_rex_8bit())) {
-            try self.emit(REX, .{ .r = need_rex(reg), .b = need_rex(r_m) });
-        } else {
-            try self.emit_rex_if_needed(.{ .w = size == ._64, .r = need_rex(reg), .b = need_rex(r_m) });
-        }
+    fn binary_reg_reg(self: *@This(), opcode: []const u8, size: OperandSize, reg: Register, r_m: Register) !void {
+        if (size == ._16)
+            try self.emit(u8, 0x66);
+        try self.emit_rex_if_needed_or_required(
+            size == ._8 and (r_m.require_rex_8bit() or reg.require_rex_8bit()),
+            .{ .w = size == ._64, .r = need_rex(reg), .b = need_rex(r_m) },
+        );
         try self.emit_slice(u8, opcode);
         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(reg), .r_m = encode(r_m) });
+    }
+
+    /// Assumes both operand are of the same size.
+    fn binary_reg_mem(self: *@This(), opcode: []const u8, size: OperandSize, reg: Register, mem: MemOperand) !void {
+        if (size != OperandSize.fromInt(mem.size))
+            return error.OperandSizeMismatch;
+        try binary_reg_mem_asymmetric(self, opcode, size, reg, mem);
+    }
+
+    fn binary_reg_mem_asymmetric(self: *@This(), opcode: []const u8, dst_size: OperandSize, reg: Register, mem: MemOperand) !void {
+        if (dst_size == ._16)
+            try self.emit(u8, 0x66);
+        try self.emit_rex_if_needed_or_required(
+            dst_size == ._8 and reg.require_rex_8bit(),
+            .{
+                .w = dst_size == ._64,
+                .r = need_rex(reg),
+                .x = if (mem.index) |i| need_rex(i) else false,
+                .b = need_rex(mem.base),
+            },
+        );
+        try self.emit_slice(u8, opcode);
+        try self.emit_mem_addressing(encode(reg), mem);
     }
 
     /// Assumes both registers are of the same size.
@@ -965,24 +994,15 @@ pub const Emitter = struct {
         if (mem.size == 16 or reg == .freg32 or reg == .freg64)
             try self.emit(u8, 0x66);
 
-        if (reg == .reg8 and reg.reg8.require_rex_8bit()) {
-            // NOTE: Byte access to the lower 8 bits of these registers is only possible with a rex prefix,
-            // emit it unconditionally.
-            // FIXME: This should probably be done elsewhere too...
-            try self.emit(REX, .{
+        try self.emit_rex_if_needed_or_required(
+            reg == .reg8 and reg.reg8.require_rex_8bit(),
+            .{
                 .w = reg_64,
                 .r = need_rex(reg),
                 .x = if (mem.index) |i| need_rex(i) else false,
                 .b = need_rex(mem.base),
-            });
-        } else {
-            try self.emit_rex_if_needed(.{
-                .w = reg_64,
-                .r = need_rex(reg),
-                .x = if (mem.index) |i| need_rex(i) else false,
-                .b = need_rex(mem.base),
-            });
-        }
+            },
+        );
 
         try self.emit_slice(u8, opcode);
 
@@ -1023,9 +1043,9 @@ pub const Emitter = struct {
             .reg => |dst_reg| {
                 switch (src) {
                     // NOTE: Both reg8 to reg and reg16 to reg zero extend the source to 64-bits.
-                    .reg8 => |src_reg| try self.binary_reg_reg(._64, &[_]u8{ 0x0F, 0xB6 }, dst_reg, src_reg),
-                    .reg16 => |src_reg| try self.binary_reg_reg(._64, &[_]u8{ 0x0F, 0xB7 }, dst_reg, src_reg),
-                    .reg => |src_reg| try self.binary_reg_reg(._64, &[_]u8{0x89}, src_reg, dst_reg),
+                    .reg8 => |src_reg| try self.binary_reg_reg(&[_]u8{ 0x0F, 0xB6 }, ._64, dst_reg, src_reg),
+                    .reg16 => |src_reg| try self.binary_reg_reg(&[_]u8{ 0x0F, 0xB7 }, ._64, dst_reg, src_reg),
+                    .reg => |src_reg| try self.binary_reg_reg(&[_]u8{0x89}, ._64, src_reg, dst_reg),
                     .imm64 => |imm| {
                         if (imm == 0 and !preserve_flags) {
                             try self.xor_(dst, dst);
@@ -1049,7 +1069,7 @@ pub const Emitter = struct {
             },
             .reg64 => |dst_reg| {
                 switch (src) {
-                    .reg64 => |src_reg| try self.binary_reg_reg(._64, &[_]u8{0x89}, src_reg, dst_reg),
+                    .reg64 => |src_reg| try self.binary_reg_reg(&[_]u8{0x89}, ._64, src_reg, dst_reg),
                     .imm64 => |imm| {
                         const lea_rip: i64 = @intCast(@intFromPtr(self.block_buffer.ptr) + self.block_size + 3 + 4);
                         const simm: i64 = @bitCast(imm);
@@ -1104,28 +1124,14 @@ pub const Emitter = struct {
 
     pub fn cmov(self: *@This(), condition: Condition, dst: Operand, src: Operand) !void {
         if (condition == .Always) return error.InvalidCondition;
+        if (dst.size() != src.size()) return error.OperandSizeMismatch;
 
         switch (dst) {
             .reg16, .reg, .reg64 => |dst_reg| {
-                const b64 = (dst == .reg64);
-                if (dst == .reg16)
-                    try self.emit(u8, 0x66);
+                const opcode = [_]u8{ 0x0F, 0x40 | condition.nibble() };
                 switch (src) {
-                    .reg16, .reg, .reg64 => |src_reg| {
-                        if (std.meta.activeTag(dst) != std.meta.activeTag(src)) return error.IncompatibleSourceAndDestination;
-                        try self.binary_reg_reg(.fromInt(dst.size()), &[_]u8{ 0x0F, 0x40 | condition.nibble() }, dst_reg, src_reg);
-                    },
-                    .mem => |mem| {
-                        if (dst.size() != mem.size) return error.OperandSizeMismatch;
-                        try self.emit_rex_if_needed(.{
-                            .w = b64,
-                            .r = need_rex(dst_reg),
-                            .x = if (mem.index) |i| need_rex(i) else false,
-                            .b = need_rex(mem.base),
-                        });
-                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0x40 | condition.nibble() });
-                        try self.emit_mem_addressing(encode(dst_reg), mem);
-                    },
+                    .reg16, .reg, .reg64 => |src_reg| try self.binary_reg_reg(&opcode, .fromInt(dst.size()), dst_reg, src_reg),
+                    .mem => |mem| try self.binary_reg_mem(&opcode, .fromInt(dst.size()), dst_reg, mem),
                     else => return error.InvalidCmovSource,
                 }
             },
@@ -1134,34 +1140,23 @@ pub const Emitter = struct {
     }
 
     pub fn movsx(self: *@This(), dst: Operand, src: Operand) !void {
+        if (src.size() == dst.size()) return error.UnnecessaryMovsx; // Use a normal mov instead!
         switch (dst) {
             // FIXME: We don't keep track of registers sizes and default to 32bit. We might want to support explicit 64bit at some point.
             .reg, .reg64 => |dst_reg| {
-                const is_64 = dst == .reg64;
                 switch (src) {
                     .mem => |src_m| {
-                        try self.emit_rex_if_needed(.{
-                            .w = is_64,
-                            .r = need_rex(dst_reg),
-                            .x = if (src_m.index) |i| need_rex(i) else false,
-                            .b = need_rex(src_m.base),
-                        });
-                        try self.emit(u8, 0x0F);
-                        switch (src_m.size) {
-                            8 => try self.emit(u8, 0xBE),
-                            16 => try self.emit(u8, 0xBF),
+                        try self.binary_reg_mem_asymmetric(switch (src_m.size) {
+                            8 => &.{ 0x0F, 0xBE },
+                            16 => &.{ 0x0F, 0xBF },
                             else => return error.UnsupportedMovsxSourceSize,
-                        }
-                        try self.emit_mem_addressing(encode(dst_reg), src_m);
+                        }, .fromInt(dst.size()), dst_reg, src_m);
                     },
                     .reg8 => |src_reg| {
-                        if (src_reg.require_rex_8bit()) {
-                            // NOTE: Byte access to the lower 8 bits of these registers is only possible with a rex prefix,
-                            // emit it unconditionally.
-                            try self.emit(REX, .{ .w = is_64, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
-                        } else {
-                            try self.emit_rex_if_needed(.{ .w = is_64, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
-                        }
+                        try self.emit_rex_if_needed_or_required(
+                            src_reg.require_rex_8bit(),
+                            .{ .w = dst == .reg64, .r = need_rex(dst_reg), .b = need_rex(src_reg) },
+                        );
                         try self.emit_slice(u8, &[_]u8{ 0x0F, 0xBE });
                         try self.emit(MODRM, .{
                             .mod = .reg,
@@ -1169,10 +1164,12 @@ pub const Emitter = struct {
                             .r_m = encode(src_reg),
                         });
                     },
-                    .reg16 => |src_reg| try self.binary_reg_reg(if (is_64) ._64 else ._32, &[_]u8{ 0x0F, 0xBF }, dst_reg, src_reg),
-                    .reg => |src_reg| {
-                        if (!is_64) return error.Movsx32to32; // Use a normal mov instead!
-                        try self.binary_reg_reg(._64, &[_]u8{0x63}, dst_reg, src_reg);
+                    .reg16, .reg => |src_reg| {
+                        try self.binary_reg_reg(switch (src) {
+                            .reg16 => &.{ 0x0F, 0xBF },
+                            .reg => &.{0x63},
+                            else => return error.UnsupportedMovsxSourceSize,
+                        }, .fromInt(dst.size()), dst_reg, src_reg);
                     },
                     else => return error.InvalidMovsxSource,
                 }
@@ -1203,7 +1200,7 @@ pub const Emitter = struct {
         switch (dst) {
             .reg8 => |dst_reg| {
                 switch (src) {
-                    .reg8 => |src_reg| try self.binary_reg_reg(._8, &[_]u8{rm_opcode_8}, dst_reg, src_reg),
+                    .reg8 => |src_reg| try self.binary_reg_reg(&[_]u8{rm_opcode_8}, ._8, dst_reg, src_reg),
                     .imm8 => |imm8| {
                         if (dst_reg == .rax) { // OP AL, imm8
                             try self.emit(u8, rax_dst_opcode_8);
@@ -1220,7 +1217,7 @@ pub const Emitter = struct {
                 switch (src) {
                     .reg, .reg64 => |src_reg| {
                         if (dst.tag() != src.tag()) return error.OperandSizeMismatch;
-                        try self.binary_reg_reg(if (b64) ._64 else ._32, &[_]u8{mr_opcode}, src_reg, dst_reg);
+                        try self.binary_reg_reg(&[_]u8{mr_opcode}, if (b64) ._64 else ._32, src_reg, dst_reg);
                     },
                     .imm8, .imm32 => |imm| {
                         if (dst_reg == .rax and imm >= 0x80) { // OP EAX, imm32
@@ -1240,60 +1237,14 @@ pub const Emitter = struct {
                             }
                         }
                     },
-                    .mem => |src_m| {
-                        switch (src_m.size) {
-                            32, 64 => {
-                                if ((src_m.size == 32 and b64) or (src_m.size == 64 and !b64)) return error.OperandSizeMismatch;
-                                try self.emit_rex_if_needed(.{
-                                    .w = b64,
-                                    .r = need_rex(dst_reg),
-                                    .x = if (src_m.index) |i| need_rex(i) else false,
-                                    .b = need_rex(src_m.base),
-                                });
-                                try self.emit(u8, rm_opcode);
-                                try self.emit_mem_addressing(encode(dst_reg), src_m);
-                            },
-                            else => return error.OperandSizeMismatch,
-                        }
-                    },
+                    .mem => |src_m| try self.binary_reg_mem(&[_]u8{rm_opcode}, .fromInt(dst.size()), dst_reg, src_m),
                     else => return error.InvalidSource,
                 }
             },
             .mem => |dst_m| {
                 switch (src) {
-                    .reg8 => |src_reg| {
-                        if (dst_m.size != 8) return error.OperandSizeMismatch;
-                        if (src_reg.require_rex_8bit()) {
-                            try self.emit(REX, .{
-                                .r = need_rex(src_reg),
-                                .x = if (dst_m.index) |i| need_rex(i) else false,
-                                .b = need_rex(dst_m.base),
-                            });
-                        } else {
-                            try self.emit_rex_if_needed(.{
-                                .r = need_rex(src_reg),
-                                .x = if (dst_m.index) |i| need_rex(i) else false,
-                                .b = need_rex(dst_m.base),
-                            });
-                        }
-                        try self.emit(u8, mr_opcode_8);
-                        try self.emit_mem_addressing(encode(src_reg), dst_m);
-                    },
-                    .reg => |src_reg| {
-                        switch (dst_m.size) {
-                            32, 64 => {
-                                try self.emit_rex_if_needed(.{
-                                    .w = dst_m.size == 64,
-                                    .r = need_rex(src_reg),
-                                    .x = if (dst_m.index) |i| need_rex(i) else false,
-                                    .b = need_rex(dst_m.base),
-                                });
-                                try self.emit(u8, mr_opcode);
-                                try self.emit_mem_addressing(encode(src_reg), dst_m);
-                            },
-                            else => return error.OperandSizeMismatch,
-                        }
-                    },
+                    .reg8 => |src_reg| try self.binary_reg_mem(&[_]u8{mr_opcode_8}, ._8, src_reg, dst_m),
+                    .reg, .reg16, .reg64 => |src_reg| try self.binary_reg_mem(&[_]u8{mr_opcode}, .fromInt(dst_m.size), src_reg, dst_m),
                     .imm8 => |imm| {
                         switch (dst_m.size) {
                             8 => {
@@ -1409,14 +1360,12 @@ pub const Emitter = struct {
     }
 
     pub fn set_byte_condition(self: *@This(), condition: Condition, dst: Operand) !void {
-        // NOTE: In 64-bit mode, r/m8 can not be encoded to access the following byte registers if a REX prefix is used: AH, BH, CH, DH.
         switch (dst) {
             .reg8 => |dst_reg| {
-                if (dst_reg.require_rex_8bit()) {
-                    try self.emit(REX, .{ .w = false, .b = need_rex(dst_reg) });
-                } else {
-                    try self.emit_rex_if_needed(.{ .w = false, .b = need_rex(dst_reg) });
-                }
+                try self.emit_rex_if_needed_or_required(
+                    dst_reg.require_rex_8bit(),
+                    .{ .w = false, .b = need_rex(dst_reg) },
+                );
                 try self.emit(u8, 0x0F);
                 try self.emit(u8, switch (condition) {
                     .Always => return error.InvalidSetByteCondition,
@@ -1437,7 +1386,7 @@ pub const Emitter = struct {
                         if (dst_reg == .rax) {
                             try self.unary_group3(.IMul, src);
                         } else {
-                            try self.binary_reg_reg(if (dst == .reg64) ._64 else ._32, &[_]u8{ 0x0F, 0xAF }, dst_reg, src_reg);
+                            try self.binary_reg_reg(&[_]u8{ 0x0F, 0xAF }, if (dst == .reg64) ._64 else ._32, dst_reg, src_reg);
                         }
                     },
                     else => return error.InvalidMulSource,
@@ -1520,7 +1469,10 @@ pub const Emitter = struct {
                     else => {},
                 }
 
-                try self.emit_rex_if_needed(.{ .w = is_64, .b = need_rex(dst_reg) });
+                try self.emit_rex_if_needed_or_required(
+                    dst == .reg8 and dst.reg8.require_rex_8bit(),
+                    .{ .w = is_64, .b = need_rex(dst_reg) },
+                );
 
                 switch (amount) {
                     .imm8 => |imm8| {
@@ -1586,7 +1538,10 @@ pub const Emitter = struct {
     fn unary_group3(self: *@This(), opcode: UnaryGroup3RegOpcode, operand: Operand) !void {
         switch (operand) {
             .reg8 => |reg| {
-                try self.emit_rex_if_needed(.{ .w = false, .b = need_rex(reg) });
+                try self.emit_rex_if_needed_or_required(
+                    reg.require_rex_8bit(),
+                    .{ .w = false, .b = need_rex(reg) },
+                );
                 try self.emit(u8, 0xF6);
                 try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(opcode), .r_m = encode(operand) });
             },
@@ -1739,7 +1694,7 @@ pub const Emitter = struct {
                     },
                     .reg8, .reg16, .reg, .reg64 => |rhs_reg| {
                         if (lhs.size() != rhs.size()) return error.OperandSizeMismatch;
-                        try self.binary_reg_reg(.fromInt(lhs.size()), if (lhs == .reg8) &[_]u8{0x84} else &[_]u8{0x85}, rhs_reg, lhs_reg);
+                        try self.binary_reg_reg(if (lhs == .reg8) &[_]u8{0x84} else &[_]u8{0x85}, .fromInt(lhs.size()), rhs_reg, lhs_reg);
                     },
                     else => return error.UnsupportedTestRHS,
                 }
