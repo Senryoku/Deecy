@@ -691,10 +691,9 @@ pub const SH4JIT = struct {
         const aligned_end = std.mem.alignForward(u32, end, 8) / @sizeOf(u64);
         const slice: []const u64 = @as([*]const u64, @ptrCast(@alignCast(ram)))[aligned_start..aligned_end];
         var hash: u64 = BlockHashInit;
-        const prime: u64 = BlockHashPrime;
         for (slice) |val| {
             hash ^= val;
-            hash = hash *% prime;
+            hash *%= BlockHashPrime;
         }
         return hash;
     }
@@ -706,46 +705,15 @@ pub const SH4JIT = struct {
                     return @as([*]align(1) const u64, @ptrCast(&ram[start]))[0];
                 }
             },
-            5...8 => struct {
+            5...32 => |len| struct {
                 fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
                     const slice = @as([*]align(1) const u64, @ptrCast(&ram[start]));
-                    return slice[0] ^ slice[1];
-                }
-            },
-            9...12 => struct {
-                fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
-                    const slice = @as([*]align(1) const u64, @ptrCast(&ram[start]));
-                    return slice[0] ^ slice[1] ^ slice[2];
-                }
-            },
-            13...16 => struct {
-                fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
-                    const slice = @as([*]align(1) const u64, @ptrCast(&ram[start]));
-                    return slice[0] ^ slice[1] ^ slice[2] ^ slice[3];
-                }
-            },
-            17...20 => struct {
-                fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
-                    const slice = @as([*]align(1) const u64, @ptrCast(&ram[start]));
-                    return slice[0] ^ slice[1] ^ slice[2] ^ slice[3] ^ slice[4];
-                }
-            },
-            21...24 => struct {
-                fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
-                    const slice = @as([*]align(1) const u64, @ptrCast(&ram[start]));
-                    return slice[0] ^ slice[1] ^ slice[2] ^ slice[3] ^ slice[4] ^ slice[5];
-                }
-            },
-            25...28 => struct {
-                fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
-                    const slice = @as([*]align(1) const u64, @ptrCast(&ram[start]));
-                    return slice[0] ^ slice[1] ^ slice[2] ^ slice[3] ^ slice[4] ^ slice[5] ^ slice[6];
-                }
-            },
-            29...32 => struct {
-                fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
-                    const slice = @as([*]align(1) const u64, @ptrCast(&ram[start]));
-                    return slice[0] ^ slice[1] ^ slice[2] ^ slice[3] ^ slice[4] ^ slice[5] ^ slice[6] ^ slice[7];
+                    var hash: u64 = slice[0];
+                    for (slice[1..][0 .. (len - 1) / 4]) |val| {
+                        hash *%= BlockHashPrime;
+                        hash ^= val;
+                    }
+                    return hash;
                 }
             },
             else => return block_hash,
@@ -858,13 +826,8 @@ pub const SH4JIT = struct {
                     hash_invalidation_end_offset = b.instructions.items.len;
                     try b.mov(.{ .reg = ArgRegisters[2] }, .{ .imm32 = 0xDEADCAFE });
                     try call(b, &ctx, block_hash);
-                    try b.append(.Nop); // For small blocks inlined hash
-                    try b.append(.Nop);
-                    try b.append(.Nop);
-                    try b.append(.Nop);
-                    try b.append(.Nop);
-                    try b.append(.Nop);
-                    try b.append(.Nop);
+                    for (0..14) |_|
+                        try b.append(.Nop); // For small blocks inlined hash
                     hash_invalidation_value_offset = b.instructions.items.len;
                     try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .imm64 = 0xDEADCAFEDEADCAFE });
                     try b.cmp(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[0] });
@@ -924,30 +887,48 @@ pub const SH4JIT = struct {
                     // Patch end address of the block, and expected hash value.
                     //          This can happen because of some optimisations (inline_backwards_bra). Solution is hackish for now.
                     const end = (if (ctx.current_physical_pc < ctx.start_physical_pc) ctx.start_physical_pc + 16 else ctx.current_physical_pc) - 0x0C00_0000;
+                    b.instructions.items[hash_invalidation_end_offset].Mov.src.imm32 = end;
+
                     const instruction_len = (end - (ctx.start_physical_pc - 0x0C00_0000)) >> 1;
                     const hash = switch (instruction_len) {
-                        inline 1...24 => |len| h: {
+                        inline 1...32 => |len| h: {
+                            if (len == 1) {
+                                b.instructions.items[hash_invalidation_end_offset] = .Nop;
+                            } else {
+                                b.instructions.items[hash_invalidation_end_offset] = .{
+                                    .Mov = .{
+                                        .dst = .{ .reg64 = ArgRegisters[2] },
+                                        .src = .{ .imm64 = BlockHashPrime },
+                                    },
+                                };
+                            }
                             // Patch out the function call and inline the 'hash' computation.
-                            b.instructions.items[hash_invalidation_value_offset - 8] = .{
+                            b.instructions.items[hash_invalidation_end_offset + 1] = .{
                                 .Mov = .{
                                     .dst = .{ .reg64 = ReturnRegister },
                                     .src = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .size = 64 } },
                                 },
                             };
                             for (0..7) |i| {
-                                if (len > 4 * (i + 1))
-                                    b.instructions.items[hash_invalidation_value_offset - (7 - i)] = .{
+                                if (len > 4 * (i + 1)) {
+                                    b.instructions.items[hash_invalidation_end_offset + 2 + 2 * i] = .{
+                                        .Mul = .{
+                                            .dst = .{ .reg64 = ReturnRegister },
+                                            .src = .{ .reg64 = ArgRegisters[2] },
+                                        },
+                                    };
+                                    b.instructions.items[hash_invalidation_end_offset + 2 + 2 * i + 1] = .{
                                         .Xor = .{
                                             .dst = .{ .reg64 = ReturnRegister },
                                             .src = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .displacement = @intCast((i + 1) * 8), .size = 64 } },
                                         },
                                     };
+                                }
                             }
                             break :h block_hash_function(len)(@ptrCast(ctx.cpu._dc.?.ram), ctx.start_physical_pc - 0x0C00_0000, end);
                         },
                         else => block_hash(@ptrCast(ctx.cpu._dc.?.ram), ctx.start_physical_pc - 0x0C00_0000, end),
                     };
-                    b.instructions.items[hash_invalidation_end_offset].Mov.src.imm32 = end;
                     b.instructions.items[hash_invalidation_value_offset].Mov.src.imm64 = hash;
                 },
                 else => {},

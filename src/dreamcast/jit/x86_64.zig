@@ -1380,11 +1380,10 @@ pub const Emitter = struct {
                 switch (src) {
                     .reg, .reg64 => |src_reg| {
                         if (dst.tag() != src.tag()) return error.MulOperandMismatch;
-                        if (dst_reg == .rax) {
-                            try self.unary_group3(.IMul, src);
-                        } else {
-                            try self.binary_reg_reg(&[_]u8{ 0x0F, 0xAF }, if (dst == .reg64) ._64 else ._32, dst_reg, src_reg);
-                        }
+                        // NOTE: The one operand version (fixed destination) also modifies rdx. This is no needed at the moment and can lead to unexpected results: I'm disabling it.
+                        //       If it is needed in the future, we can add it as a separate instruction. (Pretty sure it will generably be slower too.)
+                        //    if (dst_reg == .rax) try self.unary_group3(.IMul, src); ...
+                        try self.binary_reg_reg(&[_]u8{ 0x0F, 0xAF }, if (dst == .reg64) ._64 else ._32, dst_reg, src_reg);
                     },
                     else => return error.InvalidMulSource,
                 }
