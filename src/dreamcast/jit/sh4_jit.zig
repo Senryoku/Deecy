@@ -368,7 +368,7 @@ pub const JITContext = struct {
     },
 
     pub fn init(cpu: *sh4.SH4) @This() {
-        const physical_pc = cpu.get_physical_pc();
+        const physical_pc = get_cached_physical_pc(cpu);
 
         if (!((physical_pc >= 0x00000000 and physical_pc < 0x00020000) or (physical_pc >= 0x0C000000 and physical_pc < 0x10000000)))
             std.debug.panic("Invalid physical PC: {X}", .{physical_pc});
@@ -668,7 +668,8 @@ pub const SH4JIT = struct {
     pub fn reset_mmu_cache(self: *@This()) void {
         _ = self;
         if (Optimizations.mmu_translation_cache) {
-            MMUCacheEntries = @splat(.{});
+            MMUCache = @splat(.{});
+            MMUInstructionCache = @splat(.{});
         }
     }
 
@@ -732,7 +733,7 @@ pub const SH4JIT = struct {
         if (cpu.execution_state == .Running or cpu.execution_state == .ModuleStandby) {
             @branchHint(.likely);
             std.debug.assert((cpu.pc & 0xFC00_0000) != 0x7C00_0000);
-            const physical_pc = cpu.get_physical_pc();
+            const physical_pc = get_cached_physical_pc(cpu);
             var block = self.block_cache.get(physical_pc, cpu.fpscr.sz, cpu.fpscr.pr);
 
             const start = if (BasicBlock.EnableInstrumentation) std.time.nanoTimestamp() else {}; // Make sure this isn't called when instrumentation is disabled.
@@ -1006,11 +1007,11 @@ pub const SH4JIT = struct {
                 try b.mov(Key, .{ .reg = ReturnRegister });
                 try b.append(.{ .And = .{ .dst = Key, .src = .{ .imm32 = mask } } });
                 try b.append(.{ .Or = .{ .dst = Key, .src = .{ .imm32 = ctx.start_physical_pc & (~mask) } } });
-                // Compare next virtual page with the current one (conservatively assuming a 1K page)
+                // Compare next virtual page with the current one
                 try b.shr(.{ .reg = ReturnRegister }, page_size);
                 try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.start_pc >> page_size });
                 const same_page = try b.jmp(.Equal);
-                // Might cross a page boundary: Fallback to MMU translation
+
                 try call(b, &ctx, runtime_instruction_mmu_translation);
                 if (Key.reg != ReturnRegister)
                     try b.mov(Key, .{ .reg = ReturnRegister });
@@ -1582,11 +1583,11 @@ pub noinline fn _out_of_line_write64(_: *sh4.SH4, virtual_addr: u32, value: u64)
 fn runtime_instruction_mmu_translation() callconv(Architecture.CallingConvention) u32 {
     const cpu = get_cpu();
     std.debug.assert(cpu._mmu_state == .Full);
-    const physical_pc = cpu.get_physical_pc();
+    const physical_pc = get_cached_physical_pc(cpu);
     return BlockCache.compute_key(physical_pc, cpu.fpscr.sz, cpu.fpscr.pr); // Make sure we use updated FPSCR.
 }
 
-const MMUCacheType = struct {
+const MMUCacheEntry = struct {
     vpn: u32 = 0xDEADBEEF,
     ppn: u32 = 0xDEADBEEF,
 
@@ -1594,10 +1595,42 @@ const MMUCacheType = struct {
         self.vpn = 0xDEADBEEF;
         self.ppn = 0xDEADBEEF;
     }
+
+    pub inline fn hit(self: @This(), virtual_addr: u32) bool {
+        return self.vpn == virtual_addr >> 10;
+    }
+
+    pub inline fn translate(self: @This(), virtual_addr: u32) u32 {
+        return self.ppn | (virtual_addr & 0x3FF);
+    }
+
+    pub inline fn update(self: *@This(), virtual_addr: u32, physical_addr: u32) void {
+        self.vpn = virtual_addr >> 10;
+        self.ppn = physical_addr & ~@as(u32, 0x3FF);
+    }
+
+    pub inline fn get_index(comptime EntryCount: u32, virtual_addr: u32) u32 {
+        return (virtual_addr >> 10) & (EntryCount - 1);
+    }
 };
 
 const MMUCacheEntryCount = 64;
-var MMUCacheEntries: [MMUCacheEntryCount]MMUCacheType = @splat(.{});
+var MMUCache: [MMUCacheEntryCount]MMUCacheEntry = @splat(.{});
+const MMUInstructionCacheEntryCount = 16;
+var MMUInstructionCache: [MMUInstructionCacheEntryCount]MMUCacheEntry = @splat(.{});
+
+fn get_cached_physical_pc(cpu: *sh4.SH4) u32 {
+    const virtual_addr = cpu.pc;
+    if (!Optimizations.mmu_translation_cache or cpu._mmu_state != .Full or virtual_addr & 1 != 0) return cpu.get_physical_pc();
+
+    const cache_entry = &MMUInstructionCache[MMUCacheEntry.get_index(MMUInstructionCacheEntryCount, virtual_addr)];
+    if (cache_entry.hit(virtual_addr))
+        return cache_entry.translate(virtual_addr) & 0x1FFF_FFFF;
+
+    const physical = cpu.get_physical_pc();
+    cache_entry.update(virtual_addr, physical);
+    return physical;
+}
 
 /// A call to the handler will return the physical address in the lower 32bits, and a non-zero value in the upper 32bits if an exception occurred.
 fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_size: u32) type {
@@ -1637,10 +1670,8 @@ fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime ac
                 return .{ .address = 0, .exception = 1 };
             };
             if (Optimizations.mmu_translation_cache) {
-                const cache_entry = (virtual_addr >> 10) & (MMUCacheEntryCount - 1);
-                const MMUCache = &MMUCacheEntries[cache_entry];
-                MMUCache.vpn = virtual_addr >> 10;
-                MMUCache.ppn = physical & ~@as(u32, 0x3FF);
+                const cache_index = MMUCacheEntry.get_index(MMUCacheEntryCount, virtual_addr);
+                MMUCache[cache_index].update(virtual_addr, physical);
             }
             return .{ .address = physical, .exception = 0 };
         }
@@ -1661,8 +1692,8 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
         std.debug.assert(register_to_save != ArgRegisters[2]);
         std.debug.assert(register_to_save != ArgRegisters[3]);
 
-        const MMUCache = &MMUCacheEntries[0];
-        try block.mov(.{ .reg64 = ArgRegisters[2] }, .{ .imm64 = @intFromPtr(MMUCache) });
+        const MMUCachePtr = &MMUCache[0];
+        try block.mov(.{ .reg64 = ArgRegisters[2] }, .{ .imm64 = @intFromPtr(MMUCachePtr) });
 
         // Select the cache entry based on the VPN
         try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = addr });
@@ -1674,13 +1705,13 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
         const CandidatePhysicalAddress = JIT.Operand{ .reg = ArgRegisters[3] };
         try block.mov(CandidatePhysicalAddress, .{ .reg = addr });
         try block.append(.{ .And = .{ .dst = CandidatePhysicalAddress, .src = .{ .imm32 = 0x3FF } } });
-        try block.append(.{ .Or = .{ .dst = CandidatePhysicalAddress, .src = .{ .mem = .{ .base = ArgRegisters[2], .displacement = @offsetOf(MMUCacheType, "ppn"), .size = 32 } } } });
+        try block.append(.{ .Or = .{ .dst = CandidatePhysicalAddress, .src = .{ .mem = .{ .base = ArgRegisters[2], .displacement = @offsetOf(MMUCacheEntry, "ppn"), .size = 32 } } } });
         // Compute current VPN
         const CurrentVPN = JIT.Operand{ .reg = ArgRegisters[0] };
         try block.mov(CurrentVPN, .{ .reg = addr });
         try block.shr(CurrentVPN, 10);
         // Compare with cached VPN
-        try block.cmp(CurrentVPN, .{ .mem = .{ .base = ArgRegisters[2], .displacement = @offsetOf(MMUCacheType, "vpn"), .size = 32 } });
+        try block.cmp(CurrentVPN, .{ .mem = .{ .base = ArgRegisters[2], .displacement = @offsetOf(MMUCacheEntry, "vpn"), .size = 32 } });
         try block.cmov(.Equal, .{ .reg = addr }, CandidatePhysicalAddress);
         vpn_match = try block.jmp(.Equal);
 
