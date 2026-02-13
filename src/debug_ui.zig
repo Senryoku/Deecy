@@ -344,6 +344,11 @@ fn display_tsp_instruction(tsp_instruction: Holly.TSPInstructionWord) void {
     }
 }
 
+fn display_packed_color(comptime label: [:0]const u8, packed_color: Colors.PackedColor) void {
+    var fcolor = Colors.fRGBA.from_packed(packed_color, true);
+    _ = zgui.colorEdit4(label, .{ .col = @as([*]f32, @ptrCast(&fcolor))[0..4] });
+}
+
 /// Locks gctx_queue_mutex.
 /// Accesses renderer.ta_lists. Might write a texture.
 pub fn draw(self: *@This(), d: *Deecy) !void {
@@ -1104,6 +1109,69 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.text("TSP Texel Sampling Position: {t}", .{HALF_OFFSET.tsp_texel_sampling_position});
         }
 
+        if (zgui.collapsingHeader("Background", .{})) {
+            zgui.indent(.{});
+            defer zgui.unindent(.{});
+
+            const tags = dc.gpu.read_register(Holly.ISP_BACKGND_T, .ISP_BACKGND_T);
+            const addr = dc.gpu.read_register(u32, .PARAM_BASE) + 4 * @as(u32, tags.tag_address);
+            const isp_tsp_instruction = dc.gpu.read_vram(Holly.ISPTSPInstructionWord, addr);
+            const tsp_instruction = dc.gpu.read_vram(Holly.TSPInstructionWord, addr + 4);
+            const texture_control = dc.gpu.read_vram(Holly.TextureControlWord, addr + 8);
+            display(isp_tsp_instruction);
+            display_tsp_instruction(tsp_instruction);
+            display_texture_control_word(texture_control);
+
+            const parameter_volume_mode = dc.gpu.read_register(Holly.FPU_SHAD_SCALE, .FPU_SHAD_SCALE).enable and tags.shadow == 1;
+            const tag_skip: u32 = tags.skip;
+            const skipped_vertex_byte_size: u32 = 4 * (if (parameter_volume_mode) 3 + tag_skip else 3 + 2 * tag_skip);
+            const start = addr + 12 + tags.tag_offset * skipped_vertex_byte_size;
+            var vertex_byte_size: u32 = 4 * (3 + 1);
+            if (isp_tsp_instruction.texture == 1)
+                vertex_byte_size += 4 * (2 - @as(u32, isp_tsp_instruction.uv_16bit));
+            if (isp_tsp_instruction.offset == 1)
+                vertex_byte_size += 4 * 1;
+            for (0..3) |idx| {
+                zgui.pushIntId(@intCast(idx));
+                defer zgui.popId();
+                const vp = [_]u32{
+                    dc.gpu.read_vram(u32, @intCast(start + idx * vertex_byte_size + 0)),
+                    dc.gpu.read_vram(u32, @intCast(start + idx * vertex_byte_size + 4)),
+                    dc.gpu.read_vram(u32, @intCast(start + idx * vertex_byte_size + 8)),
+                    dc.gpu.read_vram(u32, @intCast(start + idx * vertex_byte_size + 12)),
+                    dc.gpu.read_vram(u32, @intCast(start + idx * vertex_byte_size + 16)),
+                    dc.gpu.read_vram(u32, @intCast(start + idx * vertex_byte_size + 20)),
+                    dc.gpu.read_vram(u32, @intCast(start + idx * vertex_byte_size + 24)),
+                };
+                const x: f32 = @bitCast(vp[0]);
+                const y: f32 = @bitCast(vp[1]);
+                const z: f32 = @bitCast(vp[2]);
+                var u: f32 = 0;
+                var v: f32 = 0;
+                var base_color: Colors.PackedColor = @bitCast(vp[3]);
+                var offset_color: Colors.PackedColor = .{};
+                if (isp_tsp_instruction.texture == 1) {
+                    if (isp_tsp_instruction.uv_16bit == 1) {
+                        u = @as(f32, @bitCast(vp[3] >> 16));
+                        v = @as(f32, @bitCast(vp[3] & 0xFFFF));
+                        base_color = @bitCast(vp[4]);
+                        if (isp_tsp_instruction.offset == 1)
+                            offset_color = @bitCast(vp[5]);
+                    } else {
+                        u = @bitCast(vp[3]);
+                        v = @bitCast(vp[4]);
+                        base_color = @bitCast(vp[5]);
+                        if (isp_tsp_instruction.offset == 1)
+                            offset_color = @bitCast(vp[6]);
+                    }
+                }
+                if (tsp_instruction.use_alpha == 0) base_color.a = 255;
+                zgui.text("Vertex #{d}: ({d:>3.2}, {d:>3.2}, {d:>3.2}) - ({d:>1.2}, {d:>1.2})", .{ idx, x, y, z, u, v });
+                display_packed_color("Base ", base_color);
+                display_packed_color("Offset", offset_color);
+            }
+        }
+
         if (zgui.collapsingHeader("Region Array", .{ .frame_padding = true })) {
             zgui.indent(.{});
             defer zgui.unindent(.{});
@@ -1369,14 +1437,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.text("FPU_SHAD_SCALE: {d: >4.2}", .{d.renderer.fpu_shad_scale});
         if (zgui.collapsingHeader("Fog", .{})) {
             zgui.text("Fog Density: {d: >4.2}", .{d.renderer.fog_density});
-            var fog_col_pal = Colors.fRGBA.from_packed(d.renderer.fog_col_pal, true);
-            var fog_col_vert = Colors.fRGBA.from_packed(d.renderer.fog_col_vert, true);
-            var fog_clamp_min = Colors.fRGBA.from_packed(d.renderer.fog_clamp_min, true);
-            var fog_clamp_max = Colors.fRGBA.from_packed(d.renderer.fog_clamp_max, true);
-            _ = zgui.colorEdit4("Fog Pal", .{ .col = @as([*]f32, @ptrCast(&fog_col_pal))[0..4] });
-            _ = zgui.colorEdit4("Fog Vert", .{ .col = @as([*]f32, @ptrCast(&fog_col_vert))[0..4] });
-            _ = zgui.colorEdit4("Fog Clamp Min", .{ .col = @as([*]f32, @ptrCast(&fog_clamp_min))[0..4] });
-            _ = zgui.colorEdit4("Fog Clamp Max", .{ .col = @as([*]f32, @ptrCast(&fog_clamp_max))[0..4] });
+            display_packed_color("Fog Pal", d.renderer.fog_col_pal);
+            display_packed_color("Fog Vert", d.renderer.fog_col_vert);
+            display_packed_color("Fog Clamp Min", d.renderer.fog_clamp_min);
+            display_packed_color("Fog Clamp Max", d.renderer.fog_clamp_max);
             for (0..128) |i| {
                 zgui.text("Fog {d: >3}: {X:0>4}", .{ i, d.renderer.fog_lut[i] });
             }
