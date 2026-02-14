@@ -30,14 +30,13 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
         try lines_list.append(allocator, std.mem.trim(u8, line, " \t"));
     const lines = lines_list.items;
 
-    var track_fad: usize = 0;
+    var track_fad: usize = 150;
 
     var line_idx: u32 = 0;
     while (line_idx < lines.len) {
         if (std.mem.startsWith(u8, lines[line_idx], "REM")) {
-            if (std.mem.endsWith(u8, lines[line_idx], "HIGH-DENSITY AREA")) {
-                track_fad = 0xB05E;
-            }
+            if (std.mem.endsWith(u8, lines[line_idx], "HIGH-DENSITY AREA"))
+                track_fad = 45150;
             line_idx += 1;
         } else if (std.mem.startsWith(u8, lines[line_idx], "FILE")) {
             var filename: []const u8 = undefined;
@@ -67,19 +66,20 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
                 try self._files.append(allocator, try MemoryMappedFile.init(allocator, track_file_path));
 
                 const track_type: Track.TrackType = if (std.mem.startsWith(u8, track_type_str, "MODE")) .Data else if (std.mem.startsWith(u8, track_type_str, "AUDIO")) .Audio else return error.UnsupportedTrackFormat;
-                const format: u32 = if (std.mem.eql(u8, track_type_str, "MODE1/2352")) 2352 else if (std.mem.eql(u8, track_type_str, "AUDIO")) 2048 else return error.UnsupportedTrackFormat;
+                const format: u32 = if (std.mem.eql(u8, track_type_str, "MODE1/2352")) 2352 else if (std.mem.eql(u8, track_type_str, "AUDIO")) 2352 else return error.UnsupportedTrackFormat;
                 const pregap = 0; // TODO
 
-                if (self.tracks.items.len < num) try self.tracks.resize(allocator, num);
-                self.tracks.items[num - 1] = .{
+                if (num != self.tracks.items.len + 1) return error.InvalidTrackNumber;
+                try self.tracks.append(allocator, .{
                     .num = num,
                     .fad = @intCast(track_fad),
                     .track_type = track_type,
                     .format = format,
                     .pregap = pregap,
                     .data = try self._files.items[self._files.items.len - 1].create_full_view(),
-                };
-                track_fad += self.tracks.items[num - 1].data.len / 2352;
+                });
+                log.debug("  [+] FAD: {X}, Type: {t}, Format: {d}, Pregap: {d}", .{ self.tracks.items[num - 1].fad, self.tracks.items[num - 1].track_type, self.tracks.items[num - 1].format, self.tracks.items[num - 1].pregap });
+                track_fad += self.tracks.items[num - 1].data.len / format;
 
                 while (line_idx < lines.len and std.mem.startsWith(u8, lines[line_idx], "INDEX")) {
                     var index_args = std.mem.tokenizeAny(u8, lines[line_idx], " \t");
@@ -149,7 +149,7 @@ pub fn get_session(self: *const @This(), session_number: u32) Session {
             .start_fad = self.tracks.items[2].fad,
             .end_fad = @intCast(self.tracks.items[self.tracks.items.len - 1].get_end_fad()),
         },
-        else => std.debug.panic("GDI: Invalid session number: {d}", .{session_number}),
+        else => std.debug.panic("CUE: Invalid session number: {d}", .{session_number}),
     };
 }
 
