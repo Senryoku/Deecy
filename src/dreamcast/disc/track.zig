@@ -71,14 +71,28 @@ pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 
         // Mode 1 (2048 bytes plus error correction) or Mode 2 (2336 bytes)
         const data_size: u32 = if (first_sector_header[0x0F] == 1) 2048 else 2336; // FIXME/TODO: Depending on the request, we might want to skip the subheader and copy only 2324 bytes
         if (first_sector_header[0x0F] != 1 and first_sector_header[0x0F] != 2)
-            std.debug.panic(termcolor.red("({d}) Invalid sector mode: {X:0>2}"), .{ fad, first_sector_header[0x0F] });
+            log.err("({d}) Invalid sector mode: {X:0>2}", .{ fad, first_sector_header[0x0F] });
 
         for (0..count) |_| {
             if (sector_start >= self.data.len or self.data[sector_start..].len < 0x10)
                 return copied;
 
             const header = self.data[sector_start .. sector_start + self.header_size()]; // A track shouldn't have sectors using different modes.
-            std.debug.assert(header[0x0F] == first_sector_header[0x0F]);
+            if (header[0x0F] != first_sector_header[0x0F]) {
+                @branchHint(.cold);
+                log.warn(
+                    \\ Track {d} sector FAD {d} mode does not match the first sector mode ({X} != {X})
+                    \\   First sector header: {X}
+                    \\   Sector header:       {X}
+                , .{
+                    self.num,
+                    fad + count,
+                    header[0x0F],
+                    first_sector_header[0x0F],
+                    first_sector_header,
+                    header,
+                });
+            }
 
             if (dest.len <= copied) return copied;
             const chunk_size = @min(data_size, dest.len - copied);
