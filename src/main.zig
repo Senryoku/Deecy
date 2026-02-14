@@ -38,6 +38,7 @@ pub const std_options: std.Options = .{
         // .{ .scope = .chd_flac_frame, .level = .debug },
         // .{ .scope = .chd_flac_subframe, .level = .debug },
         // .{ .scope = .chd_flac_residual, .level = .debug },
+        .{ .scope = .cue, .level = .debug },
         .{ .scope = .maple, .level = .info },
         .{ .scope = .renderer, .level = .info },
         .{ .scope = .pipeline_cache, .level = .info },
@@ -169,7 +170,7 @@ pub fn main() !void {
         } else {
             if (std.mem.endsWith(u8, arg, ".bin") or std.mem.endsWith(u8, arg, ".elf")) {
                 binary_path = arg;
-            } else if (std.mem.endsWith(u8, arg, ".gdi") or std.mem.endsWith(u8, arg, ".cdi") or std.mem.endsWith(u8, arg, ".chd")) {
+            } else if (std.mem.endsWith(u8, arg, ".gdi") or std.mem.endsWith(u8, arg, ".cdi") or std.mem.endsWith(u8, arg, ".chd") or std.mem.endsWith(u8, arg, ".cue")) {
                 disc_path = arg;
             } else {
                 std.log.warn(termcolor.yellow("Unsupported file format: '{s}'"), .{arg});
