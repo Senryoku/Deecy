@@ -1589,11 +1589,12 @@ fn runtime_instruction_mmu_translation() callconv(Architecture.CallingConvention
 
 const MMUCacheEntry = struct {
     vpn: u32 = 0xDEADBEEF,
-    ppn: u32 = 0xDEADBEEF,
+    /// Stores the offset between the virtual address and the physical address.
+    offset: u32 = 0xDEADBEEF,
 
     pub fn reset(self: *@This()) void {
         self.vpn = 0xDEADBEEF;
-        self.ppn = 0xDEADBEEF;
+        self.offset = 0xDEADBEEF;
     }
 
     pub inline fn hit(self: @This(), virtual_addr: u32) bool {
@@ -1601,12 +1602,12 @@ const MMUCacheEntry = struct {
     }
 
     pub inline fn translate(self: @This(), virtual_addr: u32) u32 {
-        return self.ppn | (virtual_addr & 0x3FF);
+        return virtual_addr +% self.offset;
     }
 
     pub inline fn update(self: *@This(), virtual_addr: u32, physical_addr: u32) void {
         self.vpn = virtual_addr >> 10;
-        self.ppn = physical_addr & ~@as(u32, 0x3FF);
+        self.offset = (physical_addr & ~@as(u32, 0x3FF)) -% (virtual_addr & ~@as(u32, 0x3FF));
     }
 
     pub inline fn get_index(comptime EntryCount: u32, virtual_addr: u32) u32 {
@@ -1704,8 +1705,7 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
         // Compute possible physical address from cached PPN
         const CandidatePhysicalAddress = JIT.Operand{ .reg = ArgRegisters[3] };
         try block.mov(CandidatePhysicalAddress, .{ .reg = addr });
-        try block.append(.{ .And = .{ .dst = CandidatePhysicalAddress, .src = .{ .imm32 = 0x3FF } } });
-        try block.append(.{ .Or = .{ .dst = CandidatePhysicalAddress, .src = .{ .mem = .{ .base = ArgRegisters[2], .displacement = @offsetOf(MMUCacheEntry, "ppn"), .size = 32 } } } });
+        try block.add(CandidatePhysicalAddress, .{ .mem = .{ .base = ArgRegisters[2], .displacement = @offsetOf(MMUCacheEntry, "offset"), .size = 32 } });
         // Compute current VPN
         const CurrentVPN = JIT.Operand{ .reg = ArgRegisters[0] };
         try block.mov(CurrentVPN, .{ .reg = addr });
