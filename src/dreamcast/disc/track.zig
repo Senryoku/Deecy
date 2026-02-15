@@ -73,7 +73,7 @@ pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 
         if (first_sector_header[0x0F] != 1 and first_sector_header[0x0F] != 2)
             log.err("({d}) Invalid sector mode: {X:0>2}", .{ fad, first_sector_header[0x0F] });
 
-        for (0..count) |_| {
+        for (0..count) |i| {
             if (sector_start >= self.data.len or self.data[sector_start..].len < 0x10)
                 return copied;
 
@@ -86,7 +86,7 @@ pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 
                     \\   Sector header:       {X}
                 , .{
                     self.num,
-                    fad + count,
+                    fad + i,
                     header[0x0F],
                     first_sector_header[0x0F],
                     first_sector_header,
