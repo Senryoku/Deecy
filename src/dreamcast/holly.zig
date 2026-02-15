@@ -1893,7 +1893,7 @@ pub const Holly = struct {
     }
 
     /// Write to the Tile Accelerator
-    pub fn write_ta(self: *@This(), addr: u32, v: []const u32, access_type: enum(u32) { b64 = 0, b32 = 1 }) void {
+    pub inline fn write_ta(self: *@This(), addr: u32, v: []const u32, access_type: enum(u32) { b64 = 0, b32 = 1 }) void {
         holly_log.debug("  TA Bulk Write: {X:0>8} = {any}\n", .{ addr, v });
         std.debug.assert(addr >= 0x10000000 and addr < 0x14000000);
         switch (addr) {
@@ -1907,7 +1907,6 @@ pub const Holly = struct {
             0x10800000...0x10FFFFFF, 0x12800000...0x12FFFFFF => holly_log.warn(termcolor.yellow("  TODO: YUV Conv. {X:0>8} = {any}"), .{ addr, v }),
             0x11000000...0x11FFFFFF, 0x13000000...0x13FFFFFF => {
                 // Direct Texture Path
-                holly_log.warn(termcolor.yellow("  Direct Texture Path write {X:0>8} = {any}"), .{ addr, v });
                 switch (access_type) {
                     .b64 => {
                         for (v, 0..) |w, idx|

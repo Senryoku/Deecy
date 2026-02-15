@@ -918,6 +918,7 @@ pub const SH4 = struct {
                     const LMMode = self._dc.?.read_hw_register(u32, if (dst_addr >= 0x11000000 and dst_addr < 0x12000000) .SB_LMMODE0 else .SB_LMMODE1);
                     const access_32bit = LMMode != 0;
                     if (access_32bit) {
+                        sh4_log.warn("DMAC: Slow direct texture path write (32bit), {X:0>8} to {X:0>8}", .{ src_addr, dst_addr });
                         var curr_dst: i32 = @intCast(dst_addr);
                         var curr_src: i32 = @intCast(src_addr);
                         for (0..byte_len / 4) |_| {
