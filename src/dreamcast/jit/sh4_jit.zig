@@ -1683,10 +1683,11 @@ fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime ac
 fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_size: u32, block: *IRBlock, ctx: *JITContext, addr: JIT.Register, register_to_save: ?JIT.Register) !void {
     var vpn_match: ?JIT.PatchableJump = null;
     if (Optimizations.mmu_translation_cache) {
-        // Check if the last translation was for the same VPN (assuming a 1k page) and use that as a possible fast path.
-        // NOTE: With some rip-relative addressing, we could have a cache per instruction/memory access. Not sure how much better it would be
-        //       (I suspect the cache hit rate would be significantly higher, but code size would increase a lot). The "backend" also doesn't
-        //       support rip-relative addressing for now (although I suspect it wouldn't be too hard to add using a pattern similar to jumps).
+        const CurrentVPN = JIT.Operand{ .reg = ArgRegisters[0] };
+        const CacheBase: JIT.Register = ArgRegisters[2];
+        const CacheIndex: JIT.Register = ArgRegisters[3];
+
+        // Check the MMU cache (assuming a 1k page) and use that as a possible fast path.
         std.debug.assert(addr != ArgRegisters[0]);
         std.debug.assert(addr != ArgRegisters[2]);
         std.debug.assert(addr != ArgRegisters[3]);
@@ -1694,26 +1695,23 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
         std.debug.assert(register_to_save != ArgRegisters[3]);
 
         const MMUCachePtr = &MMUCache[0];
-        try block.mov(.{ .reg64 = ArgRegisters[2] }, .{ .imm64 = @intFromPtr(MMUCachePtr) });
+        try block.mov(.{ .reg64 = CacheBase }, .{ .imm64 = @intFromPtr(MMUCachePtr) });
 
-        // Select the cache entry based on the VPN
-        try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = addr });
-        try block.shr(.{ .reg = ArgRegisters[0] }, 10 - 3); // We'd shift it by 3 afterward to multiply to by the size of an MMUCache entry
-        try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[0] }, .src = .{ .imm32 = (MMUCacheEntryCount - 1) << 3 } } });
-        try block.add(.{ .reg64 = ArgRegisters[2] }, .{ .reg64 = ArgRegisters[0] });
-
-        // Compute possible physical address from cached PPN
-        const CandidatePhysicalAddress = JIT.Operand{ .reg = ArgRegisters[3] };
-        try block.mov(CandidatePhysicalAddress, .{ .reg = addr });
-        try block.add(CandidatePhysicalAddress, .{ .mem = .{ .base = ArgRegisters[2], .displacement = @offsetOf(MMUCacheEntry, "offset"), .size = 32 } });
         // Compute current VPN
-        const CurrentVPN = JIT.Operand{ .reg = ArgRegisters[0] };
         try block.mov(CurrentVPN, .{ .reg = addr });
         try block.shr(CurrentVPN, 10);
+
+        // Select the cache entry based on the VPN
+        try block.mov(.{ .reg = CacheIndex }, CurrentVPN);
+        try block.append(.{ .And = .{ .dst = .{ .reg = CacheIndex }, .src = .{ .imm32 = MMUCacheEntryCount - 1 } } });
+
         // Compare with cached VPN
-        try block.cmp(CurrentVPN, .{ .mem = .{ .base = ArgRegisters[2], .displacement = @offsetOf(MMUCacheEntry, "vpn"), .size = 32 } });
-        try block.cmov(.Equal, .{ .reg = addr }, CandidatePhysicalAddress);
-        vpn_match = try block.jmp(.Equal);
+        try block.cmp(CurrentVPN, .{ .mem = .{ .base = CacheBase, .index = CacheIndex, .scale = ._8, .displacement = @offsetOf(MMUCacheEntry, "vpn"), .size = 32 } });
+        var vpn_mismatch = try block.jmp(.NotEqual);
+        // Translate address using cached PPN
+        try block.add(.{ .reg = addr }, .{ .mem = .{ .base = CacheBase, .index = CacheIndex, .scale = ._8, .displacement = @offsetOf(MMUCacheEntry, "offset"), .size = 32 } });
+        vpn_match = try block.jmp(.Always);
+        vpn_mismatch.patch();
 
         try ctx.gpr_cache.commit_all_speculatively(block);
         try ctx.fpr_cache.commit_all_speculatively(block);

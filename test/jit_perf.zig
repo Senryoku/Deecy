@@ -57,7 +57,7 @@ pub fn load_state(dc: *Dreamcast, path: []const u8) !void {
 
 // Expects pairs of game path and save state path as arguments
 pub fn main() !void {
-    const cycles_target = 10 * 200_000_000;
+    var cycles_target: u64 = 10 * 200_000_000;
     var total_time: u64 = 0;
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -69,6 +69,17 @@ pub fn main() !void {
     _ = args.skip();
 
     while (args.next()) |game| {
+        if (std.mem.startsWith(u8, game, "-")) {
+            if (std.mem.eql(u8, game, "--cycles")) {
+                cycles_target = try std.fmt.parseInt(u32, args.next().?, 10);
+            } else if (std.mem.eql(u8, game, "--seconds")) {
+                cycles_target = 200_000_000 * (try std.fmt.parseInt(u32, args.next().?, 10));
+            } else {
+                std.debug.print("Unknown argument: '{s}'\n", .{game});
+            }
+            continue;
+        }
+
         var dc = try Dreamcast.create(allocator);
         defer {
             dc.deinit();
