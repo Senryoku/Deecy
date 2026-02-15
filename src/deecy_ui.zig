@@ -972,9 +972,10 @@ pub fn draw(self: *@This()) !void {
                                                 var peripheral_type = std.meta.activeTag(d.config.controllers[port].subperipherals[slot]);
                                                 if (zgui.comboFromEnum("#" ++ &[1]u8{'0' + slot}, &peripheral_type)) {
                                                     d.deinit_peripheral(port, slot);
+                                                    d.config.controllers[port].subperipherals[slot].deinit(self.allocator);
                                                     d.config.controllers[port].subperipherals[slot] = switch (peripheral_type) {
                                                         .None => .None,
-                                                        .VMU => .{ .VMU = .{ .filename = Deecy.DefaultVMUPaths[port][slot] } },
+                                                        .VMU => .{ .VMU = .{ .filename = try self.allocator.dupe(u8, Deecy.DefaultVMUPaths[port][slot]) } },
                                                         .VibrationPack => .VibrationPack,
                                                     };
                                                     try d.init_peripheral(port, slot);

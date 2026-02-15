@@ -262,7 +262,17 @@ const ControllerSettings = struct {
             subcapabilities: u32 = (DreamcastModule.Maple.Mouse.FunctionDefinition{}).as_u32(),
         },
     } = .{ .Controller = .{} },
-    subperipherals: [2]union(enum) { None, VMU: struct { filename: []const u8 }, VibrationPack } = .{ .None, .None },
+    subperipherals: [2]union(enum) {
+        None,
+        VMU: struct { filename: []const u8 },
+        VibrationPack,
+        pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+            switch (self.*) {
+                .VMU => |*v| allocator.free(v.filename),
+                inline else => {},
+            }
+        }
+    } = .{ .None, .None },
 };
 
 pub const PresentMode = enum(u32) {
