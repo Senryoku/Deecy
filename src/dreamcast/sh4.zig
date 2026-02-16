@@ -247,7 +247,9 @@ pub const SH4 = struct {
 
     _allocator: std.mem.Allocator,
     _dc: ?*Dreamcast = null,
-    _pending_cycles: u32 = 0,
+    /// Cycles are *substracted* from this value when executing instructions.
+    /// The JIT will set it to a maximum cycle count before starting execution. Effective cycles spent can then be calculated by InitialValue - _pending_cycles.
+    _pending_cycles: i32 = 0,
 
     _operand_cache_state: *OperandCacheState, // DCA3 Hacks
 
@@ -846,7 +848,7 @@ pub const SH4 = struct {
     }
 
     pub inline fn add_cycles(self: *@This(), cycles: u32) void {
-        self._pending_cycles += cycles;
+        self._pending_cycles -= @intCast(cycles);
     }
 
     pub fn store_queue_write(self: *@This(), comptime T: type, virtual_addr: u32, value: T) void {

@@ -20,7 +20,7 @@ fn InstructionHandler(comptime idx: usize, comptime instruction: u16) type {
             } else {
                 Opcodes[idx].fn_(cpu, comptime instr);
             }
-            cpu._pending_cycles += comptime Opcodes[idx].issue_cycles;
+            cpu.add_cycles(comptime Opcodes[idx].issue_cycles);
         }
     };
 }

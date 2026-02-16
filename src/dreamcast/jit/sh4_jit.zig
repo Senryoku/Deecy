@@ -42,7 +42,6 @@ const SH4PtrRegister = SavedRegisters[0];
 const Optimizations = .{
     .div1_simplification = true,
     .inline_small_forward_jumps = true,
-    .inline_jumps_to_start_of_block = false,
     .inline_backwards_bra = true, // Inlining of backward inconditional branches, before current block entry point. This isn't correctly supported and implementation is very hackish.
     .mmu_translation_cache = true, // EXPERIMENTAL: Check virtual addresses against the last successful translation for a possible fast path.
 };
@@ -727,12 +726,15 @@ pub const SH4JIT = struct {
         }).block_hash;
     }
 
-    pub fn execute(self: *@This(), cpu: *sh4.SH4) !u32 {
+    pub fn execute(self: *@This(), cpu: *sh4.SH4, max_cycles: i32) !u32 {
         cpu.handle_interrupts();
 
         if (cpu.execution_state == .Running or cpu.execution_state == .ModuleStandby) {
             @branchHint(.likely);
             std.debug.assert((cpu.pc & 0xFC00_0000) != 0x7C00_0000);
+
+            cpu._pending_cycles = max_cycles;
+
             const physical_pc = get_cached_physical_pc(cpu);
             var block = self.block_cache.get(physical_pc, cpu.fpscr.sz, cpu.fpscr.pr);
 
@@ -742,7 +744,7 @@ pub const SH4JIT = struct {
                 cpu,
                 self.block_cache.buffer[block.offset..].ptr,
             );
-            const cycles = cpu._pending_cycles;
+            const cycles = max_cycles - cpu._pending_cycles;
             cpu._pending_cycles = 0;
 
             if (BasicBlock.EnableInstrumentation and block.offset > 0) { // Might have been invalidated.
@@ -750,7 +752,7 @@ pub const SH4JIT = struct {
                 block.call_count += 1;
             }
 
-            return cycles;
+            return @intCast(cycles);
         } else {
             @branchHint(.cold);
             return MaxCyclesPerBlock;
@@ -958,9 +960,10 @@ pub const SH4JIT = struct {
         for (ctx.jumps_to_end) |jmp|
             if (jmp) |j| j.patch();
 
-        try b.add(sh4_mem("_pending_cycles"), .{ .imm32 = ctx.cycles });
+        try b.sub(sh4_mem("_pending_cycles"), .{ .imm32 = ctx.cycles });
         // Jump to the next block (Disabled when instrumentation is on, otherwise it would be a hassle to measure individual blocks)
         if (!ctx.force_exit and ctx.cycles < MaxCyclesPerExecution and ctx.fpscr_pr != .Unknown and ctx.fpscr_sz != .Unknown and !BasicBlock.EnableInstrumentation) {
+            var skip = try b.jmp(.Sign);
             try b.cmp(.{ .mem = .{ .base = SH4PtrRegister, .displacement = @offsetOf(sh4.SH4, "interrupt_requests"), .size = 64 } }, .{ .imm8 = 0 });
             var handle_interrupt = try b.jmp(.NotEqual);
 
@@ -971,9 +974,6 @@ pub const SH4JIT = struct {
                 .sz = if (ctx.fpscr_sz == .Single) 0 else 1,
             });
             const Key: JIT.Operand = .{ .reg = ArgRegisters[0] };
-
-            try b.cmp(sh4_mem("_pending_cycles"), .{ .imm8 = MaxCyclesPerExecution });
-            var skip = try b.jmp(.AboveEqual);
 
             var skip_key_compute: ?JIT.PatchableJump = null;
             if (ctx.mmu_enabled) {
@@ -3278,56 +3278,6 @@ fn default_conditional_branch(block: *IRBlock, ctx: *JITContext, instr: sh4.Inst
 fn conditional_branch(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, comptime jump_if: bool, comptime delay_slot: bool) !bool {
     const dest = sh4_interpreter.d8_disp(ctx.current_pc, instr);
 
-    // Jump back at the start of this block
-    if (Optimizations.inline_jumps_to_start_of_block and dest == ctx.entry_point_address and ctx.cycles < MaxCyclesPerBlock) {
-        if (delay_slot) {
-            // Delay slot might change the T bit, push it.
-            try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
-            try block.push(.{ .reg64 = ReturnRegister });
-            try block.push(.{ .reg64 = ReturnRegister }); // Twice to stay 16 bytes aligned.
-            try ctx.compile_delay_slot(block);
-        }
-
-        const loop_cycles = ctx.cycles + instr_lookup(@bitCast(instr)).issue_cycles;
-
-        // Here we have to flush all registers to memory since jumping back to the start of the block means reloading them from memory.
-        try ctx.gpr_cache.commit_and_invalidate_all(block);
-        try ctx.fpr_cache.commit_and_invalidate_all(block);
-
-        if (delay_slot) {
-            try block.pop(.{ .reg64 = ReturnRegister });
-            try block.pop(.{ .reg64 = ReturnRegister });
-        } else {
-            try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
-        }
-        try block.bit_test(.{ .reg = ReturnRegister }, @bitOffsetOf(sh4.SR, "t"));
-        var not_taken = try block.jmp(if (jump_if) .NotCarry else .Carry);
-
-        // Break out if we already spent too many cycles here. NOTE: This doesn't currently take the base cycles into account.
-        try block.mov(.{ .reg = ReturnRegister }, sh4_mem("_pending_cycles"));
-        try block.cmp(.{ .reg = ReturnRegister }, .{ .imm8 = MaxCyclesPerExecution });
-        var break_loop = try block.jmp(.Greater);
-
-        // Count cycles spent into one traversal of the loop.
-        try block.add(.{ .reg = ReturnRegister }, .{ .imm32 = loop_cycles });
-        try block.mov(sh4_mem("_pending_cycles"), .{ .reg = ReturnRegister });
-
-        const rel: i32 = @as(i32, @intCast(ctx.start_index)) - @as(i32, @intCast(block.instructions.items.len));
-        try block.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .rel = rel } } }); // Jump back
-
-        break_loop.patch(); // Branch taken, but we already spend enough cycles here. Break out to handle interrupts.
-        try block.mov(sh4_mem("pc"), .{ .imm32 = dest });
-        var to_end = try block.jmp(.Always);
-
-        not_taken.patch();
-        try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc + if (delay_slot) 4 else 2 });
-        to_end.patch();
-
-        ctx.may_have_pending_cycles = true;
-        ctx.outdated_pc = false;
-        return true;
-    }
-
     // NOTE: Disabled for now when MMU is enabled. The delay slot might raise a exception and we'll end up with a misaligned stack with the current implementation.
     // if (Optimizations.inline_small_forward_jumps and (!ctx.mmu_enabled or !delay_slot)) {
     // FIXME: Changes behaviour when the MMU is enabled. AFAIK, the previous condition should be enough, but clearly isn't. I don't understand it yet.
@@ -3387,7 +3337,7 @@ fn conditional_branch(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, compt
                 std.debug.assert(!branch);
                 optional_cycles += op.issue_cycles;
             }
-            try block.add(sh4_mem("_pending_cycles"), .{ .imm32 = optional_cycles });
+            try block.sub(sh4_mem("_pending_cycles"), .{ .imm32 = optional_cycles });
 
             ctx.may_have_pending_cycles = true;
 

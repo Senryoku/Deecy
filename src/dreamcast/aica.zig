@@ -1233,6 +1233,10 @@ pub const AICA = struct {
         self.check_interrupts();
     }
 
+    pub fn next_update(self: *const AICA) i32 {
+        return @min(SH4CyclesPerSample - @as(i32, @intCast(self._timer_cycles_counter)), ARM7CycleRatio - self._arm_cycles_counter);
+    }
+
     pub fn update(self: *AICA, dc: *Dreamcast, sh4_cycles: u32) !void {
         std.debug.assert(sh4_cycles < 2 * SH4CyclesPerSample);
         self._timer_cycles_counter += @intCast(sh4_cycles);

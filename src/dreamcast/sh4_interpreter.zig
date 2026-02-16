@@ -29,9 +29,9 @@ pub fn execute(self: *SH4, max_instructions: u8) u32 {
             fetch_and_execute(self, self.pc);
         }
 
-        const cycles = self._pending_cycles;
+        const cycles = -self._pending_cycles;
         self._pending_cycles = 0;
-        return cycles;
+        return @intCast(cycles);
     } else {
         return 8;
     }

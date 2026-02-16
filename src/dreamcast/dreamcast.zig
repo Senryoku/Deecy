@@ -843,9 +843,10 @@ pub const Dreamcast = struct {
     }
 
     pub fn tick_jit(self: *@This()) !u32 {
-        var cycles: u32 = 0;
-        while (cycles < 64)
-            cycles += try self.sh4_jit.execute(&self.cpu);
+        var max_cycles = self.aica.next_update();
+        if (self.scheduled_events.peek()) |event|
+            max_cycles = @min(max_cycles, event.trigger_cycle - self._global_cycles);
+        const cycles = try self.sh4_jit.execute(&self.cpu, @max(66, max_cycles));
         try self.tick_peripherals(cycles);
         return cycles;
     }
@@ -858,7 +859,6 @@ pub const Dreamcast = struct {
     // TODO: Add helpers for external interrupts and errors.
 
     pub fn schedule_event(self: *@This(), event: ScheduledEvent.Event, cycles: usize) void {
-        //std.debug.print("Schedule event in {d}: {f}\n", .{ cycles, event });
         self.scheduled_events.add(.{
             .trigger_cycle = self._global_cycles +% cycles,
             .event = event,
