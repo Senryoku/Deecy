@@ -48,6 +48,8 @@ pub const CableType = enum(u16) {
     Composite = 3,
 };
 
+pub const AICASync = enum { Sample, ARM };
+
 const Callback = struct {
     function: ?*const fn (*anyopaque, *Dreamcast) void,
     context: *anyopaque,
@@ -842,11 +844,11 @@ pub const Dreamcast = struct {
         return cycles;
     }
 
-    pub fn tick_jit(self: *@This()) !u32 {
-        var max_cycles = self.aica.next_update();
+    pub fn tick_jit(self: *@This(), aica_sync: AICASync) !u32 {
+        var max_cycles = if (aica_sync == .Sample) self.aica.next_sample() else self.aica.next_update();
         if (self.scheduled_events.peek()) |event|
             max_cycles = @min(max_cycles, event.trigger_cycle - self._global_cycles);
-        const cycles = try self.sh4_jit.execute(&self.cpu, @max(66, max_cycles));
+        const cycles = try self.sh4_jit.execute(&self.cpu, @max(AICA.ARM7CycleRatio, max_cycles));
         try self.tick_peripherals(cycles);
         return cycles;
     }

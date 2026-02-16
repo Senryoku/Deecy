@@ -344,6 +344,7 @@ const Configuration = struct {
 
     audio_volume: f32 = 0.3,
     dsp_emulation: DreamcastModule.AICAModule.DSPEmulation = .JIT,
+    aica_sync: DreamcastModule.AICASync = .Sample,
 };
 
 pub const ConfigFile = "config.zon";
@@ -1593,7 +1594,7 @@ fn run_for(self: *@This(), sh4_cycles: u64) void {
     self._cycles_to_run += @intCast(sh4_cycles);
     if (self.enable_jit) {
         while (self._cycles_to_run > 0) {
-            self._cycles_to_run -= self.dc.tick_jit() catch |err| {
+            self._cycles_to_run -= self.dc.tick_jit(self.config.aica_sync) catch |err| {
                 deecy_log.err("Error running JIT: {}", .{err});
                 self._stop_request = true;
                 return;

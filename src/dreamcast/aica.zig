@@ -1233,8 +1233,14 @@ pub const AICA = struct {
         self.check_interrupts();
     }
 
-    pub fn next_update(self: *const AICA) i32 {
-        return @min(SH4CyclesPerSample - @as(i32, @intCast(self._timer_cycles_counter)), ARM7CycleRatio - self._arm_cycles_counter);
+    /// Return the number of SH4 cycles until the next sample
+    pub fn next_sample(self: *const @This()) i32 {
+        return SH4CyclesPerSample - @as(i32, @intCast(self._timer_cycles_counter));
+    }
+
+    /// Return the number of SH4 cycles until the next update (Sample or ARM cycle)
+    pub fn next_update(self: *const @This()) i32 {
+        return @min(self.next_sample(), ARM7CycleRatio - self._arm_cycles_counter);
     }
 
     pub fn update(self: *AICA, dc: *Dreamcast, sh4_cycles: u32) !void {

@@ -1029,6 +1029,13 @@ pub fn draw(self: *@This()) !void {
                         d.dc.aica.dsp_emulation = dsp_emulation;
                         d.config.dsp_emulation = dsp_emulation;
                     }
+                    var aica_sync = d.config.aica_sync;
+                    if (zgui.comboFromEnum("Synchronization", &aica_sync)) {
+                        const was_running = d.running;
+                        if (was_running) d.pause();
+                        defer if (was_running) d.start();
+                        d.config.aica_sync = aica_sync;
+                    }
                     zgui.endTabItem();
                 }
 
