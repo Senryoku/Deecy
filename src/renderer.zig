@@ -2935,8 +2935,8 @@ pub const Renderer = struct {
                 const scaled_y = @max(factor *| uc.y, y);
                 return .{
                     .usage = .InsideEnabled,
-                    .x = scaled_x,
-                    .y = scaled_y,
+                    .x = @min(scaled_x, self.resolution.width),
+                    .y = @min(scaled_y, self.resolution.height),
                     .width = @min(@min(factor *| uc.width, width), self.resolution.width -| scaled_x),
                     .height = @min(@min(factor *| uc.height, height), self.resolution.height -| scaled_y),
                 };
