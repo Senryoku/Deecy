@@ -48,7 +48,7 @@ pub const CableType = enum(u16) {
     Composite = 3,
 };
 
-pub const AICASync = enum { Sample, ARM };
+pub const AICASync = enum { @"1 ARM Cycle", @"4 ARM Cycles", @"8 ARM Cycles", @"16 ARM Cycles", @"32 ARM Cycles", Sample };
 
 const Callback = struct {
     function: ?*const fn (*anyopaque, *Dreamcast) void,
@@ -845,7 +845,14 @@ pub const Dreamcast = struct {
     }
 
     pub fn tick_jit(self: *@This(), aica_sync: AICASync) !u32 {
-        var max_cycles = if (aica_sync == .Sample) self.aica.next_sample() else self.aica.next_update();
+        var max_cycles = switch (aica_sync) {
+            .Sample => self.aica.next_sample(),
+            .@"32 ARM Cycles" => self.aica.next_update(32),
+            .@"16 ARM Cycles" => self.aica.next_update(16),
+            .@"8 ARM Cycles" => self.aica.next_update(8),
+            .@"4 ARM Cycles" => self.aica.next_update(4),
+            .@"1 ARM Cycle" => self.aica.next_update(1),
+        };
         if (self.scheduled_events.peek()) |event|
             max_cycles = @min(max_cycles, event.trigger_cycle - self._global_cycles);
         const cycles = try self.sh4_jit.execute(&self.cpu, @max(AICA.ARM7CycleRatio, max_cycles));

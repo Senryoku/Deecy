@@ -344,7 +344,7 @@ const Configuration = struct {
 
     audio_volume: f32 = 0.3,
     dsp_emulation: DreamcastModule.AICAModule.DSPEmulation = .JIT,
-    aica_sync: DreamcastModule.AICASync = .Sample,
+    aica_sync: DreamcastModule.AICASync = .@"1 ARM Cycle",
 };
 
 pub const ConfigFile = "config.zon";

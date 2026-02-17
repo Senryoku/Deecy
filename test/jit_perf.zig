@@ -93,7 +93,7 @@ pub fn main() !void {
         const start = try std.time.Instant.now();
         var cycles: u32 = 0;
         while (cycles < cycles_target) {
-            cycles += try dc.tick_jit(.Sample);
+            cycles += try dc.tick_jit(.@"1 ARM Cycle");
         }
         const elapsed = (try std.time.Instant.now()).since(start);
         total_time += elapsed;
