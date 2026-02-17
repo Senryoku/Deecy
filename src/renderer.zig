@@ -2795,6 +2795,8 @@ pub const Renderer = struct {
                                 }
                             },
                             .PunchThrough => {
+                                // "Depth Compare Mode specified in the ISP/TSP Instruction Word is invalid, and Z values are always compared on a "Greater or Equal" basis."
+                                pipeline_key.depth_compare = translate_depth_compare_mode(.GreaterEqual);
                                 if (pipeline_key.src_blend_factor != .src_alpha or pipeline_key.dst_blend_factor != .one_minus_src_alpha) {
                                     log.debug("Unexpected blend mode for punch through list: src={t}, dst={t}", .{ pipeline_key.src_blend_factor, pipeline_key.dst_blend_factor });
                                     pipeline_key.src_blend_factor = .src_alpha;
