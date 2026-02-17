@@ -1854,7 +1854,7 @@ pub const Holly = struct {
                 // Same thing as TA_LIST_INIT, but without reseting the list, nor the TA registers? (Not really tested yet)
                 if (v == 0x80000000) {
                     self._ta_current_pass += 1;
-                    if (self._ta_lists[self.ta_list_index()].items.len <= self._ta_current_pass)
+                    while (self._ta_lists[self.ta_list_index()].items.len <= self._ta_current_pass)
                         self._ta_lists[self.ta_list_index()].append(self._allocator, .init()) catch @panic("Out of memory");
                     self._ta_command_buffer_index = 0;
                     self._ta_list_type = null;
@@ -2072,12 +2072,16 @@ pub const Holly = struct {
     }
 
     inline fn ta_current_lists(self: *@This()) *TALists {
+        while (self._ta_lists[self.ta_list_index()].items.len <= self._ta_current_pass) {
+            holly_log.err("Accessing pass {d} of list {d} with only {d} passes", .{ self._ta_current_pass, self.ta_list_index(), self._ta_lists[self.ta_list_index()].items.len });
+            self._ta_lists[self.ta_list_index()].append(self._allocator, .init()) catch @panic("Out of memory");
+        }
         return &self._ta_lists[self.ta_list_index()].items[self._ta_current_pass];
     }
 
     inline fn start_list(self: *@This(), list_type: ListType) void {
-        self._ta_list_type = list_type;
         holly_log.debug("Starting List {t} - TA_NEXT_OPB: {X:0>6}", .{ list_type, self._get_register(u32, .TA_NEXT_OPB).* });
+        self._ta_list_type = list_type;
         self.ta_current_lists().check_reset();
     }
 

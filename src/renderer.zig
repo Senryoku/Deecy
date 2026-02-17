@@ -1658,6 +1658,7 @@ pub const Renderer = struct {
         //       writing to LIST_INIT). No idea if there are games that actually do that, but just in case, emit a warning.
         for (self.ta_lists.items) |*list| list.clearRetainingCapacity();
         const list_idx: u4 = @truncate(self.on_render_start_param_base >> 20);
+        while (self.ta_lists.items.len < dc.gpu._ta_lists[list_idx].items.len) self.ta_lists.append(self._allocator, .init()) catch @panic("Out of memory"); // Give back a list with at least as many passes.
         std.mem.swap(std.ArrayList(HollyModule.TALists), &dc.gpu._ta_lists[list_idx], &self.ta_lists);
         if (self.ta_lists.items[0].opaque_list.vertex_strips.items.len == 0 and self.ta_lists.items[0].punchthrough_list.vertex_strips.items.len == 0 and self.ta_lists.items[0].translucent_list.vertex_strips.items.len == 0) {
             log.warn(termcolor.yellow("on_render_start: Empty TA lists submitted. Is the game trying to reuse the previous TA lists?"), .{});
