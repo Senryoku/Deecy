@@ -2107,29 +2107,30 @@ pub const Holly = struct {
             // Control Parameters
             .EndOfList => {
                 self.check_end_of_modifier_volume();
-                if (self._ta_list_type) |list| { // Apparently this happens?... Why would a game do this?
-                    // Fire corresponding interrupt. FIXME: Delay is completely arbitrary, I just need to delay them for testing, for now.
-                    self._dc.schedule_interrupt(switch (list) {
-                        .Opaque => .{ .EoT_OpaqueList = 1 },
-                        .OpaqueModifierVolume => .{ .EoT_OpaqueModifierVolumeList = 1 },
-                        .Translucent => .{ .EoT_TranslucentList = 1 },
-                        .TranslucentModifierVolume => .{ .EoT_TranslucentModifierVolumeList = 1 },
-                        .PunchThrough => .{ .EoD_PunchThroughList = 1 },
-                        else => std.debug.panic(termcolor.red("  Unimplemented List Type {}"), .{list}),
-                    }, 800);
+                // NOTE: Some games send this when no list is started. World Series Baseball 2K1 even relies on the interrupt.
+                const list = self._ta_list_type orelse parameter_control_word.list_type;
 
-                    // NOTE: Probably not actually usefull, more of a debugging tool for now.
-                    const global_tile_clip = self.read_register(TA_GLOB_TILE_CLIP, .TA_GLOB_TILE_CLIP);
-                    const alloc_ctrl = self.read_register(TA_ALLOC_CTRL, .TA_ALLOC_CTRL);
-                    self._get_register(u32, .TA_NEXT_OPB).* += @intCast(@as(u32, 4) * @as(u32, global_tile_clip.tile_x_num + 1) * @as(u32, global_tile_clip.tile_y_num + 1) * (switch (list) {
-                        .Opaque => alloc_ctrl.O_OPB.byteSize(),
-                        .OpaqueModifierVolume => alloc_ctrl.OM_OPB.byteSize(),
-                        .Translucent => alloc_ctrl.T_OPB.byteSize(),
-                        .TranslucentModifierVolume => alloc_ctrl.TM_OPB.byteSize(),
-                        .PunchThrough => alloc_ctrl.PT_OPB.byteSize(),
-                        else => std.debug.panic("Invalid display list type: {}", .{list}),
-                    }));
-                }
+                // Fire corresponding interrupt. FIXME: Delay is completely arbitrary, I just need to delay them for testing, for now.
+                self._dc.schedule_interrupt(switch (list) {
+                    .Opaque => .{ .EoT_OpaqueList = 1 },
+                    .OpaqueModifierVolume => .{ .EoT_OpaqueModifierVolumeList = 1 },
+                    .Translucent => .{ .EoT_TranslucentList = 1 },
+                    .TranslucentModifierVolume => .{ .EoT_TranslucentModifierVolumeList = 1 },
+                    .PunchThrough => .{ .EoD_PunchThroughList = 1 },
+                    else => std.debug.panic(termcolor.red("  Unimplemented List Type {}"), .{list}),
+                }, 800);
+
+                // NOTE: Probably not actually useful, more of a debugging tool for now.
+                const global_tile_clip = self.read_register(TA_GLOB_TILE_CLIP, .TA_GLOB_TILE_CLIP);
+                const alloc_ctrl = self.read_register(TA_ALLOC_CTRL, .TA_ALLOC_CTRL);
+                self._get_register(u32, .TA_NEXT_OPB).* += @intCast(@as(u32, 4) * @as(u32, global_tile_clip.tile_x_num + 1) * @as(u32, global_tile_clip.tile_y_num + 1) * (switch (list) {
+                    .Opaque => alloc_ctrl.O_OPB.byteSize(),
+                    .OpaqueModifierVolume => alloc_ctrl.OM_OPB.byteSize(),
+                    .Translucent => alloc_ctrl.T_OPB.byteSize(),
+                    .TranslucentModifierVolume => alloc_ctrl.TM_OPB.byteSize(),
+                    .PunchThrough => alloc_ctrl.PT_OPB.byteSize(),
+                    else => std.debug.panic("Invalid display list type: {}", .{list}),
+                }));
 
                 self._ta_current_polygon = null;
                 self._ta_list_type = null;
