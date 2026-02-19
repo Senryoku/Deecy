@@ -190,12 +190,37 @@ const ShadingInstructions = packed struct(u32) {
     _: u4 = 0,
 };
 
+fn address_mode_bit(address_mode: wgpu.AddressMode) u8 {
+    return switch (address_mode) {
+        .clamp_to_edge => 0,
+        .repeat => 1,
+        .mirror_repeat => 2,
+        else => {
+            if (@import("builtin").mode == .Debug)
+                log.err("Unsupported address mode {t}", .{address_mode});
+            return 0;
+        },
+    };
+}
+
+fn filter_mode_bit(filter: anytype) u8 {
+    return switch (filter) {
+        .nearest => 0,
+        .linear => 1,
+        else => {
+            if (@import("builtin").mode == .Debug)
+                log.err("Unsupported filter mode {t}", .{filter});
+            return 0;
+        },
+    };
+}
+
 fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mipmap_filter: wgpu.MipmapFilterMode, address_mode_u: wgpu.AddressMode, address_mode_v: wgpu.AddressMode) u8 {
-    return @as(u8, @truncate(@intFromEnum(address_mode_v))) << 5 |
-        @as(u8, @truncate(@intFromEnum(address_mode_u))) << 3 |
-        @as(u8, @truncate(@intFromEnum(mipmap_filter))) << 2 |
-        @as(u8, @truncate(@intFromEnum(min_filter))) << 1 |
-        @as(u8, @truncate(@intFromEnum(mag_filter)));
+    return (address_mode_bit(address_mode_v) << 5) |
+        (address_mode_bit(address_mode_u) << 3) |
+        (filter_mode_bit(mipmap_filter) << 2) |
+        (filter_mode_bit(min_filter) << 1) |
+        (filter_mode_bit(mag_filter));
 }
 
 const TextureIndex = u16;
