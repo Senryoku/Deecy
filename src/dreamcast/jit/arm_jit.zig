@@ -121,6 +121,10 @@ const BlockCache = struct {
 
         self.blocks[self.block_key(address)] = block;
     }
+
+    pub fn align_next_block(self: *@This()) void {
+        self.cursor = std.mem.alignForward(usize, self.cursor, 0x10);
+    }
 };
 
 pub const JITContext = struct {
@@ -169,8 +173,8 @@ pub const ARM7JIT = struct {
         b.clearRetainingCapacity();
         try b.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @intFromPtr(self) });
         try b.call(compile_and_run);
-        const block_size = try b.emit(self.block_cache.buffer[0..]);
-        self.block_cache.cursor = std.mem.alignForward(usize, block_size, 0x10);
+        self.block_cache.cursor = try b.emit(self.block_cache.buffer[0..]);
+        self.block_cache.align_next_block();
     }
 
     pub fn run_for(self: *@This(), cpu: *arm7.ARM7, cycles: i32) !i32 {
@@ -206,15 +210,16 @@ pub const ARM7JIT = struct {
         const pc = (cpu.pc() -% 4) & cpu.memory_address_mask; // Pipelining...
         arm_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
         const instructions: [*]u32 = @ptrCast(@alignCast(&cpu.memory[pc]));
-        const block = (self.compile(.{ .address = pc, .cpu = cpu }, instructions) catch |err| retry: {
-            if (err == error.JITCacheFull) {
+        const block = (self.compile(.{ .address = pc, .cpu = cpu }, instructions) catch |err| retry: switch (err) {
+            error.JITCacheFull => {
+                arm_jit_log.info("JIT cache full: Resetting.", .{});
                 self.reset() catch |reset_err| {
                     arm_jit_log.err("Failed to reset ARM JIT: {t}", .{reset_err});
-                    std.process.exit(1);
+                    break :retry err;
                 };
-                arm_jit_log.info("JIT cache purged.", .{});
                 break :retry self.compile(.{ .address = pc, .cpu = cpu }, instructions);
-            } else break :retry err;
+            },
+            else => err,
         }) catch |err| {
             arm_jit_log.err("Failed to compile {X:0>8}: {t}\n", .{ pc, err });
             std.process.exit(1);
@@ -292,6 +297,7 @@ pub const ARM7JIT = struct {
             .cycles = cycles,
         };
         self.block_cache.cursor += block_size;
+        self.block_cache.align_next_block();
 
         arm_jit_log.debug("Compiled: {X}", .{self.block_cache.buffer[block.offset..][0..block_size]});
 

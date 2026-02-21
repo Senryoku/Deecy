@@ -153,6 +153,10 @@ const BlockCache = struct {
         self.max_address = @max(self.max_address, address);
         self.blocks[compute_key(address, sz, pr)] = block;
     }
+
+    pub fn align_next_block(self: *@This()) void {
+        self.cursor = std.mem.alignForward(usize, self.cursor, 0x10);
+    }
 };
 
 inline fn instr_lookup(instr: u16) sh4.instructions.OpcodeDescription {
@@ -591,7 +595,7 @@ pub const SH4JIT = struct {
             try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
             const block_size = try b.emit_naked(self.block_cache.buffer[0..]);
             self.block_cache.cursor += block_size;
-            self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+            self.block_cache.align_next_block();
         }
         {
             // JIT entry point. Arguments:
@@ -637,7 +641,7 @@ pub const SH4JIT = struct {
             try e.emit_block_epilogue();
 
             self.block_cache.cursor += e.block_size;
-            self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+            self.block_cache.align_next_block();
         }
         if (FastMem) {
             var b = &self._working_block;
@@ -659,7 +663,7 @@ pub const SH4JIT = struct {
                 const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
 
                 self.block_cache.cursor += block_size;
-                self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+                self.block_cache.align_next_block();
             }
         }
     }
@@ -1070,7 +1074,7 @@ pub const SH4JIT = struct {
         }
         self.block_cache.cursor += block_size;
         // Align next block to 16 bytes. Not necessary, but might give a very small performance boost.
-        self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+        self.block_cache.align_next_block();
 
         sh4_jit_log.debug("Compiled: {X}", .{self.block_cache.buffer[block.offset..][0..block_size]});
 
