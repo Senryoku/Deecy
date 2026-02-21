@@ -208,7 +208,7 @@ pub const ARM7JIT = struct {
         const instructions: [*]u32 = @ptrCast(@alignCast(&cpu.memory[pc]));
         const block = (self.compile(.{ .address = pc, .cpu = cpu }, instructions) catch |err| retry: {
             if (err == error.JITCacheFull) {
-                self.block_cache.reset() catch |reset_err| {
+                self.reset() catch |reset_err| {
                     arm_jit_log.err("Failed to reset ARM JIT: {t}", .{reset_err});
                     std.process.exit(1);
                 };
