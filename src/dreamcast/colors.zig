@@ -105,6 +105,10 @@ pub const RGBA = packed struct(u32) {
     b: u8,
     g: u8,
     r: u8,
+
+    pub fn bgra(self: @This()) [4]u8 {
+        return .{ self.b, self.g, self.r, self.a };
+    }
 };
 
 pub const PackedColor = packed struct(u32) {

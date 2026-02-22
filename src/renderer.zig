@@ -63,6 +63,15 @@ pub inline fn untwiddle(u: u32, v: u32, w: u32, h: u32) u32 {
     }
 }
 
+/// Converts a 2*2 texel block from YUV422 to BGRA
+inline fn decode_yuv_block(halfwords: []align(1) const u16) [4][4]u8 {
+    const texels_0_1: YUV422 = @bitCast(@as(u32, halfwords[2]) << 16 | @as(u32, halfwords[0]));
+    const texels_2_3: YUV422 = @bitCast(@as(u32, halfwords[3]) << 16 | @as(u32, halfwords[1]));
+    const colors_0 = Colors.yuv_to_rgba(texels_0_1);
+    const colors_1 = Colors.yuv_to_rgba(texels_2_3);
+    return .{ colors_0[0].bgra(), colors_0[1].bgra(), colors_1[0].bgra(), colors_1[1].bgra() };
+}
+
 pub fn decode_tex(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFormat, texture: []const u8, u_size: u32, v_size: u32, twiddled: bool) void {
     std.debug.assert(u_size >= 8 and u_size % 8 == 0);
     std.debug.assert(v_size >= 8 and v_size % 8 == 0);
@@ -94,15 +103,12 @@ pub fn decode_tex(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFor
                     for (0..u_size / 2) |u| {
                         const pixel_idx = 2 * v * u_size + 2 * u;
                         const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size / 2, v_size / 2);
-                        const halfwords = @as([*]const u16, @ptrCast(@alignCast(&texture[8 * texel_idx])))[0..4];
-                        const texels_0_1: YUV422 = @bitCast(@as(u32, halfwords[2]) << 16 | @as(u32, halfwords[0]));
-                        const texels_2_3: YUV422 = @bitCast(@as(u32, halfwords[3]) << 16 | @as(u32, halfwords[1]));
-                        const colors_0 = Colors.yuv_to_rgba(texels_0_1);
-                        dest_bgra[pixel_idx] = .{ colors_0[0].b, colors_0[0].g, colors_0[0].r, colors_0[0].a };
-                        dest_bgra[pixel_idx + 1] = .{ colors_0[1].b, colors_0[1].g, colors_0[1].r, colors_0[1].a };
-                        const colors_1 = Colors.yuv_to_rgba(texels_2_3);
-                        dest_bgra[pixel_idx + u_size] = .{ colors_1[0].b, colors_1[0].g, colors_1[0].r, colors_1[0].a };
-                        dest_bgra[pixel_idx + u_size + 1] = .{ colors_1[1].b, colors_1[1].g, colors_1[1].r, colors_1[1].a };
+                        const halfwords = std.mem.bytesAsSlice(u16, texture[8 * texel_idx ..])[0..4];
+                        const bgra = decode_yuv_block(halfwords);
+                        dest_bgra[pixel_idx] = bgra[0];
+                        dest_bgra[pixel_idx + 1] = bgra[1];
+                        dest_bgra[pixel_idx + u_size] = bgra[2];
+                        dest_bgra[pixel_idx + u_size + 1] = bgra[3];
                     }
                 }
             } else {
@@ -111,8 +117,8 @@ pub fn decode_tex(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFor
                     for (0..u_size / 2) |u| {
                         const pixel_idx = v * u_size + 2 * u;
                         const colors = Colors.yuv_to_rgba(texels[pixel_idx / 2]);
-                        dest_bgra[pixel_idx] = .{ colors[0].b, colors[0].g, colors[0].r, colors[0].a };
-                        dest_bgra[pixel_idx + 1] = .{ colors[1].b, colors[1].g, colors[1].r, colors[1].a };
+                        dest_bgra[pixel_idx] = colors[0].bgra();
+                        dest_bgra[pixel_idx + 1] = colors[1].bgra();
                     }
                 }
             }
@@ -136,7 +142,14 @@ pub fn decode_vq(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelForm
     std.debug.assert(v_size >= 8 and v_size % 8 == 0);
     std.debug.assert(code_book.len >= 8 * 256);
     std.debug.assert(indices.len >= u_size * v_size / 4);
-    std.debug.assert(pixel_format == .ARGB1555 or pixel_format == .RGB565 or pixel_format == .ARGB4444);
+    switch (pixel_format) {
+        .YUV422 => return decode_vq_yuv(dest_bgra, code_book, indices, u_size, v_size, twiddled),
+        inline .ARGB1555, .RGB565, .ARGB4444 => |pf| decode_vq_rgb(dest_bgra, pf, code_book, indices, u_size, v_size, twiddled),
+        else => return log.err("Unsupported pixel format for VQ textures: {t}", .{pixel_format}),
+    }
+}
+
+fn decode_vq_rgb(dest_bgra: [*][4]u8, comptime pixel_format: HollyModule.TexturePixelFormat, code_book: []const u8, indices: []const u8, u_size: u32, v_size: u32, twiddled: bool) void {
     const texels = std.mem.bytesAsSlice([4]Color16, code_book);
     if (twiddled) {
         // FIXME: It's not an efficient way to run through the texture, but it's already hard enough to wrap my head around the multiple levels of twiddling.
@@ -158,6 +171,34 @@ pub fn decode_vq(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelForm
                 const block_index = (v * u_size + 4 * u); // Macro 4*1 Block
                 for (0..4) |tidx|
                     dest_bgra[block_index + tidx] = texels[index][tidx].bgra(pixel_format, true);
+            }
+        }
+    }
+}
+
+fn decode_vq_yuv(dest_bgra: [*][4]u8, code_book: []const u8, indices: []const u8, u_size: u32, v_size: u32, twiddled: bool) void {
+    const texels = std.mem.bytesAsSlice(u16, code_book);
+    if (twiddled) {
+        for (0..v_size / 2) |v| {
+            for (0..u_size / 2) |u| {
+                const index: u32 = indices[untwiddle(@intCast(u), @intCast(v), u_size / 2, v_size / 2)];
+                const block_index = (2 * v * u_size + 2 * u); // Macro 2*2 Block
+                const bgra = decode_yuv_block(texels[4 * index ..][0..4]);
+                dest_bgra[block_index] = bgra[0];
+                dest_bgra[block_index + 1] = bgra[1];
+                dest_bgra[block_index + u_size] = bgra[2];
+                dest_bgra[block_index + u_size + 1] = bgra[3];
+            }
+        }
+    } else {
+        log.warn("Untested non-twiddled VQ compressed YUV422 texture", .{});
+        for (0..v_size) |v| {
+            for (0..u_size / 4) |u| {
+                const index: u32 = indices[v * u_size / 4 + u];
+                const block_index = (v * u_size + 4 * u);
+                const bgra = decode_yuv_block(texels[4 * index ..][0..4]);
+                for (0..4) |tidx|
+                    dest_bgra[block_index + tidx] = bgra[tidx];
             }
         }
     }
