@@ -716,7 +716,7 @@ pub const Dreamcast = struct {
             },
             // Area 1 - 64bit access
             0x04000000...0x04FFFFFF, 0x06000000...0x06FFFFFF => {
-                return @as(*T, @ptrCast(@alignCast(&self.gpu.vram[addr & (Dreamcast.VRAMSize - 1)]))).*;
+                return @as(*align(1) T, @ptrCast(&self.gpu.vram[addr & (Dreamcast.VRAMSize - 1)])).*;
             },
             // Area 1 - 32bit access
             0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {

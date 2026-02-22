@@ -1472,7 +1472,7 @@ pub const AICA = struct {
             state.prev_sample = state.curr_sample;
             const sample_ram = self.wave_memory[registers.sample_address()..];
             state.curr_sample = switch (registers.play_control.sample_format) {
-                .i16 => @as([*]const i16, @ptrCast(@alignCast(sample_ram.ptr)))[state.play_position],
+                .i16 => @as([*]align(1) const i16, @ptrCast(sample_ram.ptr))[state.play_position],
                 .i8 => @as(i32, @as(i8, @bitCast(sample_ram[state.play_position]))) << 8,
                 .ADPCM, .ADPCMStream => adpcm: {
                     // 4 bits per sample
