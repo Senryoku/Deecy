@@ -14,7 +14,7 @@ const PatternSelection = enum(u3) {
     NOP = 0b111,
 };
 
-const Instruction = packed struct(u32) {
+pub const Instruction = packed struct(u32) {
     transfer_length: u8, // In units of 4 bytes.
     pattern: PatternSelection,
     _z0: u5 = 0,
@@ -57,7 +57,7 @@ const Command = enum(u8) {
     _,
 };
 
-const CommandWord = packed struct(u32) {
+pub const CommandWord = packed struct(u32) {
     command: Command,
     recipent_address: u8,
     sender_address: u8,
@@ -329,6 +329,8 @@ const MaplePort = struct {
     pub fn deserialize(_: @This(), _: anytype) !void {}
 };
 
+pub const DreamPicoPort = @import("maple/dream_pico_port.zig");
+
 pub const MapleHost = struct {
     ports: [4]MaplePort = @splat(.{}),
 
@@ -357,6 +359,11 @@ pub const MapleHost = struct {
             const cycles: u32 = @intCast(4 * transferred_words * Dreamcast.SH4Clock / (2 * 1024 * 1024 / 8)); // 2Mb/s?
             dc.schedule_interrupt(.{ .EoD_Maple = 1 }, cycles);
             log.debug("    Transferred {d} words, scheduled interrupt in {d} cycles", .{ transferred_words, cycles });
+        }
+
+        if (true) {
+            transferred_words = DreamPicoPort.transfer(dc, data);
+            return;
         }
 
         // A transfer can have a maximum of 1024 words.

@@ -112,6 +112,9 @@ pub fn build(b: *std.Build) !void {
             // Windows Multimedia API for timeBeginPeriod
             deecy_module.linkSystemLibrary("winmm", .{});
 
+            dc_module.addObjectFile(b.path("libs/dreampicoport-api/libdream_pico_port_api.a"));
+            dc_module.addObjectFile(b.path("libs/dreampicoport-api/libusb-1.0.a"));
+
             // Wrapper in console mode for launching Deecy from a terminal with proper console interactions.
             const wrapper = b.addExecutable(.{
                 .name = "Deecy",
@@ -132,7 +135,9 @@ pub fn build(b: *std.Build) !void {
             install_wrapper.dest_sub_path = "Deecy.com";
             b.getInstallStep().dependOn(&install_wrapper.step);
         },
-        else => {},
+        else => {
+            // TODO: LINK DREAMPICOPORT-API
+        },
     }
 
     { // zig-gamedev
