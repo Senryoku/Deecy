@@ -21,7 +21,7 @@ pub fn transfer(dc: *Dreamcast, data: [*]u32) u32 {
                 const function_type = data[idx + 2];
                 std.debug.print("  Dest: {X:0>8}, Command: {f}, Function: {f}\n", .{ return_addr, command, @as(Maple.FunctionCodesMask, @bitCast(function_type)) });
 
-                var command_buffer = dc._allocator.alloc(u32, instr.transfer_length + 2) catch std.debug.panic("Failed to allocate command buffer", .{});
+                var command_buffer = dc._allocator.alloc(u32, instr.transfer_length + 1) catch std.debug.panic("Failed to allocate command buffer", .{});
                 defer dc._allocator.free(command_buffer);
                 for (0..command_buffer.len) |i| {
                     command_buffer[i] = @byteSwap(data[idx + i + 1]);
