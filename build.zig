@@ -114,6 +114,8 @@ pub fn build(b: *std.Build) !void {
 
             dc_module.addObjectFile(b.path("libs/dreampicoport-api/libdream_pico_port_api.a"));
             dc_module.addObjectFile(b.path("libs/dreampicoport-api/libusb-1.0.a"));
+            // FIXME: Required by DreamPicoPort_API right now: Figure out how to compile it without.
+            dc_module.sanitize_c = .full;
 
             // Wrapper in console mode for launching Deecy from a terminal with proper console interactions.
             const wrapper = b.addExecutable(.{
