@@ -211,4 +211,6 @@ pub fn load_default_shortcuts(self: *@This()) !void {
         .{ .F12, .Screenshot },
     }) |entry|
         try self.shortcuts.put(.{ .keyboard = .{ .key = entry[0] } }, get_action(entry[1]));
+
+    try self.shortcuts.put(.{ .keyboard = .{ .key = .enter, .mods = .{ .alt = true } } }, get_action(.@"Toggle Fullscreen"));
 }
