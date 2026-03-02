@@ -742,6 +742,14 @@ pub fn draw(self: *@This()) !void {
                     var fullscreen = self.deecy.config.fullscreen;
                     if (zgui.checkbox("Fullscreen", .{ .v = &fullscreen })) {
                         self.deecy.toggle_fullscreen();
+                        // (Hackish) Skip current UI frame since it's no longer renderer at the correct size.
+                        zgui.endTabItem();
+                        zgui.endTabBar();
+                        zgui.end();
+                        zgui.endFrame();
+                        const fb_size = self.deecy.window.getFramebufferSize();
+                        zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
+                        return;
                     }
                     zgui.text("Curent Resolution: {d}x{d}", .{ d.renderer.resolution.width, d.renderer.resolution.height });
                     zgui.setNextItemWidth(dropdown_size);
