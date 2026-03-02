@@ -19,10 +19,6 @@ const CommandResult = enum(i16) {
 };
 
 extern fn dpp_send(dest: [*]u8, data: [*]u32, len: u32) callconv(.c) extern struct { result: CommandResult, words_transferred: u32 };
-extern fn dpp_send_async(dest: [*]u8, data: [*]u32, len: u32) callconv(.c) void;
-extern fn ddp_wait_all_async_complete() callconv(.c) bool;
-extern fn ddp_async_reset() callconv(.c) void;
-extern fn ddp_async_get_transferred_words() callconv(.c) u32;
 
 pub fn send_command(dc: *Dreamcast, physical_port: u8, data: []const u32) u32 {
     const return_addr = data[0];

@@ -53,7 +53,7 @@ const Command = enum(u8) {
     RequestResend = 0xFC,
     UnknownCommand = 0xFD,
     FunctionCodeNotSupported = 0xFE,
-
+    NoResponse = 0xFF,
     _,
 };
 
