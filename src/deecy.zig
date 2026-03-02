@@ -381,7 +381,6 @@ vmu_alarm: struct {
 } = .{},
 
 config: Configuration = .{},
-toggle_fullscreen_request: bool = false,
 previous_window_position: struct { x: i32 = 0, y: i32 = 0, w: i32 = 0, h: i32 = 0 } = .{},
 
 shortcuts: Shortcuts,
