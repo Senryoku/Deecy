@@ -24,68 +24,38 @@ extern fn ddp_wait_all_async_complete() callconv(.c) bool;
 extern fn ddp_async_reset() callconv(.c) void;
 extern fn ddp_async_get_transferred_words() callconv(.c) u32;
 
-pub fn transfer(dc: *Dreamcast, data: [*]u32) u32 {
-    var total_transferred_words: u32 = 0;
-    var idx: u32 = 0;
+pub fn send_command(dc: *Dreamcast, physical_port: u8, data: []const u32) u32 {
+    const return_addr = data[0];
+    var command: CommandWord = @bitCast(data[1]);
+    // Redirect command to the physical port on the DreamPico
+    const original_recipient = command.recipent_address;
+    command.recipent_address &= 0x3F;
+    command.recipent_address |= physical_port << 6;
 
-    const AsyncTest = true;
+    var command_buffer: [1024]u32 = undefined;
+    command_buffer[0] = @bitCast(command);
+    command_buffer[0] = @byteSwap(command_buffer[0]);
+    for (1..data.len - 1) |i|
+        command_buffer[i] = @byteSwap(data[i + 1]);
 
-    if (AsyncTest) {
-        ddp_async_reset();
-    }
+    const r = dpp_send(dc.ram[(return_addr & 0x03FFFFFF)..].ptr, &command_buffer, @intCast(data.len - 1));
 
-    while (idx < 1024) {
-        const instr: Instruction = @bitCast(data[idx]);
-        idx += 1;
+    var ram_u32 = @as([*]align(1) u32, @ptrCast(dc.ram[(return_addr & 0x03FFFFFF)..].ptr));
 
-        switch (instr.pattern) {
-            .Normal => {
-                const return_addr = data[idx];
-                const command: CommandWord = @bitCast(data[idx + 1]);
-                const function_type = data[idx + 2];
-                log.debug("Dest: {X:0>8}, Command: {f}, Function: {f}", .{ return_addr, command, @as(Maple.FunctionCodesMask, @bitCast(function_type)) });
-
-                var command_buffer = dc._allocator.alloc(u32, instr.transfer_length + 1) catch std.debug.panic("Failed to allocate command buffer", .{});
-                defer dc._allocator.free(command_buffer);
-                for (0..command_buffer.len) |i| {
-                    command_buffer[i] = @byteSwap(data[idx + i + 1]);
-                }
-                if (!AsyncTest) {
-                    const r = dpp_send(dc.ram[(return_addr & 0x03FFFFFF)..].ptr, command_buffer.ptr, @intCast(command_buffer.len));
-                    if (r.result != .Success) {
-                        log.err("dpp_send failed: {t}", .{r.result});
-                        if (r.words_transferred == 0) {
-                            dc.cpu.write_physical(u32, return_addr, 0xFFFFFFFF); // "No connection"
-                        }
-                    }
-                    total_transferred_words += r.words_transferred;
-                    var ram_u32 = @as([*]align(1) u32, @ptrCast(dc.ram[(return_addr & 0x03FFFFFF)..].ptr));
-                    for (0..r.words_transferred) |i| {
-                        ram_u32[i] = @byteSwap(ram_u32[i]);
-                    }
-                    if (r.words_transferred > 0) {
-                        const returned_command: CommandWord = @bitCast(ram_u32[0]);
-                        log.debug("  Returned command: {f}\n", .{returned_command});
-                    }
-                } else {
-                    dpp_send_async(dc.ram[(return_addr & 0x03FFFFFF)..].ptr, command_buffer.ptr, @intCast(command_buffer.len));
-                }
-                idx += instr.transfer_length + 2;
-            },
-            .NOP, .RESET => {},
-            else => {},
+    if (r.result != .Success) {
+        log.err("dpp_send failed: {t}", .{r.result});
+        if (r.words_transferred == 0) {
+            ram_u32[0] = 0xFFFFFFFF; // "No connection"
+            return 0;
         }
-
-        if (instr.end_flag == 1)
-            break;
     }
 
-    if (AsyncTest) {
-        if (!ddp_wait_all_async_complete()) {
-            log.err("ddp_wait_all_async_complete timedout", .{});
-        }
-        total_transferred_words += ddp_async_get_transferred_words();
+    if (r.words_transferred > 0) {
+        for (0..r.words_transferred) |i| ram_u32[i] = @byteSwap(ram_u32[i]);
+        // Restore the original command target port
+        @as(*align(1) CommandWord, @ptrCast(&ram_u32[0])).sender_address &= 0x3F;
+        @as(*align(1) CommandWord, @ptrCast(&ram_u32[0])).sender_address |= original_recipient & 0xC0;
     }
 
-    return 4 * (idx + total_transferred_words);
+    return 4 * r.words_transferred;
 }

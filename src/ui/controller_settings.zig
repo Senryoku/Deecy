@@ -172,9 +172,9 @@ fn draw_analog_stick(d: *Deecy, comptime port: u8, draw_list: zgui.DrawList, s: 
 }
 
 pub fn draw_controller_settings(d: *Deecy, comptime port: u8) !void {
-    if (d.dc.maple.ports[port].main == null or d.dc.maple.ports[port].main.? != .Controller) return;
+    if (d.dc.maple.ports[port] != .emulated or d.dc.maple.ports[port].emulated.main != .Controller) return;
 
-    const guest_controller = &d.dc.maple.ports[port].main.?.Controller;
+    const guest_controller = &d.dc.maple.ports[port].emulated.main.Controller;
     const axes: [6]u8 = guest_controller.axis;
     const buttons = guest_controller.buttons;
     var capabilities: Dreamcast.Maple.Controller.InputCapabilities = @bitCast(guest_controller.subcapabilities[0]);
