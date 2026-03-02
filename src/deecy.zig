@@ -299,6 +299,7 @@ const Configuration = struct {
     display_vmus: bool = true,
     display_settings: bool = false,
     game_directory: ?[]const u8 = null,
+    library_display: enum { Grid, List } = .Grid,
     display_debug_ui: bool = false,
 
     window_size: struct { width: u32 = 2 * @ceil((16.0 / 9.0 * @as(f32, @floatFromInt(Renderer.NativeResolution.height)))), height: u32 = 2 * Renderer.NativeResolution.height } = .{},
