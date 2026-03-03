@@ -193,7 +193,7 @@ const EmulatedPort = struct {
         const return_addr = data[0];
         std.debug.assert(return_addr >= 0x0C000000 and return_addr < 0x10000000);
         const command: CommandWord = @bitCast(data[1]);
-        const function_type = if (data.len >= 2) data[2] else 0;
+        const function_type = if (data.len >= 3) data[2] else 0;
         log.debug("  Dest: {X:0>8}, Command: {f}, Function: {f}", .{ return_addr, command, @as(FunctionCodesMask, @bitCast(function_type)) });
 
         // NOTE: The sender address should also include the sub-peripheral bit when appropriate.
