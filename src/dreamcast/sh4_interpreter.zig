@@ -1900,32 +1900,16 @@ pub fn float_FPUL_FRn(cpu: *SH4, opcode: Instr) !void {
 pub fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) !void {
     if (cpu.sr.fd) return error.FPUDisabled;
     // Converts the single-precision floating-point number in FRm to a 32-bit integer, and stores the result in FPUL.
-    // NOTE: I have no evidence that the conversion should be to a signed integer or not here, however,
-    //       it makes sense to be symetrical with float FPUL,FRn, which is signed, I'm pretty sure.
-
-    // NOTE/FIXME: The overflow behavior is different between SH4 and x86. Might want to look into that. Thanks Raziel!
-    //        SH4 wants 0x7F800000 if positive, 0xFF800000 if negative.
-
     // NOTE/TODO: If FPU exceptions are enabled, any out of range result (0x80000000 or 0x7FFFFFFF) will cause an exception instead.
-
     if (cpu.fpscr.pr == 0) {
         const f = cpu.FR(opcode.nmd.n).*;
         const u: u32 = @bitCast(f);
-        if ((u & 0x80000000) == 0) {
-            if (u > 0x7F800000) {
-                cpu.fpul = 0x80000000;
-            } else if (u > 0x4EFFFFFF) {
-                cpu.fpul = 0x7FFFFFFF;
-            } else {
-                cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
-            }
-        } else {
-            if ((u & 0x7FFFFFFF) > (0xCF000000 & 0x7FFFFFFF)) {
-                cpu.fpul = 0x80000000;
-            } else {
-                cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
-            }
-        }
+        cpu.fpul = switch (u) {
+            0x4F000000...0x7F800000 => 0x7FFFFFFF, // Overflow (saturate)
+            0x7F800001...0x7FFFFFFF => 0x80000000, // NaN
+            0xCF000000...0xFFFFFFFF => 0x80000000, // NaN
+            else => @bitCast(std.math.lossyCast(i32, f)),
+        };
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
 
@@ -1958,22 +1942,18 @@ test "ftrc FRn,FPUL" {
         .{ 0x00800001, 0x00000000 },
         .{ 0x7F7FFFFE, 0x7FFFFFFF },
         .{ 0x7F7FFFFF, 0x7FFFFFFF },
-        .{ 0x7F800000, 0x7FFFFFFF },
         .{ 0x3F7FFFFF, 0x00000000 },
         .{ 0x3F800000, 0x00000001 },
         .{ 0x3F800001, 0x00000001 },
-        .{ 0x7F7FFFFF, 0x7FFFFFFF },
         .{ 0x7F800000, 0x7FFFFFFF },
         .{ 0x7F800001, 0x80000000 },
         .{ 0xFF7FFFFF, 0x80000000 },
         .{ 0xFF800000, 0x80000000 },
         .{ 0xFF800001, 0x80000000 },
+        .{ 0xFF800002, 0x80000000 },
         .{ 0xFFC00000, 0x80000000 },
         .{ 0xFFC00001, 0x80000000 },
         .{ 0xFFC00002, 0x80000000 },
-        .{ 0xFF800000, 0x80000000 },
-        .{ 0xFF800001, 0x80000000 },
-        .{ 0xFF800002, 0x80000000 },
         .{ 0xFFFFFFFF, 0x80000000 },
         .{ 0x40000000, 0x00000002 },
         .{ 0x40800000, 0x00000004 },

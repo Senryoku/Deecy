@@ -2631,38 +2631,27 @@ pub fn float_FPUL_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool
     return false;
 }
 
+pub fn ftrc_single(u: u32) callconv(.c) u32 {
+    return switch (u) {
+        0x4F000000...0x7F800000 => 0x7FFFFFFF, // Overflow (saturate)
+        0x7F800001...0x7FFFFFFF => 0x80000000, // NaN
+        0xCF000000...0xFFFFFFFF => 0x80000000, // NaN
+        else => @bitCast(std.math.lossyCast(i32, @as(f32, @bitCast(u)))),
+    };
+}
+
 pub fn ftrc_FRn_FPUL(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try check_fd_bit(block, ctx);
-
-    // NOTE: Overflow behaviour differs from x86_64.
-    //        x86_64 will return the "indefinite integer value" (0x80000000 or 0x80000000_00000000 if operand size is 64 bits)
-    //        See interpreter implementation (ftrc_FRn_FPUL) for more details.
-    const dest_tmp: JIT.Operand = .{ .reg = ReturnRegister };
-
     switch (ctx.fpscr_pr) {
         .Single => {
             const FRn = try load_fp_register(block, ctx, instr.nmd.n);
-            const tmp_float: Architecture.Operand = .{ .freg32 = FPScratchRegisters[0] };
-            const tmp_max_float: Architecture.Operand = .{ .freg32 = FPScratchRegisters[1] };
-            try block.mov(tmp_float, FRn); // Copy FRn to a temporary we can manipulate.
-
-            // Clamp it. This doesn't match the interpreter implementation in edge cases (inf and NaN basically),
-            // but sounds good enough for now (literally, this fixes popping sounds in SA2 for example).
-            const max_f32: u32 = 0x4EFFFFFF; // 1.FFFFFE * 2^30
-            try block.mov(dest_tmp, .{ .imm32 = max_f32 });
-            try block.mov(tmp_max_float, dest_tmp);
-            try block.append(.{ .Min = .{ .dst = tmp_float, .src = tmp_max_float } });
-            // CVTTSS2SI will already return 0x80000000 in case of negative overflow.
-
-            try block.append(.{ .Convert = .{
-                .dst = dest_tmp,
-                .src = tmp_float,
-            } });
+            try block.mov(.{ .reg = ArgRegisters[0] }, FRn);
+            try call(block, ctx, ftrc_single);
+            try block.mov(sh4_mem("fpul"), .{ .reg = ReturnRegister });
         },
         .Double => return interpreter_fallback_cached(block, ctx, instr),
         else => return interpreter_fallback_cached(block, ctx, instr),
     }
-    try block.mov(sh4_mem("fpul"), dest_tmp);
     return false;
 }
 
