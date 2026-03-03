@@ -1,15 +1,15 @@
 const std = @import("std");
 const zgpu = @import("zgpu");
 
-const ShaderSource = @embedFile("shaders/generate_mipmaps.wgsl");
+const ShaderSource = "const BinaryAlpha = false;\n" ++ @embedFile("shaders/generate_mipmaps.wgsl");
+const ShaderSourceBinaryAlpha = "const BinaryAlpha = true;\n" ++ @embedFile("shaders/generate_mipmaps.wgsl");
 
 var initialized = false;
 var pipeline_handle: zgpu.ComputePipelineHandle = .{};
+var binary_alpha_pipeline_handle: zgpu.ComputePipelineHandle = .{};
 var bind_group_layout_handle: zgpu.BindGroupLayoutHandle = .{};
 
-var _pipeline_creation_future: ?zgpu.wgpu.Future = null;
-
-pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) void {
+pub fn init(gctx: *zgpu.GraphicsContext) void {
     if (!initialized) {
         initialized = true;
 
@@ -24,18 +24,25 @@ pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) void {
 
         const cs_module = zgpu.createWgslShaderModule(gctx.device, ShaderSource, "generate_mipmaps");
         defer cs_module.release();
+        const binary_alpha_cs_module = zgpu.createWgslShaderModule(gctx.device, ShaderSourceBinaryAlpha, "generate_mipmaps");
+        defer binary_alpha_cs_module.release();
 
-        // FIXME
-        _pipeline_creation_future = gctx.createComputePipelineAsync(allocator, pipeline_layout, .{
+        pipeline_handle = gctx.createComputePipeline(pipeline_layout, .{
             .compute = .{
                 .module = cs_module,
                 .entry_point = .init("main"),
             },
-        }, &pipeline_handle) catch null;
+        });
+        binary_alpha_pipeline_handle = gctx.createComputePipeline(pipeline_layout, .{
+            .compute = .{
+                .module = binary_alpha_cs_module,
+                .entry_point = .init("main"),
+            },
+        });
     }
 }
 
-pub fn generate_mipmaps(gctx: *zgpu.GraphicsContext, texture: zgpu.TextureHandle, layer: u32) void {
+pub fn generate_mipmaps(gctx: *zgpu.GraphicsContext, texture: zgpu.TextureHandle, layer: u32, alpha: enum { Normal, Binary }) void {
     const texture_info = gctx.lookupResourceInfo(texture) orelse return;
 
     std.debug.assert(texture_info.usage.copy_dst == true);
@@ -44,17 +51,7 @@ pub fn generate_mipmaps(gctx: *zgpu.GraphicsContext, texture: zgpu.TextureHandle
     std.debug.assert(texture_info.size.width >= 8 and texture_info.size.width <= 1024);
     std.debug.assert(std.math.isPowerOfTwo(texture_info.size.width));
 
-    // Wait for async pipeline creation to finish
-    var wait_infos = [_]zgpu.wgpu.FutureWaitInfo{.{ .future = _pipeline_creation_future.? }};
-    if (gctx.instance.waitAny(&wait_infos, 0) != .success) {
-        std.log.err("Failed to wait for async pipeline creation to finish.", .{});
-        return;
-    }
-    const pipeline = gctx.lookupResource(pipeline_handle);
-    // while (pipeline == null) {
-    //     gctx.device.tick();
-    //     pipeline = gctx.lookupResource(pipeline_handle);
-    // }
+    const pipeline = gctx.lookupResource(if (alpha == .Binary) binary_alpha_pipeline_handle else pipeline_handle);
 
     const commands = commands: {
         const encoder = gctx.device.createCommandEncoder(null);

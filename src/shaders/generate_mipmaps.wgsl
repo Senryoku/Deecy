@@ -11,6 +11,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
 		textureLoad(src, 2 * id.xy + vec2<u32>(0, 1), 0) + // 
 		textureLoad(src, 2 * id.xy + vec2<u32>(1, 0), 0) + //
 		textureLoad(src, 2 * id.xy + vec2<u32>(1, 1), 0)) * 0.25;
+    if(BinaryAlpha) { color.a = round(color.a); }
     textureStore(dst0, id.xy, color);
     cache[local_idx] = color;
 
@@ -18,6 +19,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
 
     if local_id.x % 2 == 0 && local_id.y % 2 == 0 {
         color = (cache[local_idx / 2 + 0] + cache[local_idx / 2 + 1] + cache[local_idx / 2 + 4] + cache[local_idx / 2 + 5]) * 0.25;
+        if(BinaryAlpha) { color.a = round(color.a); }
         textureStore(dst1, id.xy / 2u, color);
     }
 
@@ -25,12 +27,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
 
     if local_id.x % 2 == 0 && local_id.y % 2 == 0 {
         cache[local_idx / 2] = color;
+        if(BinaryAlpha) { color.a = round(color.a); }
     }
 
     workgroupBarrier();
 
     if local_idx == 0 {
         color = (cache[0] + cache[1] + cache[2] + cache[3]) * 0.25;
+        if(BinaryAlpha) { color.a = round(color.a); }
         textureStore(dst2, id.xy / 4u, color);
     }
 }

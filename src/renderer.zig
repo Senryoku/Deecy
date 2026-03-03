@@ -1396,7 +1396,7 @@ pub const Renderer = struct {
 
         renderer.create_textures_bind_group();
 
-        MipMap.init(allocator, gctx);
+        MipMap.init(gctx);
         // Blit pipeline
         {
             const blit_fs_module = zgpu.createWgslShaderModule(gctx.device, blit_fs, "blit_fs");
@@ -1998,7 +1998,10 @@ pub const Renderer = struct {
         }
 
         if (texture_control_word.mip_mapped == 1)
-            MipMap.generate_mipmaps(self._gctx, self.texture_arrays[size_index].texture, texture_index);
+            MipMap.generate_mipmaps(self._gctx, self.texture_arrays[size_index].texture, texture_index, switch (texture_control_word.pixel_format) {
+                .ARGB1555 => .Binary,
+                else => .Normal,
+            });
 
         return texture_index;
     }
