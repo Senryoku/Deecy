@@ -174,7 +174,7 @@ pub const Opcodes = [_]OpcodeDescription{
     .{ .code = 0b0110000000001010, .mask = 0b0000111111110000, .fn_ = interpreter.negc_Rm_Rn, .name = "negc Rm,Rn", .access = .{ .r = .Rm, .w = .Rn } },
     .{ .code = 0b0011000000001000, .mask = 0b0000111111110000, .fn_ = interpreter.sub_Rm_Rn, .name = "sub Rm,Rn", .jit_emit_fn = sh4_jit.sub_Rm_Rn, .access = .{ .r = .RnRm, .w = .Rn } },
     .{ .code = 0b0011000000001010, .mask = 0b0000111111110000, .fn_ = interpreter.subc_Rm_Rn, .name = "subc Rm,Rn", .access = .{ .r = .RnRm, .w = .Rn } },
-    .{ .code = 0b0011000000001011, .mask = 0b0000111111110000, .fn_ = interpreter.unimplemented, .name = "subv Rm,Rn", .access = .{ .r = .RnRm, .w = .Rn } },
+    .{ .code = 0b0011000000001011, .mask = 0b0000111111110000, .fn_ = interpreter.subv_Rm_Rn, .name = "subv Rm,Rn", .access = .{ .r = .RnRm, .w = .Rn } },
     .{ .code = 0b0010000000001001, .mask = 0b0000111111110000, .fn_ = interpreter.and_Rm_Rn, .name = "and Rm,Rn", .jit_emit_fn = sh4_jit.and_Rm_Rn, .access = .{ .r = .RnRm, .w = .Rn } },
     .{ .code = 0b1100100100000000, .mask = 0b0000000011111111, .fn_ = interpreter.and_imm_R0, .name = "and #imm,R0", .jit_emit_fn = sh4_jit.and_imm_R0, .access = .{ .r = .R0, .w = .R0 } },
     .{ .code = 0b1100110100000000, .mask = 0b0000000011111111, .fn_ = interpreter.andb_imm_atR0GBR, .name = "and.b #imm,@(R0,GBR)", .issue_cycles = 4, .latency_cycles = 4, .access = .{ .r = .R0, .w = .Mem } },

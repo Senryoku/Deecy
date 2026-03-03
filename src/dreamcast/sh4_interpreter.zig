@@ -825,6 +825,13 @@ pub fn subc_Rm_Rn(cpu: *SH4, opcode: Instr) !void {
     if (diff < cpu.R(opcode.nmd.n).*)
         cpu.sr.t = true;
 }
+pub fn subv_Rm_Rn(cpu: *SH4, opcode: Instr) !void {
+    const Rn: i32 = @bitCast(cpu.R(opcode.nmd.n).*);
+    const Rm: i32 = @bitCast(cpu.R(opcode.nmd.m).*);
+    const r = @subWithOverflow(Rn, Rm);
+    cpu.R(opcode.nmd.n).* = @bitCast(r[0]);
+    cpu.sr.t = r[1] == 1;
+}
 
 pub fn and_Rm_Rn(cpu: *SH4, opcode: Instr) !void {
     cpu.R(opcode.nmd.n).* &= cpu.R(opcode.nmd.m).*;

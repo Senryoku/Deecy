@@ -408,7 +408,6 @@ test {
                 // Others
                 "0000000000011011_sz0_pr0.json", // sleep
                 "0011nnnnmmmm0100_sz0_pr0.json", // div1 Rm, Rn - This one has a *potential* bug in the test data when n == m. Skipping for now.
-                "0011nnnnmmmm1011_sz0_pr0.json", // subv Rm, Rn - Unimplemented
                 "0100mmmm01100110_sz0_pr0.json", // lds.l @Rn+,FPSCR - I'm zeroing the unused upper bits of FPSCR, which apparently reicast doesn't do? They should always be read as 0s anyway.
                 "0100mmmm01101010_sz0_pr0.json", // lds Rn,FPSCR - Same thing
                 "1111nnn010101101_sz0_pr0.json", // fcnvsd FPUL,DRn - Causes an exception when PR == 0.
