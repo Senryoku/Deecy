@@ -363,6 +363,8 @@ const TextureMetadata = struct {
     start_address: u32 = 0,
     end_address: u32 = 0,
     hash: u64 = 0,
+    /// Indicates that this texture slot was used as a render target.
+    render_target: bool = false,
 
     fn masked_tcw(control_word: HollyModule.TextureControlWord) u32 {
         return switch (control_word.pixel_format) {
@@ -377,6 +379,8 @@ const TextureMetadata = struct {
     //       Ignores the palette selector bits for the cache. The shader can use the same texture data by recombining it with
     //       the palette selector carried by the strip metadata.
     pub fn match(self: @This(), control_word: HollyModule.TextureControlWord) bool {
+        if (self.render_target)
+            return self.control_word.address == control_word.address and self.control_word.pixel_format == control_word.pixel_format;
         return masked_tcw(self.control_word) == masked_tcw(control_word);
     }
 };
@@ -3710,10 +3714,12 @@ pub const Renderer = struct {
                                 .depth_or_array_layers = 1,
                             },
                         );
-                        // FIXME: All of these settings are those used by Virtual Tennis 2 during replay.
-                        //        I need to find a better way to find them at runtime.
-                        //        (Wait the next frame, look for this specific address, and update them 'just in time'?
-                        //          Add a flag to the slot to bypass all settings except the address?).
+                        // The cache slot will be tagged as render target, only the address and pixel are required to find a match.
+                        // Unless the application does more processing on the rendered texture, I assume these values will generally be fixed:
+                        //  - scan_order = 1
+                        //  - vq_compressed = 0
+                        //  - mip_mapped = 0
+                        // This leaves stride_select as the only real unknown as far as I can tell.
                         const texture_control_word = HollyModule.TextureControlWord{
                             .address = @intCast(addr >> 3),
                             .stride_select = 1,
@@ -3756,6 +3762,7 @@ pub const Renderer = struct {
                             .start_address = addr,
                             .end_address = end_address,
                             .hash = texture_hash(holly, addr, end_address),
+                            .render_target = true,
                         };
                     }
                 } else {
