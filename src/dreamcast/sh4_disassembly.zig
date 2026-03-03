@@ -61,7 +61,7 @@ pub fn free_disassembly_cache(_: std.mem.Allocator) void {
 }
 
 fn test_decoding(instruction: Instr, comptime expected: []const u8) !void {
-    const dis = try disassemble(instruction, std.testing.allocator);
+    const dis = disassemble(instruction, std.testing.allocator);
     std.debug.print("{b:0>16}: {s} - {s}\n", .{ instruction.value, dis, expected });
     try std.testing.expect(std.mem.eql(u8, dis, expected));
 }

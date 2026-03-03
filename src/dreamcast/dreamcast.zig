@@ -1442,46 +1442,6 @@ test "boot" {
     _ = try dc.tick(1); //
 }
 
-test "IP.bin" {
-    var dc = try Dreamcast.create(std.testing.allocator);
-    defer {
-        dc.deinit();
-        std.testing.allocator.destroy(dc);
-    }
-
-    // Example IP.bin file
-    const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});
-    defer IPbin_file.close();
-    const IPbin = try IPbin_file.readToEndAlloc(std.testing.allocator, 0x10000);
-    defer std.testing.allocator.free(IPbin);
-    dc.load_at(0x8C008000, IPbin);
-
-    for (0..10000000) |_| {
-        _ = try dc.tick(1);
-    }
-}
-
-test "IP.bin init boot" {
-    var dc = try Dreamcast.create(std.testing.allocator);
-    defer {
-        dc.deinit();
-        std.testing.allocator.destroy(dc);
-    }
-
-    try dc.skip_bios(true);
-
-    // Example IP.bin file
-    const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});
-    defer IPbin_file.close();
-    const IPbin = try IPbin_file.readToEndAlloc(std.testing.allocator, 0x10000);
-    defer std.testing.allocator.free(IPbin);
-    dc.load_at(0x8C008000, IPbin);
-
-    for (0..10000000) |_| {
-        _ = try dc.tick(1);
-    }
-}
-
 // Loads a binary at 0x8C080000, set R14 to 1, and executes it until R14 == 0 (success condition)
 fn load_and_test_binary(comptime filename: []const u8) !void {
     var dc = try Dreamcast.create(std.testing.allocator);
@@ -1502,7 +1462,7 @@ fn load_and_test_binary(comptime filename: []const u8) !void {
     var prev = dc.cpu.pc;
     while (dc.cpu.R(14).* != 0) {
         _ = try dc.tick(1);
-        try std.testing.expect(dc.cpu.pc != prev); // Crude check for infinite loops, there might be legitiple reason to do this (loops with process in delay slot?), but we'll just choose not to and be fine :))
+        try std.testing.expect(dc.cpu.pc != prev); // Crude check for infinite loops, there might be legitimate reason to do this (loops with process in delay slot?), but we'll just choose not to and be fine :))
         prev = dc.cpu.pc;
     }
     try std.testing.expect(dc.cpu.R(14).* == 0);

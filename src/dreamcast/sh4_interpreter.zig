@@ -123,20 +123,20 @@ test "mov #imm,Rn" {
     defer cpu.deinit();
     cpu.pc = 0x0C000000;
 
-    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0 } });
+    try mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0 } });
     try std.testing.expect(cpu.R(0).* == 0);
-    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
+    try mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
     try std.testing.expect(cpu.R(0).* == 0xFFFFFFFF);
-    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 1, .d = 1 } });
+    try mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 1, .d = 1 } });
     try std.testing.expect(cpu.R(1).* == 1);
-    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 2, .d = 2 } });
+    try mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 2, .d = 2 } });
     try std.testing.expect(cpu.R(2).* == 2);
-    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 3, .d = 3 } });
+    try mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 3, .d = 3 } });
     try std.testing.expect(cpu.R(3).* == 3);
 
-    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 15, .d = 0 } }); // mov #0,R15
+    try mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 15, .d = 0 } }); // mov #0,R15
     try std.testing.expect(cpu.R(15).* == 0);
-    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 15, .d = 1 } }); // mov #1,R15
+    try mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 15, .d = 1 } }); // mov #1,R15
     try std.testing.expect(cpu.R(15).* == 1);
 }
 
@@ -175,11 +175,11 @@ test "mov Rm,Rn" {
     defer cpu.deinit();
     cpu.pc = 0x0C000000;
 
-    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0 } }); // mov #0,R0
+    try mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0 } }); // mov #0,R0
     try std.testing.expect(cpu.R(0).* == 0);
-    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 1, .d = 1 } }); // mov #1,R1
+    try mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 1, .d = 1 } }); // mov #1,R1
     try std.testing.expect(cpu.R(1).* == 1);
-    mov_Rm_Rn(&cpu, .{ .nmd = .{ .n = 0, .m = 1 } }); // mov R1,R0
+    try mov_Rm_Rn(&cpu, .{ .nmd = .{ .n = 0, .m = 1 } }); // mov R1,R0
     try std.testing.expect(cpu.R(0).* == 1);
 }
 
@@ -343,7 +343,7 @@ test "swapb" {
     defer cpu.deinit();
 
     cpu.R(0).* = 0xAABBCCDD;
-    swapb(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try swapb(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
     try std.testing.expect(cpu.R(0).* == 0xAABBDDCC);
 }
 
@@ -352,7 +352,7 @@ test "swapw" {
     defer cpu.deinit();
 
     cpu.R(0).* = 0xAABBCCDD;
-    swapw(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try swapw(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
     try std.testing.expect(cpu.R(0).* == 0xCCDDAABB);
 }
 
@@ -373,31 +373,31 @@ test "add imm rn" {
     defer cpu.deinit();
 
     cpu.R(0).* = 0;
-    add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 1 } });
+    try add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 1 } });
     try std.testing.expect(cpu.R(0).* == 1);
 
     cpu.R(0).* = 0;
-    add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
+    try add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
     try std.testing.expect(cpu.R(0).* == 0xFFFFFFFF);
 
     cpu.R(0).* = 0xFFFFFFFF;
-    add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
+    try add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
     try std.testing.expect(cpu.R(0).* == 0xFFFFFFFE);
 
     cpu.R(0).* = 0xFFFFFFFF;
-    add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 1 } });
+    try add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 1 } });
     try std.testing.expect(cpu.R(0).* == 0);
 
     cpu.R(0).* = 0x12345678;
-    add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0 } });
+    try add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0 } });
     try std.testing.expect(cpu.R(0).* == 0x12345678);
 
     cpu.R(0).* = 0x12345678;
-    add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 1 } });
+    try add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 1 } });
     try std.testing.expect(cpu.R(0).* == 0x12345679);
 
     cpu.R(0).* = 0x12345678;
-    add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
+    try add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
     try std.testing.expect(cpu.R(0).* == 0x12345677);
 }
 
@@ -537,11 +537,11 @@ test "div1" {
     cpu.R(0).* = 0b00111110111110001001111010110000;
     cpu.R(1).* = 0b00000011100100011000110101000110;
 
-    div0u(&cpu, .{ .value = 0b0000000000011001 });
+    try div0u(&cpu, .{ .value = 0b0000000000011001 });
     try std.testing.expect(!cpu.sr.m);
     try std.testing.expect(!cpu.sr.q);
     try std.testing.expect(!cpu.sr.t);
-    div1(&cpu, .{ .value = 0b0011_0000_0001_0100 });
+    try div1(&cpu, .{ .value = 0b0011_0000_0001_0100 });
     try std.testing.expect(cpu.R(0).* == 0b01111101111100010011110101100000 - 0b00000011100100011000110101000110);
     try std.testing.expect(cpu.sr.t);
 }
@@ -556,14 +556,14 @@ test "div1 r1 (32 bits) / r0 (16 bits) = r1 (16 bits)" {
     cpu.R(0).* = divisor;
     cpu.R(1).* = dividend;
 
-    shll16(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
-    div0u(&cpu, .{ .value = 0b0000000000011001 });
+    try shll16(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try div0u(&cpu, .{ .value = 0b0000000000011001 });
 
     for (0..16) |_| {
-        div1(&cpu, .{ .nmd = .{ ._ = 0b0011, .n = 1, .m = 0, .d = 0b0100 } });
+        try div1(&cpu, .{ .nmd = .{ ._ = 0b0011, .n = 1, .m = 0, .d = 0b0100 } });
     }
-    rotcl_Rn(&cpu, .{ .nmd = .{ ._ = 0b0100, .n = 1, .m = 0b0010, .d = 0b0100 } });
-    extuw_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 1, .d = undefined } });
+    try rotcl_Rn(&cpu, .{ .nmd = .{ ._ = 0b0100, .n = 1, .m = 0b0010, .d = 0b0100 } });
+    try extuw_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 1, .d = undefined } });
 
     try std.testing.expect(cpu.R(1).* == dividend / divisor);
 }
@@ -584,13 +584,13 @@ test "div1 r3:r1 (64 bits) / r4 (32 bits) = r1 (32 bits)  (unsigned)" {
     cpu.R(3).* = dividend_high;
     cpu.R(4).* = divisor;
 
-    div0u(&cpu, .{ .value = 0b0000000000011001 });
+    try div0u(&cpu, .{ .value = 0b0000000000011001 });
 
     for (0..32) |_| {
-        rotcl_Rn(&cpu, .{ .nmd = .{ ._ = 0b0100, .n = 1, .m = 0b0010, .d = 0b0100 } }); // rotcl R1
-        div1(&cpu, .{ .nmd = .{ ._ = 0b0011, .n = 3, .m = 4, .d = 0b0100 } }); // div1 R4,R3
+        try rotcl_Rn(&cpu, .{ .nmd = .{ ._ = 0b0100, .n = 1, .m = 0b0010, .d = 0b0100 } }); // rotcl R1
+        try div1(&cpu, .{ .nmd = .{ ._ = 0b0011, .n = 3, .m = 4, .d = 0b0100 } }); // div1 R4,R3
     }
-    rotcl_Rn(&cpu, .{ .nmd = .{ ._ = 0b0100, .n = 1, .m = 0b0010, .d = 0b0100 } }); // rotcl R1
+    try rotcl_Rn(&cpu, .{ .nmd = .{ ._ = 0b0100, .n = 1, .m = 0b0010, .d = 0b0100 } }); // rotcl R1
 
     try std.testing.expect(cpu.R(1).* == @as(u32, @truncate(dividend / divisor)));
 }
@@ -622,31 +622,31 @@ test "r2 (32 bits) / r0 (32 bits) = r2 (32 bits)  (signed)" {
         cpu.R(0).* = @bitCast(divisor);
 
         // mov     r2,r3
-        mov_Rm_Rn(&cpu, .{ .nmd = .{ .n = 3, .m = 2 } });
+        try mov_Rm_Rn(&cpu, .{ .nmd = .{ .n = 3, .m = 2 } });
         // rotcl   r3
-        rotcl_Rn(&cpu, .{ .nmd = .{ .n = 3, .m = undefined } });
+        try rotcl_Rn(&cpu, .{ .nmd = .{ .n = 3, .m = undefined } });
         // subc    r1,r1     ! Dividend sign-extended to 64 bits (r1:r2)
-        subc_Rm_Rn(&cpu, .{ .nmd = .{ .n = 1, .m = 1 } });
+        try subc_Rm_Rn(&cpu, .{ .nmd = .{ .n = 1, .m = 1 } });
         // mov     #0,r3
-        mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 3, .d = 0 } });
+        try mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 3, .d = 0 } });
         // subc    r3,r2     ! If dividend is negative, subtract 1 to convert to one's complement notation
-        subc_Rm_Rn(&cpu, .{ .nmd = .{ .n = 2, .m = 3 } });
+        try subc_Rm_Rn(&cpu, .{ .nmd = .{ .n = 2, .m = 3 } });
         // div0s   r0,r1     ! Flag initialization
-        div0s_Rm_Rn(&cpu, .{ .nmd = .{ .n = 1, .m = 0 } });
+        try div0s_Rm_Rn(&cpu, .{ .nmd = .{ .n = 1, .m = 0 } });
 
         // .rept 32
         for (0..32) |_| {
             // rotcl   r2        ! Repeat 32 times
-            rotcl_Rn(&cpu, .{ .nmd = .{ .n = 2 } });
+            try rotcl_Rn(&cpu, .{ .nmd = .{ .n = 2 } });
             // div1    r0,r1
-            div1(&cpu, .{ .nmd = .{ .n = 1, .m = 0 } });
+            try div1(&cpu, .{ .nmd = .{ .n = 1, .m = 0 } });
             // .endr
         }
 
         // rotcl   r2        ! r2 = quotient (one's complement notation)
-        rotcl_Rn(&cpu, .{ .nmd = .{ .n = 2 } });
+        try rotcl_Rn(&cpu, .{ .nmd = .{ .n = 2 } });
         // addc    r3,r2     ! If MSB of quotient is 1, add 1 to convert to two's complement notation
-        addc_Rm_Rn(&cpu, .{ .nmd = .{ .n = 2, .m = 3 } });
+        try addc_Rm_Rn(&cpu, .{ .nmd = .{ .n = 2, .m = 3 } });
         //                   ! r2 = quotient (two's complement notation)
 
         try std.testing.expect(@as(i32, @bitCast(cpu.R(2).*)) == @divTrunc(dividend, divisor));
@@ -755,23 +755,23 @@ test "neg Rm,Rn" {
     defer cpu.deinit();
 
     cpu.R(0).* = 1;
-    neg_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 0, .d = undefined } });
+    try neg_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 0, .d = undefined } });
     try std.testing.expect(as_i32(cpu.R(1).*) == -1);
 
     cpu.R(0).* = @bitCast(@as(i32, -1));
-    neg_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 0, .d = undefined } });
+    try neg_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 0, .d = undefined } });
     try std.testing.expect(as_i32(cpu.R(1).*) == 1);
 
     cpu.R(0).* = 1337;
-    neg_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 0, .d = undefined } });
+    try neg_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 0, .d = undefined } });
     try std.testing.expect(as_i32(cpu.R(1).*) == -1337);
 
     cpu.R(0).* = @bitCast(@as(i32, -1337));
-    neg_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 0, .d = undefined } });
+    try neg_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 0, .d = undefined } });
     try std.testing.expect(as_i32(cpu.R(1).*) == 1337);
 
     cpu.R(0).* = 0x180;
-    neg_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 0, .d = undefined } });
+    try neg_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 0, .d = undefined } });
     try std.testing.expect(as_i32(cpu.R(1).*) == -0x180);
 }
 
@@ -791,25 +791,25 @@ test "negc Rm,Rn" {
 
     cpu.R(1).* = 1;
     cpu.sr.t = false;
-    negc_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 1, .d = undefined } });
+    try negc_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 1, .d = undefined } });
     try std.testing.expect(cpu.R(1).* == 0xFFFFFFFF);
     try std.testing.expect(cpu.sr.t);
 
     cpu.R(0).* = 0;
     cpu.sr.t = true;
-    negc_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = 0, .d = undefined } });
+    try negc_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = 0, .d = undefined } });
     try std.testing.expect(cpu.R(0).* == 0xFFFFFFFF);
     try std.testing.expect(cpu.sr.t);
 
     cpu.R(1).* = @bitCast(@as(i32, -1));
     cpu.sr.t = true;
-    negc_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = 1, .d = undefined } });
+    try negc_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = 1, .d = undefined } });
     try std.testing.expect(cpu.R(0).* == 0);
     try std.testing.expect(cpu.sr.t);
 
     cpu.R(1).* = @bitCast(@as(i32, -1));
     cpu.sr.t = false;
-    negc_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = 1, .d = undefined } });
+    try negc_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = 1, .d = undefined } });
     try std.testing.expect(cpu.R(0).* == 1);
     try std.testing.expect(cpu.sr.t);
 }
@@ -901,25 +901,25 @@ test "rotcl" {
 
     cpu.R(0).* = 0;
     cpu.sr.t = false;
-    rotcl_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try rotcl_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
     try std.testing.expect(cpu.R(0).* == 0);
     try std.testing.expect(!cpu.sr.t);
 
     cpu.R(0).* = 0;
     cpu.sr.t = true;
-    rotcl_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try rotcl_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
     try std.testing.expect(cpu.R(0).* == 1);
     try std.testing.expect(!cpu.sr.t);
 
     cpu.R(0).* = 0b01;
     cpu.sr.t = false;
-    rotcl_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try rotcl_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
     try std.testing.expect(cpu.R(0).* == 0b10);
     try std.testing.expect(!cpu.sr.t);
 
     cpu.R(0).* = 0b01;
     cpu.sr.t = true;
-    rotcl_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try rotcl_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
     try std.testing.expect(cpu.R(0).* == 0b11);
     try std.testing.expect(!cpu.sr.t);
 }
@@ -941,49 +941,49 @@ test "rotcr" {
 
     cpu.R(0).* = 0;
     cpu.sr.t = false;
-    rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
     try std.testing.expect(cpu.R(0).* == 0);
     try std.testing.expect(!cpu.sr.t);
 
     cpu.R(0).* = 0;
     cpu.sr.t = true;
-    rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
     try std.testing.expect(cpu.R(0).* == 0b1000_0000_0000_0000_0000_0000_0000_0000);
     try std.testing.expect(!cpu.sr.t);
 
     cpu.R(0).* = 0b01;
     cpu.sr.t = false;
-    rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
     try std.testing.expect(cpu.R(0).* == 0);
     try std.testing.expect(cpu.sr.t);
 
     cpu.R(0).* = 0b01;
     cpu.sr.t = true;
-    rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
     try std.testing.expect(cpu.R(0).* == 0b1000_0000_0000_0000_0000_0000_0000_0000);
     try std.testing.expect(cpu.sr.t);
 
     cpu.R(0).* = 0b1000_0000_0000_0000_0000_0000_0000_0000;
     cpu.sr.t = false;
-    rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
     try std.testing.expect(cpu.R(0).* == 0b0100_0000_0000_0000_0000_0000_0000_0000);
     try std.testing.expect(!cpu.sr.t);
 
     cpu.R(0).* = 0b1000_0000_0000_0000_0000_0000_0000_0000;
     cpu.sr.t = true;
-    rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
     try std.testing.expect(cpu.R(0).* == 0b1100_0000_0000_0000_0000_0000_0000_0000);
     try std.testing.expect(!cpu.sr.t);
 
     cpu.R(0).* = 0b1000_0000_0000_0000_0000_0000_0000_0001;
     cpu.sr.t = false;
-    rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
     try std.testing.expect(cpu.R(0).* == 0b0100_0000_0000_0000_0000_0000_0000_0000);
     try std.testing.expect(cpu.sr.t);
 
     cpu.R(0).* = 0b1000_0000_0000_0000_0000_0000_0000_0001;
     cpu.sr.t = true;
-    rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
     try std.testing.expect(cpu.R(0).* == 0b1100_0000_0000_0000_0000_0000_0000_0000);
     try std.testing.expect(cpu.sr.t);
 }
@@ -1238,16 +1238,16 @@ test "ldc Rn,SR" {
     defer cpu.deinit();
     cpu.pc = 0x0C000000;
 
-    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 3 } }); // mov #3,R0
+    try mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 3 } }); // mov #3,R0
     try std.testing.expect(cpu.R(0).* == 0b000000011);
-    ldc_Rn_SR(&cpu, .{ .nmd = .{ .n = 0 } }); // ldc R0,SR
+    try ldc_Rn_SR(&cpu, .{ .nmd = .{ .n = 0 } }); // ldc R0,SR
     try std.testing.expect(@as(u32, @bitCast(cpu.sr)) == 0b00000011 & 0x700083F3);
 
     cpu.set_sr(.{});
 
-    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 15, .d = 3 } }); // mov #3,R15
+    try mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 15, .d = 3 } }); // mov #3,R15
     try std.testing.expect(cpu.R(15).* == 0b00000011);
-    ldc_Rn_SR(&cpu, .{ .nmd = .{ .n = 15 } }); // ldc R15,SR
+    try ldc_Rn_SR(&cpu, .{ .nmd = .{ .n = 15 } }); // ldc R15,SR
     try std.testing.expect(@as(u32, @bitCast(cpu.sr)) == 0b00000011 & 0x700083F3);
 }
 
@@ -1772,7 +1772,7 @@ test "fldi1_FRn" {
     var cpu = try SH4.init(std.testing.allocator, null);
     defer cpu.deinit();
     cpu.fpscr.pr = 0;
-    fldi1_FRn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try fldi1_FRn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
     std.debug.assert(@as(u32, @bitCast(cpu.FR(0).*)) == 0x3F800000);
 }
 
@@ -2012,7 +2012,7 @@ pub fn test_ftrv(v: [4]f32, m: [4 * 4]f32, r: [4]f32) !void {
         cpu.XF(@intCast(i)).* = m[i];
     }
 
-    ftrv_XMTRX_FVn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try ftrv_XMTRX_FVn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
 
     for (0..4) |i| {
         try std.testing.expect(cpu.FR(@intCast(i)).* == r[i]);
