@@ -1705,17 +1705,20 @@ pub const Renderer = struct {
         self._gctx_queue_mutex.lock();
         defer self._gctx_queue_mutex.unlock();
 
-        if (self.render_request and !render_to_texture)
-            log.warn(termcolor.yellow("Woops! Skipped a frame."), .{});
-        if (self.render_request and render_to_texture) {
-            log.warn(termcolor.yellow("Render to a texture with a pending render request. Consider enabling 'Synchronous Rendering'."), .{});
-            // NOTE: This has a greater chance of happening with the frame limiter enabled. Render requests can easily be delayed by a frame.
-            //       We cannot simply wait on the main thread here, as we could end up in a deadlock (On exit for example: main thread joining on the emulation thread, while the emulation thread is waiting on the main thread to finish rendering).
-            //       So for now we'll guarantee order of operations by rendering the late frames right here.
-            // Render immediately
-            self.render_request = false;
-            self.update(&dc.gpu) catch |err| return log.err(termcolor.red("Failed to update renderer: {t}"), .{err});
-            self.render(&dc.gpu, render_to_texture) catch |err| return log.err(termcolor.red("Failed to render: {t}"), .{err});
+        if (self.render_request) {
+            if (!render_to_texture) {
+                log.warn(termcolor.yellow("Skipped a frame."), .{});
+            } else {
+                log.warn(termcolor.yellow("Render to a texture with a pending render request. Consider enabling 'Synchronous Rendering'."), .{});
+                // NOTE: This has a greater chance of happening with the frame limiter enabled. Render requests can easily be delayed by a frame.
+                //       We cannot simply wait on the main thread here, as we could end up in a deadlock (On exit for example: main thread joining on the emulation thread,
+                //       while the emulation thread is waiting on the main thread to finish rendering).
+                //       So for now we'll guarantee order of operations by rendering the late frames right here.
+                // Render immediately
+                self.render_request = false;
+                self.update(&dc.gpu) catch |err| return log.err(termcolor.red("Failed to update renderer: {t}"), .{err});
+                self.render(&dc.gpu, false) catch |err| return log.err(termcolor.red("Failed to render: {t}"), .{err});
+            }
         }
 
         self.on_render_start_param_base = dc.gpu.read_register(u32, .PARAM_BASE);
