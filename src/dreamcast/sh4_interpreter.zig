@@ -1910,24 +1910,20 @@ pub fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) !void {
 
     if (cpu.fpscr.pr == 0) {
         const f = cpu.FR(opcode.nmd.n).*;
-        if (std.math.isNan(f)) { // This helps matching reicast behaviour, and thus passing tests, but I'm not sure if this accurate.
-            cpu.fpul = 0;
-        } else {
-            const u: u32 = @bitCast(f);
-            if ((u & 0x80000000) == 0) {
-                if (u > 0x7F800000) {
-                    cpu.fpul = 0x80000000;
-                } else if (u > 0x4EFFFFFF) {
-                    cpu.fpul = 0x7FFFFF80; // Some sources say it should be 0x7FFFFFFF
-                } else {
-                    cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
-                }
+        const u: u32 = @bitCast(f);
+        if ((u & 0x80000000) == 0) {
+            if (u > 0x7F800000) {
+                cpu.fpul = 0x80000000;
+            } else if (u > 0x4EFFFFFF) {
+                cpu.fpul = 0x7FFFFFFF;
             } else {
-                if ((u & 0x7FFFFFFF) > (0xCF000000 & 0x7FFFFFFF)) {
-                    cpu.fpul = 0x80000000;
-                } else {
-                    cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
-                }
+                cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
+            }
+        } else {
+            if ((u & 0x7FFFFFFF) > (0xCF000000 & 0x7FFFFFFF)) {
+                cpu.fpul = 0x80000000;
+            } else {
+                cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
             }
         }
     } else {
@@ -1950,6 +1946,49 @@ pub fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) !void {
                 cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
             }
         }
+    }
+}
+
+test "ftrc FRn,FPUL" {
+    inline for (.{
+        .{ 0x00000000, 0x00000000 },
+        .{ 0x00000001, 0x00000000 },
+        .{ 0x007FFFFF, 0x00000000 },
+        .{ 0x00800000, 0x00000000 },
+        .{ 0x00800001, 0x00000000 },
+        .{ 0x7F7FFFFE, 0x7FFFFFFF },
+        .{ 0x7F7FFFFF, 0x7FFFFFFF },
+        .{ 0x7F800000, 0x7FFFFFFF },
+        .{ 0x3F7FFFFF, 0x00000000 },
+        .{ 0x3F800000, 0x00000001 },
+        .{ 0x3F800001, 0x00000001 },
+        .{ 0x7F7FFFFF, 0x7FFFFFFF },
+        .{ 0x7F800000, 0x7FFFFFFF },
+        .{ 0x7F800001, 0x80000000 },
+        .{ 0xFF7FFFFF, 0x80000000 },
+        .{ 0xFF800000, 0x80000000 },
+        .{ 0xFF800001, 0x80000000 },
+        .{ 0xFFC00000, 0x80000000 },
+        .{ 0xFFC00001, 0x80000000 },
+        .{ 0xFFC00002, 0x80000000 },
+        .{ 0xFF800000, 0x80000000 },
+        .{ 0xFF800001, 0x80000000 },
+        .{ 0xFF800002, 0x80000000 },
+        .{ 0xFFFFFFFF, 0x80000000 },
+        .{ 0x40000000, 0x00000002 },
+        .{ 0x40800000, 0x00000004 },
+        .{ 0x42F60000, 0x0000007B },
+        .{ 0xC2F60000, 0xFFFFFF85 },
+    }) |t| {
+        var cpu = try SH4.init(std.testing.allocator, null);
+        defer cpu.deinit();
+        cpu.fpscr.pr = 0;
+        cpu.FR(0).* = @bitCast(@as(u32, t[0]));
+        try ftrc_FRn_FPUL(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+        std.testing.expectEqual(cpu.fpul, t[1]) catch |err| {
+            std.debug.print("{X:0>8}/{d}: Expected {X:0>8} but got {X:0>8}\n", .{ t[0], @as(f32, @bitCast(@as(u32, t[0]))), t[1], cpu.fpul });
+            return err;
+        };
     }
 }
 
