@@ -14,21 +14,13 @@ fn get_git_commit(b: *std.Build) []const u8 {
 pub fn build(b: *std.Build) !void {
     const zon = @import("build.zig.zon");
 
-    // Standard target options allows the person running `zig build` to choose
-    // what target to build for. Here we do not override the defaults, which
-    // means any target is allowed, and the default is native. Other options
-    // for restricting supported target set are available.
     const target = b.standardTargetOptions(.{});
-
-    // Standard optimization options allow the person running `zig build` to select
-    // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
-    // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
     const termcolor_module = b.createModule(.{ .root_source_file = b.path("src/termcolor.zig") });
     const helpers_module = b.createModule(.{ .root_source_file = b.path("src/helpers.zig") });
 
-    const arm7 = b.dependency("arm7", .{});
+    const arm7 = b.dependency("arm7", .{ .target = target, .optimize = optimize });
     const arm7_module = arm7.module("arm7");
 
     const mmu = b.option(bool, "mmu", "Enable Full MMU Emulation (default: true)") orelse true;
@@ -148,6 +140,8 @@ pub fn build(b: *std.Build) !void {
 
     { // zig-gamedev
         const zgui = b.dependency("zgui", .{
+            .target = target,
+            .optimize = optimize,
             .shared = false,
             .with_implot = true,
             .backend = .glfw_wgpu,
@@ -157,24 +151,24 @@ pub fn build(b: *std.Build) !void {
         deecy_module.addImport("zgui", zgui_mod);
         deecy_module.linkLibrary(zgui.artifact("imgui"));
 
-        const zglfw = b.dependency("zglfw", .{});
+        const zglfw = b.dependency("zglfw", .{ .target = target, .optimize = optimize });
         deecy_module.addImport("zglfw", zglfw.module("root"));
         deecy_module.linkLibrary(zglfw.artifact("glfw"));
 
-        const zpool = b.dependency("zpool", .{});
+        const zpool = b.dependency("zpool", .{ .target = target, .optimize = optimize });
         deecy_module.addImport("zpool", zpool.module("root"));
 
         const zgpu = @import("zgpu");
         if (target.result.os.tag == .windows) {
             zgpu.installDxcFrom(exe, "zgpu");
         }
-        const zgpu_dep = b.dependency("zgpu", .{ .max_num_bindings_per_group = 12 });
+        const zgpu_dep = b.dependency("zgpu", .{ .target = target, .optimize = optimize, .max_num_bindings_per_group = 12 });
         const zgpu_module = zgpu_dep.module("root");
         deecy_module.addImport("zgpu", zgpu_module);
 
         try zgpu.linkDawn(b, "zgpu", exe);
 
-        const zaudio = b.dependency("zaudio", .{});
+        const zaudio = b.dependency("zaudio", .{ .target = target, .optimize = optimize });
         deecy_module.addImport("zaudio", zaudio.module("root"));
         deecy_module.linkLibrary(zaudio.artifact("miniaudio"));
     }
