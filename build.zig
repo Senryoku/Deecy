@@ -157,7 +157,7 @@ pub fn build(b: *std.Build) !void {
         deecy_module.addImport("zgui", zgui_mod);
         deecy_module.linkLibrary(zgui.artifact("imgui"));
 
-        const zglfw = b.dependency("zglfw", .{});
+        const zglfw = b.dependency("zglfw", .{ .target = target, .optimize = optimize });
         deecy_module.addImport("zglfw", zglfw.module("root"));
         deecy_module.linkLibrary(zglfw.artifact("glfw"));
 

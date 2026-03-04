@@ -42,7 +42,7 @@ jobs:
           version: ${{ steps.zigversion.outputs.version }}
 
       - name: Compile Deecy
-        run: zig build -Dcpu=${{ matrix.cpu }}
+        run: zig build -Dtarget=x86_64-native -Dcpu=${{ matrix.cpu }} --summary all
 
       - name: Prepare Artifacts
         shell: bash
