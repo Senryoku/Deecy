@@ -228,7 +228,7 @@ const ShadingInstructions = packed struct(u32) {
     mipmap_bit: u1,
     bump_mapping_bit: u1,
     color_clamp: u1,
-    _: u4 = 0,
+    mipmap_d_adjust: u4,
 };
 
 fn address_mode_bit(address_mode: wgpu.AddressMode) u8 {
@@ -2272,6 +2272,7 @@ pub const Renderer = struct {
                 .mipmap_bit = 0,
                 .bump_mapping_bit = 0,
                 .color_clamp = tsp_instruction.color_clamp,
+                .mipmap_d_adjust = tsp_instruction.mipmap_d_adjust,
             },
         };
 
@@ -2801,6 +2802,7 @@ pub const Renderer = struct {
                             .mipmap_bit = texture_control.mip_mapped,
                             .bump_mapping_bit = if (texture_control.pixel_format == .BumpMap) 1 else 0,
                             .color_clamp = tsp_instruction.color_clamp,
+                            .mipmap_d_adjust = tsp_instruction.mipmap_d_adjust,
                         },
                     };
 
@@ -2828,6 +2830,7 @@ pub const Renderer = struct {
                             .mipmap_bit = if (area1_texture_control) |tc| tc.mip_mapped else 0,
                             .bump_mapping_bit = if (area1_texture_control) |tc| (if (tc.pixel_format == .BumpMap) 1 else 0) else 0,
                             .color_clamp = atspi.color_clamp,
+                            .mipmap_d_adjust = atspi.mipmap_d_adjust,
                         },
                     } else .invalid;
 

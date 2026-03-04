@@ -129,7 +129,6 @@ fn apply_fog(shading_instructions: u32, z: f32, in_color: vec4<f32>, offset_alph
     }
 }
 
-
 fn area_color(
     base_color: vec4<f32>,
     offset_color: vec4<f32>,
@@ -148,8 +147,9 @@ fn area_color(
     if extractBits(shading_instructions, 0, 1) == 1 {
         let u_size: f32 = tex_size(extractBits(shading_instructions, 4, 3));
         let v_size: f32 = tex_size(extractBits(shading_instructions, 7, 3));
+        let mipmap_d_adjust = vec2<f32>(0.25 * f32(extractBits(shading_instructions, 28, 4)));
         let uv_factor = select(vec2<f32>(1.0, v_size / u_size), vec2<f32>(u_size / v_size, 1.0), u_size < v_size);
-        var tex_color = tex_sample(uv_factor * uv, uv_factor * duvdx, uv_factor * duvdy, palette_instructions, shading_instructions, texture_index);
+        var tex_color = tex_sample(uv_factor * uv, mipmap_d_adjust * uv_factor * duvdx, mipmap_d_adjust * uv_factor * duvdy, palette_instructions, shading_instructions, texture_index);
 
         var offset_rgb = offset_color.rgb;
 
