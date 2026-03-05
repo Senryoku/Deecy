@@ -351,7 +351,7 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
             };
             if (self.status_register.bsy == 1 and self.dma_data_queue.count > 0 and self.dma_data_queue.count == static.last_dma_data_queue_count) {
                 static.consecutive_busy_reads += 1;
-                if (static.consecutive_busy_reads >= 10_000) {
+                if (static.consecutive_busy_reads >= 100) {
                     gdrom_log.err(termcolor.red("CDI Hack: Stuck with data in dma queue, discarding."), .{});
                     self.dma_data_queue.discard(self.dma_data_queue.count);
                     self.status_register.bsy = 0;
