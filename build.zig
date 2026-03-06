@@ -143,6 +143,7 @@ pub fn build(b: *std.Build) !void {
             if (enable_dreampicoport) {
                 dc_module.addObjectFile(b.path("libs/dreampicoport-api/linux/libdream_pico_port_api.a"));
                 dc_module.addObjectFile(b.path("libs/dreampicoport-api/linux/libusb-1.0.a"));
+                dc_module.linkSystemLibrary("libudev", .{ .needed = true });
             }
         },
     }
