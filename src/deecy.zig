@@ -593,17 +593,32 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     {
         const dc_init_time = std.time.milliTimestamp();
         defer deecy_log.info("Dreamcast initialized in {d} ms", .{std.time.milliTimestamp() - dc_init_time});
-        self.dc = Dreamcast.create(allocator) catch |err| {
-            switch (err) {
-                error.BiosNotFound => {
-                    self.display_unrecoverable_error("Missing BIOS. Please copy your bios file as 'dc_boot.bin' to '{s}'.", .{HostPaths.get_data_path()});
-                },
-                else => {
-                    self.display_unrecoverable_error("Error initializing Dreamcast: {t}", .{err});
-                },
+        self.dc = while (true) {
+            if (Dreamcast.create(allocator)) |dc| break dc else |err| {
+                switch (err) {
+                    error.BiosNotFound => if (try self.display_missing_file_error(
+                        \\Missing BIOS.
+                        \\Please copy your bios file as 'dc_boot.bin' to '{s}'.
+                        \\
+                        \\(Error: {t})
+                    , .{ HostPaths.get_data_path(), err }) == .retry) continue,
+                    else => self.display_unrecoverable_error("Error initializing Dreamcast: {t}", .{err}),
+                }
+                return err;
             }
-            return err;
         };
+        while (true) {
+            self.dc.load_flash(config.region.to_dreamcast(), config.bios_config) catch |err| {
+                if (try self.display_missing_file_error(
+                    \\Missing Flash.
+                    \\Please copy your flash file as 'dc_flash.bin' to '{s}'.
+                    \\ 
+                    \\(Error: {t})
+                , .{ HostPaths.get_data_path(), err }) == .retry) continue;
+                return err;
+            };
+            break;
+        }
         self.dc.cable_type = config.video_cable.to_dreamcast();
         self.dc.aica.dsp_emulation = config.dsp_emulation;
     }
@@ -624,8 +639,6 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
 
     try self.check_save_state_slots();
 
-    try self.dc.load_flash(config.region.to_dreamcast(), config.bios_config);
-
     return self;
 }
 
@@ -644,8 +657,7 @@ pub fn destroy(self: *@This()) void {
 
     self.renderer.destroy();
 
-    self.dc.deinit();
-    self._allocator.destroy(self.dc);
+    self.dc.destroy();
 
     self.debug_ui.deinit();
     self.ui_deinit();
@@ -1612,15 +1624,13 @@ fn display_unrecoverable_error(self: *@This(), comptime fmt: []const u8, args: a
         const fb_size = self.window.getFramebufferSize();
         zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
 
-        if (!zgui.isPopupOpen("Error##Modal", .{})) {
+        if (!zgui.isPopupOpen("Error##Modal", .{}))
             zgui.openPopup("Error##Modal", .{});
-        }
 
         if (zgui.beginPopupModal("Error##Modal", .{ .flags = .{ .always_auto_resize = true } })) {
             zgui.text(fmt, args);
-            if (zgui.button("OK", .{})) {
+            if (zgui.button("OK", .{}))
                 zglfw.setWindowShouldClose(self.window, true);
-            }
             zgui.endPopup();
         }
 
@@ -1628,6 +1638,47 @@ fn display_unrecoverable_error(self: *@This(), comptime fmt: []const u8, args: a
 
         _ = self.gctx.present();
     }
+}
+
+// Display an error message for missing bios or flash files.
+fn display_missing_file_error(self: *@This(), comptime fmt: []const u8, args: anytype) !enum { retry, exit } {
+    var retry = false;
+    while (!self.window.shouldClose()) {
+        zglfw.pollEvents();
+
+        const fb_size = self.window.getFramebufferSize();
+        zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
+
+        if (!zgui.isPopupOpen("Error##Modal", .{}))
+            zgui.openPopup("Error##Modal", .{});
+
+        if (zgui.beginPopupModal("Error##Modal", .{ .flags = .{ .always_auto_resize = true } })) {
+            zgui.text(fmt, args);
+            if (zgui.button(UI.Icons.Folder ++ " Open folder", .{})) {
+                const absolute_path = try std.fs.cwd().realpathAlloc(self._allocator, HostPaths.get_data_path());
+                defer self._allocator.free(absolute_path);
+                var file_explorer = std.process.Child.init(&[_][]const u8{ switch (builtin.os.tag) {
+                    .windows => "explorer",
+                    .linux => "xdg-open",
+                    .macos => "open",
+                    else => @compileError("Unsupported OS"),
+                }, absolute_path }, self._allocator);
+                _ = try file_explorer.spawnAndWait();
+            }
+            zgui.sameLine(.{});
+            retry = zgui.button(UI.Icons.Repeat ++ " Retry", .{});
+            zgui.sameLine(.{});
+            if (zgui.button(UI.Icons.Xmark ++ " Exit", .{})) zglfw.setWindowShouldClose(self.window, true);
+            zgui.endPopup();
+        }
+
+        self.submit_ui();
+
+        _ = self.gctx.present();
+
+        if (retry) return .retry;
+    }
+    return .exit;
 }
 
 fn run_for(self: *@This(), sh4_cycles: u64) void {

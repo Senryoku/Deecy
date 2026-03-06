@@ -185,7 +185,7 @@ pub const Dreamcast = struct {
         dc.gdrom = try .init(allocator, dc);
         dc.aica.setup_arm();
 
-        errdefer dc.deinit();
+        errdefer dc.destroy();
 
         // Create 'userdata' folder if it doesn't exist
         try std.fs.cwd().makePath(HostPaths.get_userdata_path());
@@ -202,6 +202,11 @@ pub const Dreamcast = struct {
         try dc.reset();
 
         return dc;
+    }
+
+    pub fn destroy(self: *@This()) void {
+        self.deinit();
+        self._allocator.destroy(self);
     }
 
     pub fn deinit(self: *@This()) void {
