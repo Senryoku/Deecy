@@ -1,4 +1,5 @@
 const std = @import("std");
+const config = @import("dc_config");
 
 const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 const Maple = @import("../maple.zig");
@@ -22,6 +23,14 @@ extern fn dpp_send(dest: [*]u8, data: [*]u32, len: u32) callconv(.c) extern stru
 
 pub fn send_command(dc: *Dreamcast, physical_port: u8, data: []const u32) u32 {
     const return_addr = data[0];
+    var ram_u32 = @as([*]align(1) u32, @ptrCast(dc.ram[(return_addr & 0x03FFFFFF)..].ptr));
+
+    if (!config.enable_dreampicoport) {
+        log.err("DreamPicoPort support is disabled! Compile with -Ddreampicoport=true.", .{});
+        ram_u32[0] = 0xFFFFFFFF;
+        return 4;
+    }
+
     var command: CommandWord = @bitCast(data[1]);
     // Redirect command to the physical port on the DreamPico
     const original_recipient = command.recipent_address;
@@ -35,8 +44,6 @@ pub fn send_command(dc: *Dreamcast, physical_port: u8, data: []const u32) u32 {
         command_buffer[i] = @byteSwap(data[i + 1]);
 
     const r = dpp_send(dc.ram[(return_addr & 0x03FFFFFF)..].ptr, &command_buffer, @intCast(data.len - 1));
-
-    var ram_u32 = @as([*]align(1) u32, @ptrCast(dc.ram[(return_addr & 0x03FFFFFF)..].ptr));
 
     if (r.result != .Success) {
         log.err("dpp_send failed: {t}", .{r.result});

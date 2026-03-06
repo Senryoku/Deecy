@@ -14,14 +14,9 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const termcolor_module = b.createModule(.{ .root_source_file = b.path("src/termcolor.zig") });
-    const helpers_module = b.createModule(.{ .root_source_file = b.path("src/helpers.zig") });
-
-    const arm7 = b.dependency("arm7", .{ .target = target, .optimize = optimize });
-    const arm7_module = arm7.module("arm7");
-
     const mmu = b.option(bool, "mmu", "Enable Full MMU Emulation (default: true)") orelse true;
     const fast_mem = b.option(bool, "fast_mem", "Enable FastMem (default: true)") orelse true;
+    const enable_dreampicoport = b.option(bool, "dreampicoport", "Enable DreamPicoPort support (default: true)") orelse true;
     const jit_instrumentation = b.option(bool, "jit_instrumentation", "Enable JIT instrumentation (Slow, default: false)") orelse false;
     const data_path = b.option([]const u8, "data_path", "Path to the data directory (Copy your bios and flash files here, default: './data')") orelse "./data";
     const userdata_path = b.option([]const u8, "userdata_path", "Path to the userdata directory (default: './userdata')") orelse "./userdata";
@@ -33,10 +28,17 @@ pub fn build(b: *std.Build) !void {
     dc_options.addOption(bool, "mmu", mmu);
     dc_options.addOption(bool, "fast_mem", fast_mem);
     dc_options.addOption(bool, "jit_instrumentation", jit_instrumentation);
+    dc_options.addOption(bool, "enable_dreampicoport", enable_dreampicoport);
     const path_options = b.addOptions();
     path_options.addOption(bool, "use_appdata_dir", use_appdata_dir);
     path_options.addOption([]const u8, "data_path", data_path);
     path_options.addOption([]const u8, "userdata_path", userdata_path);
+
+    const termcolor_module = b.createModule(.{ .root_source_file = b.path("src/termcolor.zig") });
+    const helpers_module = b.createModule(.{ .root_source_file = b.path("src/helpers.zig") });
+
+    const arm7 = b.dependency("arm7", .{});
+    const arm7_module = arm7.module("arm7");
 
     const dc_module = b.createModule(.{
         .target = target,
@@ -112,10 +114,10 @@ pub fn build(b: *std.Build) !void {
             // Windows Multimedia API for timeBeginPeriod
             deecy_module.linkSystemLibrary("winmm", .{});
 
-            dc_module.addObjectFile(b.path("libs/dreampicoport-api/libdream_pico_port_api.a"));
-            dc_module.addObjectFile(b.path("libs/dreampicoport-api/libusb-1.0.a"));
-            // FIXME: Required by DreamPicoPort_API right now: Figure out how to compile it without.
-            dc_module.sanitize_c = .full;
+            if (enable_dreampicoport) {
+                dc_module.addObjectFile(b.path("libs/dreampicoport-api/windows/libdream_pico_port_api.a"));
+                dc_module.addObjectFile(b.path("libs/dreampicoport-api/windows/libusb-1.0.a"));
+            }
 
             // Wrapper in console mode for launching Deecy from a terminal with proper console interactions.
             const wrapper = b.addExecutable(.{
@@ -138,7 +140,10 @@ pub fn build(b: *std.Build) !void {
             b.getInstallStep().dependOn(&install_wrapper.step);
         },
         else => {
-            // TODO: LINK DREAMPICOPORT-API
+            if (enable_dreampicoport) {
+                dc_module.addObjectFile(b.path("libs/dreampicoport-api/linux/libdream_pico_port_api.a"));
+                dc_module.addObjectFile(b.path("libs/dreampicoport-api/linux/libusb-1.0.a"));
+            }
         },
     }
 
