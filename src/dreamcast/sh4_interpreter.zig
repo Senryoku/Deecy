@@ -1752,28 +1752,14 @@ pub fn data_type_of(f: f32) FloatType {
     };
 }
 
+// NOTE: fldi0 and fldi1 are only defined when PR=0, but hardware tests suggest that the PR bit is ignored on the DC.
 pub fn fldi0_FRn(cpu: *SH4, opcode: Instr) !void {
     if (cpu.sr.fd) return error.FPUDisabled;
-    // It seems that in previous versions of the architecture "If FPSCR.PR = 1, the instruction is handled as an illegal instruction."
-    //   (though the same doc. doesn't list any possible exceptions, so I'm not sure what's that supposed to mean)
-    // This is probably not the case for the SH4: There's no mention of this in the docs, and Sega Rally 2 does try to fldi0 with PR=1.
-    // Treating it as an illegal instruction (i.e. raising an exception) prevents the game from moving forward.
-    // TODO: I don't know if this should ignored or executed inconditionally.
-    if (cpu.fpscr.pr == 1) return;
     cpu.FR(opcode.nmd.n).* = 0.0;
 }
 pub fn fldi1_FRn(cpu: *SH4, opcode: Instr) !void {
     if (cpu.sr.fd) return error.FPUDisabled;
-    if (cpu.fpscr.pr == 1) return; // See fldi0
     cpu.FR(opcode.nmd.n).* = 1.0;
-}
-
-test "fldi1_FRn" {
-    var cpu = try SH4.init(std.testing.allocator, null);
-    defer cpu.deinit();
-    cpu.fpscr.pr = 0;
-    try fldi1_FRn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
-    std.debug.assert(@as(u32, @bitCast(cpu.FR(0).*)) == 0x3F800000);
 }
 
 pub fn flds_FRn_FPUL(cpu: *SH4, opcode: Instr) !void {

@@ -2392,32 +2392,23 @@ pub fn fmovs_FRm_atR0Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bo
     return false;
 }
 
+// NOTE: fldi0 and fldi1 are only defined when PR=0, but hardware tests suggest that the PR bit is ignored on the DC.
 pub fn fldi0_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try check_fd_bit(block, ctx);
 
-    switch (ctx.fpscr_pr) {
-        .Single => {
-            // Might be a xor, but we don't care about the previous value here.
-            const frn: JIT.Operand = .{ .freg32 = try ctx.guest_freg_cache(block, 32, instr.nmd.n, false, true) };
-            try block.append(.{ .Xor = .{ .dst = frn, .src = frn } });
-        },
-        .Double => return error.IllegalInstruction, // NOTE: Probably not, actually.
-        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
-    }
+    // Might be a xor, but we don't care about the previous value here.
+    const frn: JIT.Operand = .{ .freg32 = try ctx.guest_freg_cache(block, 32, instr.nmd.n, false, true) };
+    try block.append(.{ .Xor = .{ .dst = frn, .src = frn } });
+
     return false;
 }
 
 pub fn fldi1_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try check_fd_bit(block, ctx);
 
-    switch (ctx.fpscr_pr) {
-        .Single => {
-            try block.mov(.{ .reg = ReturnRegister }, .{ .imm32 = 0x3F800000 }); // 1.0
-            try store_fp_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
-        },
-        .Double => return error.IllegalInstruction,
-        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
-    }
+    try block.mov(.{ .reg = ReturnRegister }, .{ .imm32 = 0x3F800000 }); // 1.0
+    try store_fp_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
+
     return false;
 }
 
