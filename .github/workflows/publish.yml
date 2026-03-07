@@ -24,7 +24,7 @@ jobs:
     steps:
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt update && sudo apt -y install libgtk-3-dev
+        run: sudo apt update && sudo apt -y install libgtk-3-dev libudev-dev
 
       - uses: actions/checkout@v4
         with:
