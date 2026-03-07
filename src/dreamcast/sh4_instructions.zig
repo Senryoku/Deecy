@@ -243,7 +243,7 @@ pub const Opcodes = [_]OpcodeDescription{
     .{ .code = 0b0100000000000110, .mask = 0b0000111100000000, .fn_ = interpreter.ldl_atRnInc_Reg("mach"), .name = "lds.l @Rn+,MACH", .jit_emit_fn = sh4_jit.ldcl_atRnInc_Reg("mach"), .access = .{ .r = .MRn, .w = .Rn } },
     .{ .code = 0b0100000000010110, .mask = 0b0000111100000000, .fn_ = interpreter.ldl_atRnInc_Reg("macl"), .name = "lds.l @Rn+,MACL", .jit_emit_fn = sh4_jit.ldcl_atRnInc_Reg("macl"), .access = .{ .r = .MRn, .w = .Rn } },
     .{ .code = 0b0100000000100110, .mask = 0b0000111100000000, .fn_ = interpreter.ldl_atRnInc_Reg("pr"), .name = "lds.l @Rn+,PR", .jit_emit_fn = sh4_jit.ldcl_atRnInc_Reg("pr"), .issue_cycles = 2, .latency_cycles = 2, .access = .{ .r = .Rn, .w = .Rn } },
-    .{ .code = 0b0100000010000111, .mask = 0b0000111101110000, .fn_ = interpreter.ldcl_atRnInc_Rm_BANK, .name = "ldc.l @Rn+,Rm_BANK", .privileged = true, .access = .{ .r = .MRn, .w = .Rn } },
+    .{ .code = 0b0100000010000111, .mask = 0b0000111101110000, .fn_ = interpreter.ldcl_atRnInc_Rm_BANK, .name = "ldc.l @Rn+,Rm_BANK", .jit_emit_fn = sh4_jit.ldcl_atRnInc_Rm_BANK, .privileged = true, .access = .{ .r = .MRn, .w = .Rn } },
     .{ .code = 0b0000000000111000, .mask = 0b0000000000000000, .fn_ = interpreter.ldtlb, .name = "ldtlb", .privileged = true, .access = .{ .r = .{}, .w = .{} } },
 
     //.{ .code = 0b0000000011000011, .mask = 0b0000111100000000, .fn_ = interpreter.movcal_R0_atRn, .name = "movca.l R0,@Rn", .jit_emit_fn = sh4_jit.movcal_R0_atRn, .latency_cycles = 3, .access = .{ .r = .R0Rn, .w = .{} } },

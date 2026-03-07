@@ -1473,7 +1473,6 @@ inline fn get_cpu() *sh4.SH4 {
 }
 //// Returns a JIT Operand to the memory location of the supplied SH4 struct member.
 fn sh4_mem(comptime name: []const u8) Architecture.Operand {
-    std.debug.assert(@sizeOf(@FieldType(sh4.SH4, name)) == 4);
     return .{ .mem = .{ .base = SH4PtrRegister, .displacement = @offsetOf(sh4.SH4, name), .size = 32 } };
 }
 
@@ -3567,6 +3566,16 @@ pub fn ldcl_atRnInc_SR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !boo
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
     try set_sr(block, ctx, .{ .reg = ReturnRegister });
+    return false;
+}
+
+pub fn ldcl_atRnInc_Rm_BANK(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try load_mem(block, ctx, .{ .Reg = instr.nmd.n }, 0, 32);
+    var dest = sh4_mem("r_bank");
+    dest.mem.displacement += 4 * @as(u32, @intCast(instr.nmd.m & 0b0111));
+    try block.mov(dest, .{ .reg = ReturnRegister });
+    const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+    try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
     return false;
 }
 
