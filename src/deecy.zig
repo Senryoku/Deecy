@@ -263,7 +263,7 @@ const ControllerSettings = struct {
         Mouse: struct {
             subcapabilities: u32 = (DreamcastModule.Maple.Mouse.FunctionDefinition{}).as_u32(),
         },
-        Physical: struct {
+        DreamPicoPort: struct {
             physical_port: u8,
         },
     } = .{ .Controller = .{} },
@@ -957,7 +957,7 @@ pub fn enable_port(self: *@This(), port: u8, value: bool) !void {
             .Mouse => |mouse| {
                 self.dc.maple.ports[port] = .{ .emulated = .{ .main = .{ .Mouse = .{ .subcapabilities = .{ mouse.subcapabilities, 0, 0 } } } } };
             },
-            .Physical => |physical| {
+            .DreamPicoPort => |physical| {
                 self.dc.maple.ports[port] = .{ .physical = .{ .physical_port = physical.physical_port } };
             },
         }

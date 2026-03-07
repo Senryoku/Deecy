@@ -890,7 +890,7 @@ pub fn draw(self: *@This()) !void {
                                     if (device_type != d.config.controllers[port].device) {
                                         try d.enable_port(port, false);
                                         switch (device_type) {
-                                            .Physical => d.config.controllers[port].device = .{ .Physical = .{ .physical_port = port } },
+                                            .DreamPicoPort => d.config.controllers[port].device = .{ .DreamPicoPort = .{ .physical_port = port } },
                                             inline else => |t| d.config.controllers[port].device = @unionInit(@TypeOf(d.config.controllers[port].device), @tagName(t), .{}),
                                         }
                                         try d.enable_port(port, true);
