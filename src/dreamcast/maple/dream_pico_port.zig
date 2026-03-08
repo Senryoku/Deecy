@@ -19,7 +19,7 @@ const CommandResult = enum(i16) {
     _,
 };
 
-extern fn dpp_send(dest: [*]u8, data: [*]u32, len: u32) callconv(.c) extern struct { result: CommandResult, words_transferred: u32 };
+extern fn dpp_send(dest: [*]align(1) u32, data: [*]u32, len: u32) callconv(.c) extern struct { result: CommandResult, words_transferred: u32 };
 
 pub fn send_command(dc: *Dreamcast, physical_port: u8, data: []const u32) u32 {
     const return_addr = data[0];
@@ -43,15 +43,7 @@ pub fn send_command(dc: *Dreamcast, physical_port: u8, data: []const u32) u32 {
     for (1..data.len - 1) |i|
         command_buffer[i] = @byteSwap(data[i + 1]);
 
-    const r = dpp_send(dc.ram[(return_addr & 0x03FFFFFF)..].ptr, &command_buffer, @intCast(data.len - 1));
-
-    if (r.result != .Success) {
-        log.err("dpp_send failed: {t}", .{r.result});
-        if (r.words_transferred == 0) {
-            ram_u32[0] = 0xFFFFFFFF; // "No connection"
-            return 0;
-        }
-    }
+    const r = dpp_send(ram_u32, &command_buffer, @intCast(data.len - 1));
 
     if (r.words_transferred > 0) {
         for (0..r.words_transferred) |i| ram_u32[i] = @byteSwap(ram_u32[i]);
