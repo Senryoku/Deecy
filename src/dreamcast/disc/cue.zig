@@ -79,7 +79,7 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
                     .data = try self._files.items[self._files.items.len - 1].create_full_view(),
                 });
                 log.debug("  [+] FAD: {X}, Type: {t}, Format: {d}, Pregap: {d}", .{ self.tracks.items[num - 1].fad, self.tracks.items[num - 1].track_type, self.tracks.items[num - 1].format, self.tracks.items[num - 1].pregap });
-                track_fad += self.tracks.items[num - 1].data.len / format;
+                track_fad += try self._files.items[self._files.items.len - 1].file_size() / format;
 
                 while (line_idx < lines.len and std.mem.startsWith(u8, lines[line_idx], "INDEX")) {
                     var index_args = std.mem.tokenizeAny(u8, lines[line_idx], " \t");
