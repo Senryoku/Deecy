@@ -463,7 +463,7 @@ pub fn refresh_games(self: *@This()) !void {
             defer walker.deinit();
 
             while (try walker.next()) |entry| {
-                if (entry.kind == .file and (std.mem.endsWith(u8, entry.path, ".gdi") or std.mem.endsWith(u8, entry.path, ".cdi") or std.mem.endsWith(u8, entry.path, ".chd"))) {
+                if (entry.kind == .file and (std.mem.endsWith(u8, entry.path, ".gdi") or std.mem.endsWith(u8, entry.path, ".cdi") or std.mem.endsWith(u8, entry.path, ".chd") or std.mem.endsWith(u8, entry.path, ".cue"))) {
                     const path = try std.fs.path.joinZ(self.allocator, &[_][]const u8{ dir_path, entry.path });
                     errdefer self.allocator.free(path);
                     const name = try self.allocator.dupeZ(u8, entry.basename);
@@ -543,7 +543,7 @@ pub fn draw(self: *@This()) !void {
                 if (exit_fullscreen) self.deecy.toggle_fullscreen();
                 defer if (exit_fullscreen) self.deecy.toggle_fullscreen();
 
-                const open_path = try nfd.openFileDialog("gdi,cdi,chd", null);
+                const open_path = try nfd.openFileDialog("gdi,cdi,chd,cue", null);
 
                 if (open_path) |path| {
                     defer nfd.freePath(path);
@@ -662,7 +662,7 @@ pub fn draw(self: *@This()) !void {
                 if (exit_fullscreen) self.deecy.toggle_fullscreen();
                 defer if (exit_fullscreen) self.deecy.toggle_fullscreen();
 
-                const open_path = try nfd.openFileDialog("gdi,cdi,chd", null);
+                const open_path = try nfd.openFileDialog("gdi,cdi,chd,cue", null);
 
                 const was_running = d.running;
                 if (was_running) d.pause();

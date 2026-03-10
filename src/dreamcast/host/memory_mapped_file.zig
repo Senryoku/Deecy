@@ -111,3 +111,15 @@ pub fn create_view(self: *@This(), offset: u64, size: u64) ![]u8 {
         }
     }
 }
+
+pub fn file_size(self: *const @This()) !u64 {
+    switch (builtin.os.tag) {
+        .windows => {
+            var size: std.os.windows.LARGE_INTEGER = undefined;
+            if (std.os.windows.kernel32.GetFileSizeEx(self.file, &size) == std.os.windows.FALSE)
+                return std.os.windows.unexpectedError(std.os.windows.GetLastError());
+            return @intCast(size);
+        },
+        else => return (try self.file.stat()).size,
+    }
+}
