@@ -132,9 +132,20 @@ pub fn get_format(self: *const @This()) DiscFormat {
 }
 
 pub fn get_first_data_track(self: *const @This()) ?Track {
-    for (self.tracks.items[self.get_area_boundaries(.DoubleDensity)[0]..]) |track| {
-        if (track.track_type == .Data)
-            return track;
+    switch (self.disc_format) {
+        .CDROM_XA => {
+            for (self.tracks.items) |track| {
+                if (track.track_type == .Data)
+                    return track;
+            }
+        },
+        .GDROM => {
+            for (self.tracks.items[self.get_area_boundaries(.DoubleDensity)[0]..]) |track| {
+                if (track.track_type == .Data)
+                    return track;
+            }
+        },
+        else => std.debug.panic("CUE: Unsupported disc format: {t}", .{self.disc_format}),
     }
     return null;
 }
