@@ -66,7 +66,7 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
                 try self._files.append(allocator, try MemoryMappedFile.init(allocator, track_file_path));
 
                 const track_type: Track.TrackType = if (std.mem.startsWith(u8, track_type_str, "MODE")) .Data else if (std.mem.startsWith(u8, track_type_str, "AUDIO")) .Audio else return error.UnsupportedTrackFormat;
-                const format: u32 = if (std.mem.eql(u8, track_type_str, "MODE1/2352")) 2352 else if (std.mem.eql(u8, track_type_str, "AUDIO")) 2352 else return error.UnsupportedTrackFormat;
+                const format = try sector_size(track_type_str);
                 const pregap = 0; // TODO
 
                 if (num != self.tracks.items.len + 1) return error.InvalidTrackNumber;
@@ -106,6 +106,21 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     for (self._files.items) |*file|
         file.deinit();
     self._files.deinit(allocator);
+}
+
+fn sector_size(str: []const u8) !u32 {
+    inline for (.{
+        .{ "AUDIO", 2352 },
+        .{ "MODE1/2048", 2048 },
+        .{ "MODE1/2352", 2352 },
+        .{ "MODE2/2336", 2336 },
+        .{ "MODE2/2352", 2352 },
+    }) |tuple| {
+        if (std.mem.eql(u8, tuple[0], str))
+            return tuple[1];
+    }
+    log.err("Unsupported track format: '{s}'", .{str});
+    return error.UnsupportedTrackFormat;
 }
 
 pub fn get_first_data_track(self: *const @This()) ?Track {
