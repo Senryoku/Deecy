@@ -880,100 +880,101 @@ pub fn draw(self: *@This()) !void {
                                 zgui.pushIntId(port);
                                 defer zgui.popId();
 
-                                var connected: bool = d.dc.maple.ports[port].main != null;
+                                var connected: bool = d.dc.maple.ports[port] != .none;
                                 if (zgui.checkbox("Plugged in", .{ .v = &connected })) {
-                                    try d.enable_controller(port, connected);
+                                    try d.enable_port(port, connected);
                                 }
 
                                 var device_type = std.meta.activeTag(d.config.controllers[port].device);
                                 if (zgui.comboFromEnum("Peripheral", &device_type)) {
                                     if (device_type != d.config.controllers[port].device) {
-                                        try d.enable_controller(port, false);
+                                        try d.enable_port(port, false);
                                         switch (device_type) {
+                                            .DreamPicoPort => d.config.controllers[port].device = .{ .DreamPicoPort = .{ .physical_port = port } },
                                             inline else => |t| d.config.controllers[port].device = @unionInit(@TypeOf(d.config.controllers[port].device), @tagName(t), .{}),
                                         }
-                                        try d.enable_controller(port, true);
+                                        try d.enable_port(port, true);
                                     }
                                 }
 
-                                if (d.dc.maple.ports[port].main) |*peripheral| {
-                                    switch (peripheral.*) {
-                                        .Controller => {
-                                            if (zgui.collapsingHeader(Icons.Gamepad ++ " Controller settings", .{ .default_open = true })) {
-                                                zgui.indent(.{});
-                                                defer zgui.unindent(.{});
-                                                var gamepad_id: ?zglfw.Gamepad = null;
-                                                if (d.controllers[port]) |j| {
-                                                    if (j.id.isPresent())
-                                                        gamepad_id = j.id.asGamepad();
+                                switch (d.dc.maple.ports[port]) {
+                                    .emulated => |*e| {
+                                        switch (e.main) {
+                                            .Controller => {
+                                                if (zgui.collapsingHeader(Icons.Gamepad ++ " Controller settings", .{ .default_open = true })) {
+                                                    zgui.indent(.{});
+                                                    defer zgui.unindent(.{});
+                                                    var gamepad_id: ?zglfw.Gamepad = null;
+                                                    if (d.controllers[port]) |j| {
+                                                        if (j.id.isPresent())
+                                                            gamepad_id = j.id.asGamepad();
+                                                    }
+                                                    const name = if (gamepad_id) |gamepad| gamepad.getName() else "None";
+                                                    if (zgui.beginCombo("Host Device", .{ .preview_value = name })) {
+                                                        for (available_controllers.items, 0..) |item, index| {
+                                                            if (available_controllers.items[index].id) |id| {
+                                                                if (zgui.selectable(item.name, .{ .selected = d.controllers[port] != null and d.controllers[port].?.id == id }))
+                                                                    d.controllers[port] = .{ .id = id };
+                                                            } else {
+                                                                if (zgui.selectable(item.name, .{ .selected = d.controllers[port] == null }))
+                                                                    d.controllers[port] = null;
+                                                            }
+                                                        }
+                                                        zgui.endCombo();
+                                                    }
+                                                    if (d.controllers[port]) |*j| {
+                                                        zgui.indent(.{});
+                                                        defer zgui.unindent(.{});
+                                                        _ = zgui.sliderFloat("Deadzone", .{ .v = &j.deadzone, .min = 0.0, .max = 1.0, .flags = .{} });
+                                                    }
+                                                    try @import("ui/controller_settings.zig").draw_controller_settings(d, port);
                                                 }
-                                                const name = if (gamepad_id) |gamepad| gamepad.getName() else "None";
-                                                if (zgui.beginCombo("Host Device", .{ .preview_value = name })) {
-                                                    for (available_controllers.items, 0..) |item, index| {
-                                                        if (available_controllers.items[index].id) |id| {
-                                                            if (zgui.selectable(item.name, .{ .selected = d.controllers[port] != null and d.controllers[port].?.id == id }))
-                                                                d.controllers[port] = .{ .id = id };
-                                                        } else {
-                                                            if (zgui.selectable(item.name, .{ .selected = d.controllers[port] == null }))
-                                                                d.controllers[port] = null;
+                                            },
+                                            .Keyboard => |*keyboard| {
+                                                if (zgui.collapsingHeader(Icons.Keyboard ++ " Keyboard settings", .{ .default_open = true })) {
+                                                    zgui.indent(.{});
+                                                    defer zgui.unindent(.{});
+
+                                                    if (d.get_dc_keyboard() != keyboard)
+                                                        zgui.textColored(common.Yellow, Icons.TriangleExclamation ++ " Another Keyboard is connected: This one won't be used.", .{});
+                                                    zgui.textColored(common.Yellow, Icons.TriangleExclamation ++ " Keyboard support is experimental.", .{});
+
+                                                    var subcapabilities: MapleModule.Keyboard.FunctionDefinition = @bitCast(keyboard.subcapabilities[0]);
+                                                    _ = zgui.comboFromEnum("Language", &subcapabilities.keyboard_language);
+                                                    _ = zgui.comboFromEnum("Layout", &subcapabilities.keyboard_type);
+                                                    _ = zgui.comboFromEnum("LED Control", &subcapabilities.led_control);
+                                                    if (subcapabilities.as_u32() != keyboard.subcapabilities[0]) {
+                                                        keyboard.subcapabilities[0] = subcapabilities.as_u32();
+                                                        d.config.controllers[port].device.Keyboard.subcapabilities = subcapabilities.as_u32();
+                                                    }
+                                                    if (zgui.collapsingHeader(Icons.Bug ++ " Debug View", .{ .default_open = false })) {
+                                                        zgui.indent(.{});
+                                                        defer zgui.unindent(.{});
+                                                        const status = keyboard.read();
+                                                        zgui.text("Modifier keys:", .{});
+                                                        inline for (std.meta.fields(@TypeOf(status.change_key_bits))) |field| {
+                                                            zgui.textColored(if (@field(status.change_key_bits, field.name)) common.Green else common.Red, "  {s}", .{field.name});
+                                                        }
+                                                        zgui.text("Key scan code array:", .{});
+                                                        for (status.key_scan_code_array) |key| {
+                                                            zgui.text("  {t}", .{key});
                                                         }
                                                     }
-                                                    zgui.endCombo();
                                                 }
-                                                if (d.controllers[port]) |*j| {
+                                            },
+                                            .Mouse => |*mouse| {
+                                                if (zgui.collapsingHeader(Icons.ComputerMouse ++ " Mouse settings", .{ .default_open = true })) {
                                                     zgui.indent(.{});
                                                     defer zgui.unindent(.{});
-                                                    _ = zgui.sliderFloat("Deadzone", .{ .v = &j.deadzone, .min = 0.0, .max = 1.0, .flags = .{} });
+                                                    if (d.get_dc_mouse() != mouse)
+                                                        zgui.textColored(common.Yellow, Icons.TriangleExclamation ++ " Another Mouse is connected: This one won't be used.", .{});
+                                                    zgui.textColored(common.Yellow, Icons.TriangleExclamation ++ " Mouse support is experimental.", .{});
                                                 }
-                                                try @import("ui/controller_settings.zig").draw_controller_settings(d, port);
-                                            }
-                                        },
-                                        .Keyboard => |*keyboard| {
-                                            if (zgui.collapsingHeader(Icons.Keyboard ++ " Keyboard settings", .{ .default_open = true })) {
-                                                zgui.indent(.{});
-                                                defer zgui.unindent(.{});
+                                            },
+                                            else => {},
+                                        }
 
-                                                if (d.get_dc_keyboard() != keyboard)
-                                                    zgui.textColored(common.Yellow, Icons.TriangleExclamation ++ " Another Keyboard is connected: This one won't be used.", .{});
-                                                zgui.textColored(common.Yellow, Icons.TriangleExclamation ++ " Keyboard support is experimental.", .{});
-
-                                                var subcapabilities: MapleModule.Keyboard.FunctionDefinition = @bitCast(keyboard.subcapabilities[0]);
-                                                _ = zgui.comboFromEnum("Language", &subcapabilities.keyboard_language);
-                                                _ = zgui.comboFromEnum("Layout", &subcapabilities.keyboard_type);
-                                                _ = zgui.comboFromEnum("LED Control", &subcapabilities.led_control);
-                                                if (subcapabilities.as_u32() != keyboard.subcapabilities[0]) {
-                                                    keyboard.subcapabilities[0] = subcapabilities.as_u32();
-                                                    d.config.controllers[port].device.Keyboard.subcapabilities = subcapabilities.as_u32();
-                                                }
-                                                if (zgui.collapsingHeader(Icons.Bug ++ " Debug View", .{ .default_open = false })) {
-                                                    zgui.indent(.{});
-                                                    defer zgui.unindent(.{});
-                                                    const status = keyboard.read();
-                                                    zgui.text("Modifier keys:", .{});
-                                                    inline for (std.meta.fields(@TypeOf(status.change_key_bits))) |field| {
-                                                        zgui.textColored(if (@field(status.change_key_bits, field.name)) common.Green else common.Red, "  {s}", .{field.name});
-                                                    }
-                                                    zgui.text("Key scan code array:", .{});
-                                                    for (status.key_scan_code_array) |key| {
-                                                        zgui.text("  {t}", .{key});
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        .Mouse => |*mouse| {
-                                            if (zgui.collapsingHeader(Icons.ComputerMouse ++ " Mouse settings", .{ .default_open = true })) {
-                                                zgui.indent(.{});
-                                                defer zgui.unindent(.{});
-                                                if (d.get_dc_mouse() != mouse)
-                                                    zgui.textColored(common.Yellow, Icons.TriangleExclamation ++ " Another Mouse is connected: This one won't be used.", .{});
-                                                zgui.textColored(common.Yellow, Icons.TriangleExclamation ++ " Mouse support is experimental.", .{});
-                                            }
-                                        },
-                                        else => {},
-                                    }
-
-                                    if (zgui.collapsingHeader("Expansion slots", .{ .default_open = true })) {
-                                        if (d.dc.maple.ports[port].main) |_| {
+                                        if (zgui.collapsingHeader("Expansion slots", .{ .default_open = true })) {
                                             inline for (0..2) |slot| {
                                                 zgui.pushIntId(slot);
                                                 defer zgui.popId();
@@ -990,7 +991,7 @@ pub fn draw(self: *@This()) !void {
                                                 }
                                                 zgui.indent(.{});
                                                 defer zgui.unindent(.{});
-                                                if (d.dc.maple.ports[port].subperipherals[slot]) |*s| {
+                                                if (e.subperipherals[slot]) |*s| {
                                                     switch (s.*) {
                                                         .VMU => |vmu| {
                                                             zgui.textDisabled("Loaded: {s}", .{vmu.backing_file_path});
@@ -1014,7 +1015,14 @@ pub fn draw(self: *@This()) !void {
                                                 }
                                             }
                                         }
-                                    }
+                                    },
+                                    .physical => |*p| {
+                                        var physical_port: enum(u8) { A = 0, B = 1, C = 2, D = 3 } = @enumFromInt(p.physical_port);
+                                        if (zgui.comboFromEnum("Physical port", &physical_port)) {
+                                            p.physical_port = @intFromEnum(physical_port);
+                                        }
+                                    },
+                                    .none => {},
                                 }
                                 zgui.endTabItem();
                             }

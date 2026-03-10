@@ -30,4 +30,4 @@ jobs:
             - uses: mlugg/setup-zig@v2
               with:
                 version: ${{ steps.zigversion.outputs.version }}
-            - run: zig build sh4_test --summary all
+            - run: zig build sh4_test -Ddreampicoport=false --summary all

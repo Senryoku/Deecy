@@ -263,6 +263,9 @@ const ControllerSettings = struct {
         Mouse: struct {
             subcapabilities: u32 = (DreamcastModule.Maple.Mouse.FunctionDefinition{}).as_u32(),
         },
+        DreamPicoPort: struct {
+            physical_port: u8,
+        },
     } = .{ .Controller = .{} },
     subperipherals: [2]union(enum) {
         None,
@@ -634,7 +637,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
 
     for (self.config.controllers, 0..) |c, idx| {
         if (c.enabled)
-            try self.enable_controller(@intCast(idx), true);
+            try self.enable_port(@intCast(idx), true);
     }
 
     try self.check_save_state_slots();
@@ -841,12 +844,17 @@ pub fn set_per_game_vmu(self: *@This(), value: bool) !void {
 }
 
 pub fn deinit_peripheral(self: *@This(), controller_idx: u8, slot: u8) void {
-    if (self.dc.maple.ports[controller_idx].subperipherals[slot]) |*peripheral| {
-        if (slot == 0 and peripheral.* == .VMU)
-            self.ui.vmu_displays[controller_idx].valid = false;
-        peripheral.deinit(self._allocator);
+    switch (self.dc.maple.ports[controller_idx]) {
+        .emulated => |*e| {
+            if (e.subperipherals[slot]) |*peripheral| {
+                if (slot == 0 and peripheral.* == .VMU)
+                    self.ui.vmu_displays[controller_idx].valid = false;
+                peripheral.deinit(self._allocator);
+            }
+            e.subperipherals[slot] = null;
+        },
+        else => {},
     }
-    self.dc.maple.ports[controller_idx].subperipherals[slot] = null;
 }
 
 fn VibrationCallback(comptime port: u8) *const fn (*Self, f32, f32) void {
@@ -874,7 +882,12 @@ pub fn init_peripheral(self: *@This(), port: u8, slot: u8) !void {
             try self.load_vmu(port, slot, vmu_path);
         },
         .VibrationPack => {
-            self.dc.maple.ports[port].subperipherals[slot] = .{ .VibrationPack = .init(.{ .function = @ptrCast(VibrationCallbacks[port]), .context = self }) };
+            switch (self.dc.maple.ports[port]) {
+                .emulated => |*e| {
+                    e.subperipherals[slot] = .{ .VibrationPack = .init(.{ .function = @ptrCast(VibrationCallbacks[port]), .context = self }) };
+                },
+                else => {},
+            }
         },
     }
 }
@@ -896,15 +909,20 @@ pub fn load_vmu(self: *@This(), port: u8, slot: u8, vmu_path: []const u8) !void 
 
     self.deinit_peripheral(port, slot);
 
-    self.dc.maple.ports[port].subperipherals[slot] = .{ .VMU = try .init(self._allocator, vmu_path) };
-    if (slot == 0) {
-        self.dc.maple.ports[port].subperipherals[slot].?.VMU.on_screen_update = .{ .function = @ptrCast(&switch (port) {
-            inline 0, 1, 2, 3 => |pidx| UI.vmu_screen_callback(pidx).callback,
-            else => unreachable,
-        }), .userdata = self.ui };
-        self.ui.vmu_displays[port].valid = true;
+    switch (self.dc.maple.ports[port]) {
+        .emulated => |*e| {
+            e.subperipherals[slot] = .{ .VMU = try .init(self._allocator, vmu_path) };
+            if (slot == 0) {
+                e.subperipherals[slot].?.VMU.on_screen_update = .{ .function = @ptrCast(&switch (port) {
+                    inline 0, 1, 2, 3 => |pidx| UI.vmu_screen_callback(pidx).callback,
+                    else => unreachable,
+                }), .userdata = self.ui };
+                self.ui.vmu_displays[port].valid = true;
+            }
+            e.subperipherals[slot].?.VMU.on_timer_alarm = .{ .function = @ptrCast(&vmu_alarm_callback), .userdata = self };
+        },
+        else => {},
     }
-    self.dc.maple.ports[port].subperipherals[slot].?.VMU.on_timer_alarm = .{ .function = @ptrCast(&vmu_alarm_callback), .userdata = self };
 }
 
 fn vmu_alarm_callback(self: *@This(), alw0: u8, ald0: u8, alw1: u8, ald1: u8) void {
@@ -926,26 +944,32 @@ fn vmu_alarm_callback(self: *@This(), alw0: u8, ald0: u8, alw1: u8, ald1: u8) vo
     if (alw1 != 0 or ald1 != 0) deecy_log.warn("Unimplemented VMU second alarm: W={X} D={X}", .{ alw1, ald1 });
 }
 
-pub fn enable_controller(self: *@This(), port: u8, value: bool) !void {
+pub fn enable_port(self: *@This(), port: u8, value: bool) !void {
     const config = &self.config.controllers[port];
     if (value) {
         switch (config.device) {
             .Controller => |controller| {
-                self.dc.maple.ports[port].main = .{ .Controller = .{ .subcapabilities = .{ @bitCast(controller.subcapabilities), 0, 0 } } };
+                self.dc.maple.ports[port] = .{ .emulated = .{ .main = .{ .Controller = .{ .subcapabilities = .{ @bitCast(controller.subcapabilities), 0, 0 } } } } };
             },
             .Keyboard => |keyboard| {
-                self.dc.maple.ports[port].main = .{ .Keyboard = .{ .subcapabilities = .{ keyboard.subcapabilities, 0, 0 } } };
+                self.dc.maple.ports[port] = .{ .emulated = .{ .main = .{ .Keyboard = .{ .subcapabilities = .{ keyboard.subcapabilities, 0, 0 } } } } };
             },
             .Mouse => |mouse| {
-                self.dc.maple.ports[port].main = .{ .Mouse = .{ .subcapabilities = .{ mouse.subcapabilities, 0, 0 } } };
+                self.dc.maple.ports[port] = .{ .emulated = .{ .main = .{ .Mouse = .{ .subcapabilities = .{ mouse.subcapabilities, 0, 0 } } } } };
+            },
+            .DreamPicoPort => |physical| {
+                self.dc.maple.ports[port] = .{ .physical = .{ .physical_port = physical.physical_port } };
             },
         }
-        inline for (0..config.subperipherals.len) |slot| {
-            try self.init_peripheral(port, slot);
+        if (self.dc.maple.ports[port] == .emulated) {
+            inline for (0..config.subperipherals.len) |slot| {
+                try self.init_peripheral(port, slot);
+            }
         }
     } else {
         self.ui.vmu_displays[port].valid = false;
         self.dc.maple.ports[port].deinit(self._allocator);
+        self.dc.maple.ports[port] = .none;
     }
     config.enabled = value;
 }
@@ -998,158 +1022,164 @@ pub fn stop_rumble(self: *@This()) void {
 
 pub fn poll_controllers(self: *@This()) void {
     for (0..4) |controller_idx| {
-        if (self.dc.maple.ports[controller_idx].main) |*guest_controller| {
-            switch (guest_controller.*) {
-                .Controller => |*c| {
-                    c.axis[0] = 0;
-                    c.axis[1] = 0;
-                    c.axis[2] = 128;
-                    c.axis[3] = 128;
-                    c.axis[4] = 128;
-                    c.axis[5] = 128;
+        switch (self.dc.maple.ports[controller_idx]) {
+            .emulated => |*e| {
+                switch (e.main) {
+                    .Controller => |*c| {
+                        c.axis[0] = 0;
+                        c.axis[1] = 0;
+                        c.axis[2] = 128;
+                        c.axis[3] = 128;
+                        c.axis[4] = 128;
+                        c.axis[5] = 128;
 
-                    var any_keyboard_key_pressed = false;
-                    const keyboard_bindings = self.config.keyboard_bindings[controller_idx];
-                    inline for ([_][]const u8{ "start", "up", "down", "left", "right", "a", "b", "x", "y" }) |button_name| {
-                        if (@field(keyboard_bindings, button_name)) |key| {
-                            const key_status = self.window.getKey(key);
-                            var button: DreamcastModule.Maple.Controller.Buttons = .{};
-                            @field(button, button_name) = 0;
-                            if (key_status == .press) {
-                                any_keyboard_key_pressed = true;
-                                c.press_buttons(button);
-                            } else if (key_status == .release) {
-                                c.release_buttons(button);
-                            }
-                        }
-                    }
-                    if (keyboard_bindings.right_trigger) |key|
-                        c.axis[0] = if (self.window.getKey(key) == .press) 255 else 0;
-                    if (keyboard_bindings.left_trigger) |key|
-                        c.axis[1] = if (self.window.getKey(key) == .press) 255 else 0;
-                    if (keyboard_bindings.left_stick_left) |key| {
-                        if (self.window.getKey(key) == .press) c.axis[2] = 0;
-                    }
-                    if (keyboard_bindings.left_stick_right) |key| {
-                        if (self.window.getKey(key) == .press) c.axis[2] = 255;
-                    }
-                    if (keyboard_bindings.left_stick_up) |key| {
-                        if (self.window.getKey(key) == .press) c.axis[3] = 0;
-                    }
-                    if (keyboard_bindings.left_stick_down) |key| {
-                        if (self.window.getKey(key) == .press) c.axis[3] = 255;
-                    }
-                    if (keyboard_bindings.right_stick_left) |key| {
-                        if (self.window.getKey(key) == .press) c.axis[4] = 0;
-                    }
-                    if (keyboard_bindings.right_stick_right) |key| {
-                        if (self.window.getKey(key) == .press) c.axis[4] = 255;
-                    }
-                    if (keyboard_bindings.right_stick_up) |key| {
-                        if (self.window.getKey(key) == .press) c.axis[5] = 0;
-                    }
-                    if (keyboard_bindings.right_stick_down) |key| {
-                        if (self.window.getKey(key) == .press) c.axis[5] = 255;
-                    }
-
-                    if (c.axis[0] != 0 or c.axis[1] != 0 or c.axis[2] != 128 or c.axis[3] != 128 or c.axis[4] != 128 or c.axis[5] != 128)
-                        any_keyboard_key_pressed = true;
-
-                    if (!any_keyboard_key_pressed) {
-                        if (self.controllers[controller_idx]) |*host_controller| {
-                            if (host_controller.id.isPresent()) {
-                                if (host_controller.id.asGamepad()) |gamepad| {
-                                    const gamepad_state = gamepad.getState() catch continue;
-                                    defer host_controller.last_state = gamepad_state;
-
-                                    inline for (std.meta.fields(zglfw.Gamepad.Button)) |button| {
-                                        if (gamepad_state.buttons[button.value] == .press and host_controller.last_state.buttons[button.value] == .release)
-                                            self.shortcuts.on_key(.{ .controller = @enumFromInt(button.value) });
-                                    }
-
-                                    const config = self.config.controllers_bindings[controller_idx];
-                                    const gamepad_binds: [9]struct { ?zglfw.Gamepad.Button, DreamcastModule.Maple.Controller.Buttons } = .{
-                                        .{ config.start, .{ .start = 0 } },
-                                        .{ config.up, .{ .up = 0 } },
-                                        .{ config.down, .{ .down = 0 } },
-                                        .{ config.left, .{ .left = 0 } },
-                                        .{ config.right, .{ .right = 0 } },
-                                        .{ config.a, .{ .a = 0 } },
-                                        .{ config.b, .{ .b = 0 } },
-                                        .{ config.x, .{ .x = 0 } },
-                                        .{ config.y, .{ .y = 0 } },
-                                    };
-                                    for (gamepad_binds) |keybind| {
-                                        if (keybind[0]) |button| {
-                                            const key_status = gamepad_state.buttons[@intFromEnum(button)];
-                                            switch (key_status) {
-                                                .press => c.press_buttons(keybind[1]),
-                                                .release => c.release_buttons(keybind[1]),
-                                            }
-                                        }
-                                    }
-                                    if (config.right_trigger) |axis|
-                                        c.axis[0] = @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255);
-                                    if (config.left_trigger) |axis|
-                                        c.axis[1] = @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255);
-
-                                    const capabilities: DreamcastModule.Maple.Controller.InputCapabilities = @bitCast(c.subcapabilities[0]);
-                                    inline for ([_]struct { host: ?zglfw.Gamepad.Axis, guest: u8 }{
-                                        .{ .host = config.left_stick_left_right, .guest = 2 },
-                                        .{ .host = config.left_stick_up_down, .guest = 3 },
-                                        .{ .host = config.right_stick_left_right, .guest = 4 },
-                                        .{ .host = config.right_stick_up_down, .guest = 5 },
-                                    }, 0..) |binding, idx| {
-                                        if (@field(capabilities, ([_][]const u8{ "analogHorizontal", "analogVertical", "analogHorizontal2", "analogVertical2" })[idx]) != 0) {
-                                            if (binding.host) |host_axis| {
-                                                var value = gamepad_state.axes[@intFromEnum(host_axis)];
-                                                if (@abs(value) < host_controller.deadzone)
-                                                    value = 0.0;
-                                                // TODO: Remap with deadzone?
-                                                value = value * 0.5 + 0.5;
-                                                c.axis[binding.guest] = @intFromFloat(std.math.ceil(value * 255));
-                                            }
-                                        }
-                                    }
-                                    // Digital alternatives for all axes
-                                    for ([_]struct { host: ?zglfw.Gamepad.Button, guest_axis: u8, value: u8 }{
-                                        .{ .host = config.right_trigger_button, .guest_axis = 0, .value = 255 },
-                                        .{ .host = config.left_trigger_button, .guest_axis = 1, .value = 255 },
-                                        .{ .host = config.left_stick_up_button, .guest_axis = 3, .value = 0 },
-                                        .{ .host = config.left_stick_down_button, .guest_axis = 3, .value = 255 },
-                                        .{ .host = config.left_stick_left_button, .guest_axis = 2, .value = 0 },
-                                        .{ .host = config.left_stick_right_button, .guest_axis = 2, .value = 255 },
-                                        .{ .host = config.right_stick_up_button, .guest_axis = 5, .value = 0 },
-                                        .{ .host = config.right_stick_down_button, .guest_axis = 5, .value = 255 },
-                                        .{ .host = config.right_stick_left_button, .guest_axis = 4, .value = 0 },
-                                        .{ .host = config.right_stick_right_button, .guest_axis = 4, .value = 255 },
-                                    }) |entry| {
-                                        if (entry.host) |button| {
-                                            const key_status = gamepad_state.buttons[@intFromEnum(button)];
-                                            switch (key_status) {
-                                                .press => c.axis[entry.guest_axis] = entry.value,
-                                                else => {},
-                                            }
-                                        }
-                                    }
+                        var any_keyboard_key_pressed = false;
+                        const keyboard_bindings = self.config.keyboard_bindings[controller_idx];
+                        inline for ([_][]const u8{ "start", "up", "down", "left", "right", "a", "b", "x", "y" }) |button_name| {
+                            if (@field(keyboard_bindings, button_name)) |key| {
+                                const key_status = self.window.getKey(key);
+                                var button: DreamcastModule.Maple.Controller.Buttons = .{};
+                                @field(button, button_name) = 0;
+                                if (key_status == .press) {
+                                    any_keyboard_key_pressed = true;
+                                    c.press_buttons(button);
+                                } else if (key_status == .release) {
+                                    c.release_buttons(button);
                                 }
-                            } else {
-                                // Not valid anymore? Disconnected?
-                                self.controllers[controller_idx] = null;
                             }
                         }
-                    }
-                },
-                else => {},
-            }
+                        if (keyboard_bindings.right_trigger) |key|
+                            c.axis[0] = if (self.window.getKey(key) == .press) 255 else 0;
+                        if (keyboard_bindings.left_trigger) |key|
+                            c.axis[1] = if (self.window.getKey(key) == .press) 255 else 0;
+                        if (keyboard_bindings.left_stick_left) |key| {
+                            if (self.window.getKey(key) == .press) c.axis[2] = 0;
+                        }
+                        if (keyboard_bindings.left_stick_right) |key| {
+                            if (self.window.getKey(key) == .press) c.axis[2] = 255;
+                        }
+                        if (keyboard_bindings.left_stick_up) |key| {
+                            if (self.window.getKey(key) == .press) c.axis[3] = 0;
+                        }
+                        if (keyboard_bindings.left_stick_down) |key| {
+                            if (self.window.getKey(key) == .press) c.axis[3] = 255;
+                        }
+                        if (keyboard_bindings.right_stick_left) |key| {
+                            if (self.window.getKey(key) == .press) c.axis[4] = 0;
+                        }
+                        if (keyboard_bindings.right_stick_right) |key| {
+                            if (self.window.getKey(key) == .press) c.axis[4] = 255;
+                        }
+                        if (keyboard_bindings.right_stick_up) |key| {
+                            if (self.window.getKey(key) == .press) c.axis[5] = 0;
+                        }
+                        if (keyboard_bindings.right_stick_down) |key| {
+                            if (self.window.getKey(key) == .press) c.axis[5] = 255;
+                        }
+
+                        if (c.axis[0] != 0 or c.axis[1] != 0 or c.axis[2] != 128 or c.axis[3] != 128 or c.axis[4] != 128 or c.axis[5] != 128)
+                            any_keyboard_key_pressed = true;
+
+                        if (!any_keyboard_key_pressed) {
+                            if (self.controllers[controller_idx]) |*host_controller| {
+                                if (host_controller.id.isPresent()) {
+                                    if (host_controller.id.asGamepad()) |gamepad| {
+                                        const gamepad_state = gamepad.getState() catch continue;
+                                        defer host_controller.last_state = gamepad_state;
+
+                                        inline for (std.meta.fields(zglfw.Gamepad.Button)) |button| {
+                                            if (gamepad_state.buttons[button.value] == .press and host_controller.last_state.buttons[button.value] == .release)
+                                                self.shortcuts.on_key(.{ .controller = @enumFromInt(button.value) });
+                                        }
+
+                                        const config = self.config.controllers_bindings[controller_idx];
+                                        const gamepad_binds: [9]struct { ?zglfw.Gamepad.Button, DreamcastModule.Maple.Controller.Buttons } = .{
+                                            .{ config.start, .{ .start = 0 } },
+                                            .{ config.up, .{ .up = 0 } },
+                                            .{ config.down, .{ .down = 0 } },
+                                            .{ config.left, .{ .left = 0 } },
+                                            .{ config.right, .{ .right = 0 } },
+                                            .{ config.a, .{ .a = 0 } },
+                                            .{ config.b, .{ .b = 0 } },
+                                            .{ config.x, .{ .x = 0 } },
+                                            .{ config.y, .{ .y = 0 } },
+                                        };
+                                        for (gamepad_binds) |keybind| {
+                                            if (keybind[0]) |button| {
+                                                const key_status = gamepad_state.buttons[@intFromEnum(button)];
+                                                switch (key_status) {
+                                                    .press => c.press_buttons(keybind[1]),
+                                                    .release => c.release_buttons(keybind[1]),
+                                                }
+                                            }
+                                        }
+                                        if (config.right_trigger) |axis|
+                                            c.axis[0] = @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255);
+                                        if (config.left_trigger) |axis|
+                                            c.axis[1] = @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255);
+
+                                        const capabilities: DreamcastModule.Maple.Controller.InputCapabilities = @bitCast(c.subcapabilities[0]);
+                                        inline for ([_]struct { host: ?zglfw.Gamepad.Axis, guest: u8 }{
+                                            .{ .host = config.left_stick_left_right, .guest = 2 },
+                                            .{ .host = config.left_stick_up_down, .guest = 3 },
+                                            .{ .host = config.right_stick_left_right, .guest = 4 },
+                                            .{ .host = config.right_stick_up_down, .guest = 5 },
+                                        }, 0..) |binding, idx| {
+                                            if (@field(capabilities, ([_][]const u8{ "analogHorizontal", "analogVertical", "analogHorizontal2", "analogVertical2" })[idx]) != 0) {
+                                                if (binding.host) |host_axis| {
+                                                    var value = gamepad_state.axes[@intFromEnum(host_axis)];
+                                                    if (@abs(value) < host_controller.deadzone)
+                                                        value = 0.0;
+                                                    // TODO: Remap with deadzone?
+                                                    value = value * 0.5 + 0.5;
+                                                    c.axis[binding.guest] = @intFromFloat(std.math.ceil(value * 255));
+                                                }
+                                            }
+                                        }
+                                        // Digital alternatives for all axes
+                                        for ([_]struct { host: ?zglfw.Gamepad.Button, guest_axis: u8, value: u8 }{
+                                            .{ .host = config.right_trigger_button, .guest_axis = 0, .value = 255 },
+                                            .{ .host = config.left_trigger_button, .guest_axis = 1, .value = 255 },
+                                            .{ .host = config.left_stick_up_button, .guest_axis = 3, .value = 0 },
+                                            .{ .host = config.left_stick_down_button, .guest_axis = 3, .value = 255 },
+                                            .{ .host = config.left_stick_left_button, .guest_axis = 2, .value = 0 },
+                                            .{ .host = config.left_stick_right_button, .guest_axis = 2, .value = 255 },
+                                            .{ .host = config.right_stick_up_button, .guest_axis = 5, .value = 0 },
+                                            .{ .host = config.right_stick_down_button, .guest_axis = 5, .value = 255 },
+                                            .{ .host = config.right_stick_left_button, .guest_axis = 4, .value = 0 },
+                                            .{ .host = config.right_stick_right_button, .guest_axis = 4, .value = 255 },
+                                        }) |entry| {
+                                            if (entry.host) |button| {
+                                                const key_status = gamepad_state.buttons[@intFromEnum(button)];
+                                                switch (key_status) {
+                                                    .press => c.axis[entry.guest_axis] = entry.value,
+                                                    else => {},
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Not valid anymore? Disconnected?
+                                    self.controllers[controller_idx] = null;
+                                }
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            },
+            else => {},
         }
     }
 }
 
 pub fn get_dc_keyboard(self: *@This()) ?*DreamcastModule.Maple.Keyboard {
     for (&self.dc.maple.ports) |*port| {
-        if (port.main) |*peripheral| {
-            if (peripheral.* == .Keyboard) return &peripheral.Keyboard;
+        switch (port.*) {
+            .emulated => |*e| {
+                if (e.main == .Keyboard) return &e.main.Keyboard;
+            },
+            else => {},
         }
     }
     return null;
@@ -1157,8 +1187,11 @@ pub fn get_dc_keyboard(self: *@This()) ?*DreamcastModule.Maple.Keyboard {
 
 pub fn get_dc_mouse(self: *@This()) ?*DreamcastModule.Maple.Mouse {
     for (&self.dc.maple.ports) |*port| {
-        if (port.main) |*peripheral| {
-            if (peripheral.* == .Mouse) return &peripheral.Mouse;
+        switch (port.*) {
+            .emulated => |*e| {
+                if (e.main == .Mouse) return &e.main.Mouse;
+            },
+            else => {},
         }
     }
     return null;
