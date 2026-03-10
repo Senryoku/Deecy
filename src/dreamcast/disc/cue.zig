@@ -6,7 +6,9 @@ const MemoryMappedFile = @import("../host/memory_mapped_file.zig");
 const CD = @import("iso9660.zig");
 const Track = @import("track.zig");
 const Session = @import("session.zig");
+const DiscFormat = @import("disc.zig").DiscFormat;
 
+disc_format: DiscFormat = .CDROM_XA,
 tracks: std.ArrayList(Track) = .empty,
 
 _files: std.ArrayList(MemoryMappedFile) = .empty,
@@ -35,8 +37,10 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
     var line_idx: u32 = 0;
     while (line_idx < lines.len) {
         if (std.mem.startsWith(u8, lines[line_idx], "REM")) {
-            if (std.mem.endsWith(u8, lines[line_idx], "HIGH-DENSITY AREA"))
+            if (std.mem.endsWith(u8, lines[line_idx], "HIGH-DENSITY AREA")) {
+                self.disc_format = .GDROM;
                 track_fad = 45150;
+            }
             line_idx += 1;
         } else if (std.mem.startsWith(u8, lines[line_idx], "FILE")) {
             var filename: []const u8 = undefined;
@@ -123,6 +127,10 @@ fn sector_size(str: []const u8) !u32 {
     return error.UnsupportedTrackFormat;
 }
 
+pub fn get_format(self: *const @This()) DiscFormat {
+    return self.disc_format;
+}
+
 pub fn get_first_data_track(self: *const @This()) ?Track {
     for (self.tracks.items[self.get_area_boundaries(.DoubleDensity)[0]..]) |track| {
         if (track.track_type == .Data)
@@ -146,26 +154,42 @@ pub fn load_sectors_raw(self: *const @This(), fad: u32, count: u32, dest: []u8) 
     return track.load_sectors_raw(fad, count, dest);
 }
 
-pub fn get_session_count(_: *const @This()) u32 {
-    return 2;
+pub fn get_session_count(self: *const @This()) u32 {
+    return switch (self.disc_format) {
+        .CDROM_XA => 1,
+        .GDROM => 2,
+        else => std.debug.panic("CUE: Unsupported disc format: {t}", .{self.disc_format}),
+    };
 }
 
 pub fn get_session(self: *const @This(), session_number: u32) Session {
-    return switch (session_number) {
-        1 => .{
-            .first_track = 0,
-            .last_track = 1,
-            .start_fad = 0,
-            .end_fad = @intCast(self.tracks.items[1].get_end_fad()),
+    switch (self.disc_format) {
+        .CDROM_XA => return switch (session_number) {
+            1 => .{
+                .first_track = 0,
+                .last_track = @intCast(self.tracks.items.len - 1),
+                .start_fad = self.tracks.items[0].fad,
+                .end_fad = @intCast(self.tracks.items[self.tracks.items.len - 1].get_end_fad()),
+            },
+            else => std.debug.panic("CUE: Invalid session number: {d}", .{session_number}),
         },
-        2 => .{
-            .first_track = 2,
-            .last_track = @intCast(self.tracks.items.len - 1),
-            .start_fad = self.tracks.items[2].fad,
-            .end_fad = @intCast(self.tracks.items[self.tracks.items.len - 1].get_end_fad()),
+        .GDROM => return switch (session_number) {
+            1 => .{
+                .first_track = 0,
+                .last_track = 1,
+                .start_fad = 0,
+                .end_fad = @intCast(self.tracks.items[1].get_end_fad()),
+            },
+            2 => .{
+                .first_track = 2,
+                .last_track = @intCast(self.tracks.items.len - 1),
+                .start_fad = self.tracks.items[2].fad,
+                .end_fad = @intCast(self.tracks.items[self.tracks.items.len - 1].get_end_fad()),
+            },
+            else => std.debug.panic("CUE: Invalid session number: {d}", .{session_number}),
         },
-        else => std.debug.panic("CUE: Invalid session number: {d}", .{session_number}),
-    };
+        else => std.debug.panic("CUE: Unsupported disc format: {t}", .{self.disc_format}),
+    }
 }
 
 pub fn get_area_boundaries(self: *const @This(), area: Session.Area) [2]u32 {

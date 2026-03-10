@@ -48,7 +48,7 @@ pub const Disc = union(enum) {
         switch (self.*) {
             .GDI => return .GDROM,
             .CHD => return .GDROM,
-            .CUE => return .GDROM,
+            .CUE => |cue| return cue.get_format(),
             .CDI => return .CDROM_XA,
         }
     }
