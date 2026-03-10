@@ -72,18 +72,20 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
                 const track_type: Track.TrackType = if (std.mem.startsWith(u8, track_type_str, "MODE")) .Data else if (std.mem.startsWith(u8, track_type_str, "AUDIO")) .Audio else return error.UnsupportedTrackFormat;
                 const format = try sector_size(track_type_str);
                 const pregap = 0; // TODO
+                const sector_count = try self._files.items[self._files.items.len - 1].file_size() / format;
 
                 if (num != self.tracks.items.len + 1) return error.InvalidTrackNumber;
                 try self.tracks.append(allocator, .{
                     .num = num,
                     .fad = @intCast(track_fad),
+                    .end_fad = @intCast(track_fad + sector_count),
                     .track_type = track_type,
                     .format = format,
                     .pregap = pregap,
                     .data = try self._files.items[self._files.items.len - 1].create_full_view(),
                 });
                 log.debug("  [+] FAD: {X}, Type: {t}, Format: {d}, Pregap: {d}", .{ self.tracks.items[num - 1].fad, self.tracks.items[num - 1].track_type, self.tracks.items[num - 1].format, self.tracks.items[num - 1].pregap });
-                track_fad += try self._files.items[self._files.items.len - 1].file_size() / format;
+                track_fad += sector_count;
 
                 while (line_idx < lines.len and std.mem.startsWith(u8, lines[line_idx], "INDEX")) {
                     var index_args = std.mem.tokenizeAny(u8, lines[line_idx], " \t");
@@ -180,7 +182,7 @@ pub fn get_session(self: *const @This(), session_number: u32) Session {
                 .first_track = 0,
                 .last_track = @intCast(self.tracks.items.len - 1),
                 .start_fad = self.tracks.items[0].fad,
-                .end_fad = @intCast(self.tracks.items[self.tracks.items.len - 1].get_end_fad()),
+                .end_fad = self.tracks.items[self.tracks.items.len - 1].get_end_fad(),
             },
             else => std.debug.panic("CUE: Invalid session number: {d}", .{session_number}),
         },
@@ -195,7 +197,7 @@ pub fn get_session(self: *const @This(), session_number: u32) Session {
                 .first_track = 2,
                 .last_track = @intCast(self.tracks.items.len - 1),
                 .start_fad = self.tracks.items[2].fad,
-                .end_fad = @intCast(self.tracks.items[self.tracks.items.len - 1].get_end_fad()),
+                .end_fad = self.tracks.items[self.tracks.items.len - 1].get_end_fad(),
             },
             else => std.debug.panic("CUE: Invalid session number: {d}", .{session_number}),
         },

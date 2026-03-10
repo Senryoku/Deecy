@@ -123,6 +123,7 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
             try self.tracks.append(allocator, .{
                 .num = @truncate(self.tracks.items.len + 1),
                 .fad = start_lba + pregap,
+                .end_fad = start_lba + pregap + length,
                 .track_type = @enumFromInt(sector_type),
                 .format = sector_size,
                 .pregap = pregap,

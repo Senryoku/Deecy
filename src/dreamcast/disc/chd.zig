@@ -213,6 +213,7 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
                         try self.tracks.append(allocator, .{
                             .num = track_num,
                             .fad = current_fad,
+                            .end_fad = @intCast(current_fad + frames),
                             .track_type = track_type,
                             .format = format,
                             .pregap = 0,
@@ -654,13 +655,13 @@ pub fn get_session(self: *const @This(), session_number: u32) Session {
             .first_track = 0,
             .last_track = 1,
             .start_fad = 0,
-            .end_fad = @intCast(self.tracks.items[1].get_end_fad()),
+            .end_fad = self.tracks.items[1].get_end_fad(),
         },
         2 => .{
             .first_track = 2,
             .last_track = @intCast(self.tracks.items.len - 1),
             .start_fad = self.tracks.items[2].fad,
-            .end_fad = @intCast(self.tracks.items[self.tracks.items.len - 1].get_end_fad()),
+            .end_fad = self.tracks.items[self.tracks.items.len - 1].get_end_fad(),
         },
         else => std.debug.panic("CDH: Invalid session number: {d}", .{session_number}),
     };

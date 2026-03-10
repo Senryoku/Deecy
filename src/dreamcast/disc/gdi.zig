@@ -61,6 +61,7 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
         self.tracks.items[num - 1] = .{
             .num = num,
             .fad = offset,
+            .end_fad = @intCast(offset + try self._files.items[self._files.items.len - 1].file_size() / format),
             .track_type = @enumFromInt(track_type_int),
             .format = format,
             .pregap = pregap,
@@ -111,13 +112,13 @@ pub fn get_session(self: *const @This(), session_number: u32) Session {
             .first_track = 0,
             .last_track = 1,
             .start_fad = 0,
-            .end_fad = @intCast(self.tracks.items[1].get_end_fad()),
+            .end_fad = self.tracks.items[1].get_end_fad(),
         },
         2 => .{
             .first_track = 2,
             .last_track = @intCast(self.tracks.items.len - 1),
             .start_fad = self.tracks.items[2].fad,
-            .end_fad = @intCast(self.tracks.items[self.tracks.items.len - 1].get_end_fad()),
+            .end_fad = self.tracks.items[self.tracks.items.len - 1].get_end_fad(),
         },
         else => std.debug.panic("GDI: Invalid session number: {d}", .{session_number}),
     };

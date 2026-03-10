@@ -6,13 +6,14 @@ pub const TrackType = enum(u8) { Audio = 0, Data = 4 };
 
 num: u32,
 fad: u32, // Start FAD
+end_fad: u32,
 track_type: TrackType,
 format: u32, // Sector size
 pregap: u32,
 data: []const u8,
 
 pub fn get_end_fad(self: *const @This()) u32 {
-    return @intCast(self.fad + self.data.len / self.format);
+    return self.end_fad;
 }
 
 pub fn header_size(self: *const @This()) u32 {
