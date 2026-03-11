@@ -92,6 +92,14 @@ pub const IRBlock = struct {
         try self.instructions.append(self._allocator, .{ .Pop = op });
     }
 
+    pub fn @"or"(self: *@This(), dst: Operand, src: Operand) !void {
+        try self.instructions.append(self._allocator, .{ .Or = .{ .dst = dst, .src = src } });
+    }
+
+    pub fn @"and"(self: *@This(), dst: Operand, src: Operand) !void {
+        try self.instructions.append(self._allocator, .{ .And = .{ .dst = dst, .src = src } });
+    }
+
     pub fn add(self: *@This(), dst: Operand, src: Operand) !void {
         try self.instructions.append(self._allocator, .{ .Add = .{ .dst = dst, .src = src } });
     }

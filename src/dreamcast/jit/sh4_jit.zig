@@ -1639,7 +1639,7 @@ fn get_cached_physical_pc(cpu: *sh4.SH4) u32 {
 /// A call to the handler will return the physical address in the lower 32bits, and a non-zero value in the upper 32bits if an exception occurred.
 fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_size: u32) type {
     return struct {
-        fn handler(_: *sh4.SH4, virtual_addr: u32) callconv(Architecture.CallingConvention) packed struct(u64) { address: u32, exception: u32 } {
+        fn handler(origin_pc: u32, virtual_addr: u32) callconv(Architecture.CallingConvention) u32 {
             const cpu = get_cpu();
             std.debug.assert(cpu._mmu_state == .Full);
 
@@ -1650,15 +1650,17 @@ fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime ac
             if (unaligned or unauthorized) {
                 @branchHint(.unlikely);
                 sh4_jit_log.warn("DataAddressError: {t}({d}) Addr={X:0>8}, SR.MD={d}", .{ access_type, access_size, virtual_addr, cpu.sr.md });
+                cpu.pc = origin_pc;
                 cpu.report_address_exception(virtual_addr);
                 cpu.jump_to_exception(switch (access_type) {
                     .Read => .DataAddressErrorRead,
                     .Write => .DataAddressErrorWrite,
                 });
-                return .{ .address = 0, .exception = 1 };
+                return 0xFFFFFFFF;
             }
 
             const physical = cpu.translate_address(access_type, virtual_addr) catch |err| {
+                cpu.pc = origin_pc;
                 cpu.report_address_exception(virtual_addr);
                 const exception: sh4.Exception = switch (err) {
                     error.DataTLBMissRead => if (access_type == .Read) .DataTLBMissRead else unreachable,
@@ -1671,13 +1673,13 @@ fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime ac
                     error.DataTLBMultipleHit => if (sh4.EmulateUTLBMultipleHit) .DataTLBMultipleHit else unreachable,
                 };
                 cpu.jump_to_exception(exception);
-                return .{ .address = 0, .exception = 1 };
+                return 0xFFFFFFFF;
             };
             if (Optimizations.mmu_translation_cache) {
                 const cache_index = MMUCacheEntry.get_index(MMUCacheEntryCount, virtual_addr);
                 MMUCache[cache_index].update(virtual_addr, physical);
             }
-            return .{ .address = physical, .exception = 0 };
+            return physical;
         }
     };
 }
@@ -1706,7 +1708,7 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
 
         // Select the cache entry based on the VPN
         try block.mov(.{ .reg = CacheIndex }, CurrentVPN);
-        try block.append(.{ .And = .{ .dst = .{ .reg = CacheIndex }, .src = .{ .imm32 = MMUCacheEntryCount - 1 } } });
+        try block.@"and"(.{ .reg = CacheIndex }, .{ .imm32 = MMUCacheEntryCount - 1 });
 
         // Compare with cached VPN
         try block.cmp(CurrentVPN, .{ .mem = .{ .base = CacheBase, .index = CacheIndex, .scale = ._8, .displacement = @offsetOf(MMUCacheEntry, "vpn"), .size = 32 } });
@@ -1725,42 +1727,26 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
 
     std.debug.assert(register_to_save != ArgRegisters[0]);
 
-    // Backup current PC (mostly in case we're in a branch delay slot)
-    try block.mov(.{ .reg = ArgRegisters[0] }, sh4_mem("pc"));
-    try block.push(.{ .reg64 = ArgRegisters[0] });
-
-    if (ctx.in_delay_slot) {
-        try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc - 2 });
-    } else {
-        try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
-    }
-
     if (register_to_save) |r| {
         try block.push(.{ .reg64 = r });
-    } else {
-        try block.push(.{ .reg64 = ArgRegisters[0] }); // Stack alignment
+        try block.push(.{ .reg64 = r });
     }
 
+    // Pass the current PC to the handler, we'll use it if an exception is raised.
+    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm32 = if (ctx.in_delay_slot) ctx.current_pc - 2 else ctx.current_pc });
     if (addr != ArgRegisters[1])
         try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = addr });
     try call(block, ctx, runtime_mmu_translation(access_type, access_size).handler);
+    try block.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = 0xFFFFFFFF });
     if (addr != ReturnRegister)
         try block.mov(.{ .reg = addr }, .{ .reg = ReturnRegister });
 
-    // Check if an exception was raised.
-    try block.mov(.{ .reg64 = ArgRegisters[0] }, .{ .imm64 = 0xFFFFFFFF });
-    try block.cmp(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[0] });
-
     if (register_to_save) |r| {
         try block.pop(.{ .reg64 = r });
-    } else {
-        try block.pop(.{ .reg64 = ArgRegisters[0] });
+        try block.pop(.{ .reg64 = r });
     }
-    try block.pop(.{ .reg64 = ArgRegisters[0] });
-    // Terminate the block immediately if an exception was raised.
-    try ctx.add_jump_to_end(try block.jmp(.Above));
 
-    try block.mov(sh4_mem("pc"), .{ .reg = ArgRegisters[0] });
+    try ctx.add_jump_to_end(try block.jmp(.Equal));
 
     if (vpn_match) |j| j.patch();
 }
