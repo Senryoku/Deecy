@@ -432,7 +432,7 @@ pub fn compile(self: *@This()) !void {
             if (b_temp or x_temp) {
                 try b.mov(EAX, .{ .imm32 = instruction.TRA });
                 try b.add(EAX, MDEC_CT_op);
-                try b.append(.{ .And = .{ .dst = EAX, .src = .{ .imm32 = 0x7F } } });
+                try b.@"and"(EAX, .{ .imm32 = 0x7F });
                 const TRA_op: Architecture.Operand = .{ .mem = .{ .base = RegistersBase, .index = EAX.reg, .scale = ._4, .displacement = 4 * TEMP_base, .size = 32 } };
                 if (x_temp and b_temp) {
                     try b.mov(X, TRA_op);
@@ -478,7 +478,7 @@ pub fn compile(self: *@This()) !void {
                 3 => {
                     try b.mov(Y, Y_REG);
                     try b.sar(Y, 4);
-                    try b.append(.{ .And = .{ .dst = Y, .src = .{ .imm32 = 0xFFF } } });
+                    try b.@"and"(Y, .{ .imm32 = 0xFFF });
                 },
             }
 
@@ -516,7 +516,7 @@ pub fn compile(self: *@This()) !void {
         if (instruction.TWT) {
             try b.mov(EAX, .{ .imm32 = instruction.TWA });
             try b.add(EAX, MDEC_CT_op);
-            try b.append(.{ .And = .{ .dst = EAX, .src = .{ .imm32 = 0x7F } } });
+            try b.@"and"(EAX, .{ .imm32 = 0x7F });
             try b.mov(.{ .mem = .{ .base = RegistersBase, .index = EAX.reg, .scale = ._4, .displacement = 4 * TEMP_base, .size = 32 } }, SHIFTED);
         }
 
@@ -524,11 +524,11 @@ pub fn compile(self: *@This()) !void {
             try b.mov(FRC_REG, SHIFTED);
             switch (instruction.SHFT) {
                 3 => {
-                    try b.append(.{ .And = .{ .dst = FRC_REG, .src = .{ .imm32 = 0xFFF } } });
+                    try b.@"and"(FRC_REG, .{ .imm32 = 0xFFF });
                 },
                 else => {
                     try b.shr(FRC_REG, 11);
-                    try b.append(.{ .And = .{ .dst = FRC_REG, .src = .{ .imm32 = 0x1FFF } } });
+                    try b.@"and"(FRC_REG, .{ .imm32 = 0x1FFF });
                 },
             }
         }
@@ -561,10 +561,10 @@ pub fn compile(self: *@This()) !void {
                 }
             else
                 0xFFFF;
-            try b.append(.{ .And = .{ .dst = addr, .src = .{ .imm32 = mask } } });
+            try b.@"and"(addr, .{ .imm32 = mask });
             try b.shl(addr, .{ .imm8 = 1 });
             try b.add(addr, .{ .imm32 = @as(u32, self._ring_buffer.pointer) << 11 });
-            try b.append(.{ .And = .{ .dst = addr, .src = .{ .imm32 = 0x1FFFFF } } });
+            try b.@"and"(addr, .{ .imm32 = 0x1FFFFF });
 
             if (instruction.MRD) {
                 try b.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(self._memory.ptr) });
@@ -600,7 +600,7 @@ pub fn compile(self: *@This()) !void {
                 try b.mov(ADRS_REG, SHIFTED);
                 try b.sar(ADRS_REG, 12);
             }
-            try b.append(.{ .And = .{ .dst = ADRS_REG, .src = .{ .imm32 = 0xFFF } } });
+            try b.@"and"(ADRS_REG, .{ .imm32 = 0xFFF });
         }
 
         if (instruction.IWT) {

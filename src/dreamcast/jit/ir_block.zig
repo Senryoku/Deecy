@@ -100,6 +100,10 @@ pub const IRBlock = struct {
         try self.instructions.append(self._allocator, .{ .And = .{ .dst = dst, .src = src } });
     }
 
+    pub fn not(self: *@This(), dst: Operand) !void {
+        try self.instructions.append(self._allocator, .{ .Not = .{ .dst = dst } });
+    }
+
     pub fn add(self: *@This(), dst: Operand, src: Operand) !void {
         try self.instructions.append(self._allocator, .{ .Add = .{ .dst = dst, .src = src } });
     }

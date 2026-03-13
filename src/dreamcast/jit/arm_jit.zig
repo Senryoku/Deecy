@@ -401,7 +401,7 @@ fn load_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Regi
             // Test if this is external memory, or unaligned.
             if (UseCMOV) {
                 try b.mov(.{ .reg = dst }, .{ .reg = addr_reg });
-                try b.append(.{ .And = .{ .dst = .{ .reg = dst }, .src = .{ .imm32 = ctx.cpu.memory_address_mask } } });
+                try b.@"and"(.{ .reg = dst }, .{ .imm32 = ctx.cpu.memory_address_mask });
             }
             const mask: u32 = ctx.cpu.external_memory_address_mask | switch (T) {
                 u32 => 0b11,
@@ -433,7 +433,7 @@ fn load_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Regi
             wave_mem.patch();
             if (!UseCMOV) {
                 try b.mov(.{ .reg = dst }, .{ .reg = addr_reg });
-                try b.append(.{ .And = .{ .dst = .{ .reg = dst }, .src = .{ .imm32 = ctx.cpu.memory_address_mask } } });
+                try b.@"and"(.{ .reg = dst }, .{ .imm32 = ctx.cpu.memory_address_mask });
                 try b.mov(.{ .reg = dst }, .{ .mem = .{ .base = MemPointer, .index = dst, .size = @bitSizeOf(T) } });
                 end.patch();
             }
@@ -484,11 +484,11 @@ fn store_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, addr: JIT.Op
             std.debug.assert(tmp != value);
             std.debug.assert(tmp != addr_reg);
             try b.mov(.{ .reg = tmp }, .{ .reg = addr_reg });
-            try b.append(.{ .And = .{ .dst = .{ .reg = tmp }, .src = .{ .imm32 = switch (T) {
+            try b.@"and"(.{ .reg = tmp }, .{ .imm32 = switch (T) {
                 u8 => ctx.cpu.memory_address_mask,
                 u32 => ctx.cpu.memory_address_mask & 0xFFFF_FFFC,
                 else => @compileError("Unsupported type: " ++ @typeName(T)),
-            } } } });
+            } });
             try b.mov(.{ .mem = .{ .base = MemPointer, .index = tmp, .size = @bitSizeOf(T) } }, switch (T) {
                 u8 => .{ .reg8 = value },
                 u32 => .{ .reg = value },
@@ -511,7 +511,7 @@ fn cpsr_mask(comptime flags: []const u8) u32 {
 /// Extracts the specified flags in the CPSR and stores them in ReturnRegister
 fn extract_cpsr_flags(b: *IRBlock, comptime flags: []const u8) !void {
     try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = CPUPointer, .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
-    try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = cpsr_mask(flags) } } });
+    try b.@"and"(.{ .reg = ReturnRegister }, .{ .imm32 = cpsr_mask(flags) });
 }
 
 fn test_cpsr_flags(b: *IRBlock, comptime flags: []const u8, comptime expected_flags: []const u8) !JIT.PatchableJump {
@@ -589,7 +589,7 @@ fn handle_condition(b: *IRBlock, ctx: *JITContext, instruction: u32) !?JIT.Patch
             try b.bit_test(.{ .reg = ReturnRegister }, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
             var do_label_0 = try b.jmp(.Carry);
 
-            try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = cpsr_mask("nv") } } });
+            try b.@"and"(.{ .reg = ReturnRegister }, .{ .imm32 = cpsr_mask("nv") });
             // v == 1 and n == 0
             try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = cpsr_mask("v") });
             var do_label_1 = try b.jmp(.Equal);
@@ -793,7 +793,7 @@ fn handle_branch(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     if (inst.l == 1) {
         try load_register(b, ReturnRegister, 15);
         try b.sub(.{ .reg = ReturnRegister }, .{ .imm32 = 4 });
-        try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0xFFFFFFFC } } });
+        try b.@"and"(.{ .reg = ReturnRegister }, .{ .imm32 = 0xFFFFFFFC });
         try store_register(b, 14, .{ .reg = ReturnRegister });
     }
 
@@ -1310,7 +1310,7 @@ fn handle_data_processing(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool
                 }
             } else {
                 try load_register(b, ArgRegisters[1], sro.shift_amount.reg.rs);
-                try b.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[1] }, .src = .{ .imm32 = 0xFF } } });
+                try b.@"and"(.{ .reg = ArgRegisters[1] }, .{ .imm32 = 0xFF });
                 return error.RegisterSpecifiedSROUnimplemented;
             }
         }
@@ -1319,10 +1319,10 @@ fn handle_data_processing(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool
             .AND => {
                 // cpu.r(inst.rd).* = op1 & op2;
                 if (inst.rd == inst.rn) {
-                    try b.append(.{ .And = .{ .dst = guest_register(inst.rd), .src = op2 } });
+                    try b.@"and"(guest_register(inst.rd), op2);
                 } else {
                     try load_register(b, ReturnRegister, inst.rn); // op1
-                    try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = op2 } });
+                    try b.@"and"(.{ .reg = ReturnRegister }, op2);
                     try store_register(b, inst.rd, .{ .reg = ReturnRegister });
                 }
             },
@@ -1359,7 +1359,7 @@ fn handle_data_processing(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool
             },
             .ORR => {
                 try load_register(b, ReturnRegister, inst.rn);
-                try b.append(.{ .Or = .{ .dst = .{ .reg = ReturnRegister }, .src = op2 } });
+                try b.@"or"(.{ .reg = ReturnRegister }, op2);
                 try store_register(b, inst.rd, .{ .reg = ReturnRegister });
             },
             .MOV => {
@@ -1375,7 +1375,7 @@ fn handle_data_processing(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool
                     try b.append(.{ .Not = .{ .dst = .{ .reg = op2.reg } } });
                 }
 
-                try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = op2 } });
+                try b.@"and"(.{ .reg = ReturnRegister }, op2);
                 try store_register(b, inst.rd, .{ .reg = ReturnRegister });
             },
             .MVN => {

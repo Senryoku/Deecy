@@ -1508,8 +1508,8 @@ fn set_t(block: *IRBlock, _: *JITContext, condition: JIT.Condition) !void {
     std.debug.assert(@bitOffsetOf(sh4.SR, "t") == 0);
     try block.append(.{ .SetByteCondition = .{ .condition = condition, .dst = .{ .reg8 = ArgRegisters[0] } } });
     try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
-    try block.append(.{ .And = .{ .dst = .{ .reg8 = ReturnRegister }, .src = .{ .imm8 = 0xFE } } });
-    try block.append(.{ .Or = .{ .dst = .{ .reg8 = ReturnRegister }, .src = .{ .reg8 = ArgRegisters[0] } } });
+    try block.@"and"(.{ .reg8 = ReturnRegister }, .{ .imm8 = 0xFE });
+    try block.@"or"(.{ .reg8 = ReturnRegister }, .{ .reg8 = ArgRegisters[0] });
     try block.mov(sh4_mem("sr"), .{ .reg = ReturnRegister });
 }
 
@@ -1882,12 +1882,12 @@ fn load_mem(block: *IRBlock, ctx: *JITContext, addressing: AddressingMode, displ
         try block.append(.{ .Padding = 5 });
     } else { // RAM Fast path
         try block.mov(.{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[1] });
-        try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0x1C000000 } } });
+        try block.@"and"(.{ .reg = ReturnRegister }, .{ .imm32 = 0x1C000000 });
         try block.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = 0x0C000000 });
         // TODO: Could it be worth to use a conditional move here to have a single jump (skipping the call)?
         var not_branch = try block.jmp(.NotEqual);
         // We're in RAM!
-        try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[1] }, .src = .{ .imm32 = 0x00FFFFFF } } });
+        try block.@"and"(.{ .reg = ArgRegisters[1] }, .{ .imm32 = 0x00FFFFFF });
         try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = RAMBaseRegister, .index = ArgRegisters[1], .size = size } });
         var to_end = try block.jmp(.Always);
 
@@ -1931,11 +1931,11 @@ fn store_mem(block: *IRBlock, ctx: *JITContext, addressing: AddressingMode, disp
     } else {
         // RAM Fast path
         try block.mov(.{ .reg = ArgRegisters[3] }, .{ .reg = addr });
-        try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[3] }, .src = .{ .imm32 = 0x1C000000 } } });
+        try block.@"and"(.{ .reg = ArgRegisters[3] }, .{ .imm32 = 0x1C000000 });
         try block.cmp(.{ .reg = ArgRegisters[3] }, .{ .imm32 = 0x0C000000 });
         var not_branch = try block.jmp(.NotEqual);
         // We're in RAM!
-        try block.append(.{ .And = .{ .dst = .{ .reg = addr }, .src = .{ .imm32 = 0x00FFFFFF } } });
+        try block.@"and"(.{ .reg = addr }, .{ .imm32 = 0x00FFFFFF });
         try block.mov(.{ .mem = .{ .base = RAMBaseRegister, .index = addr, .size = size } }, value);
         var to_end = try block.jmp(.Always);
 
@@ -2152,7 +2152,7 @@ pub fn movt_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     std.debug.assert(@bitOffsetOf(sh4.SR, "t") == 0);
     const rn = try get_register_for_writing(block, ctx, instr.nmd.n);
     try block.mov(rn, sh4_mem("sr"));
-    try block.append(.{ .And = .{ .dst = rn, .src = .{ .imm32 = 0x00000001 } } });
+    try block.@"and"(rn, .{ .imm32 = 0x00000001 });
     return false;
 }
 
@@ -2501,7 +2501,7 @@ pub fn fabs_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const ftmp: JIT.Operand = .{ .freg32 = FPScratchRegisters[0] };
     try block.mov(tmp, .{ .imm32 = 0x7FFFFFFF });
     try block.mov(ftmp, tmp);
-    try block.append(.{ .And = .{ .dst = frn, .src = ftmp } });
+    try block.@"and"(frn, ftmp);
     return false;
 }
 
@@ -2935,7 +2935,7 @@ pub fn extsw_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 pub fn extub_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     if (instr.nmd.n == instr.nmd.m) {
         const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-        try block.append(.{ .And = .{ .dst = .{ .reg = rn }, .src = .{ .imm32 = 0x000000FF } } });
+        try block.@"and"(.{ .reg = rn }, .{ .imm32 = 0x000000FF });
     } else {
         const rn = try get_register_for_writing(block, ctx, instr.nmd.n);
         const rm = try load_register(block, ctx, instr.nmd.m);
@@ -2947,7 +2947,7 @@ pub fn extub_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 pub fn extuw_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     if (instr.nmd.n == instr.nmd.m) {
         const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-        try block.append(.{ .And = .{ .dst = .{ .reg = rn }, .src = .{ .imm32 = 0x0000FFFF } } });
+        try block.@"and"(.{ .reg = rn }, .{ .imm32 = 0x0000FFFF });
     } else {
         const rn = try get_register_for_writing(block, ctx, instr.nmd.n);
         const rm = try load_register(block, ctx, instr.nmd.m);
@@ -3063,13 +3063,13 @@ pub fn sub_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 pub fn and_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     const rm = try load_register(block, ctx, instr.nmd.m);
-    try block.append(.{ .And = .{ .dst = .{ .reg = rn }, .src = .{ .reg = rm } } });
+    try block.@"and"(.{ .reg = rn }, .{ .reg = rm });
     return false;
 }
 
 pub fn and_imm_R0(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const r0 = try load_register_for_writing(block, ctx, 0);
-    try block.append(.{ .And = .{ .dst = .{ .reg = r0 }, .src = .{ .imm32 = bit_manip.zero_extend(instr.nd8.d) } } });
+    try block.@"and"(.{ .reg = r0 }, .{ .imm32 = bit_manip.zero_extend(instr.nd8.d) });
     return false;
 }
 
@@ -3077,20 +3077,20 @@ pub fn not_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     const rm = try load_register(block, ctx, instr.nmd.m);
     try block.mov(.{ .reg = rn }, .{ .reg = rm });
-    try block.append(.{ .Not = .{ .dst = .{ .reg = rn } } });
+    try block.not(.{ .reg = rn });
     return false;
 }
 
 pub fn or_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     const rm = try load_register(block, ctx, instr.nmd.m);
-    try block.append(.{ .Or = .{ .dst = .{ .reg = rn }, .src = .{ .reg = rm } } });
+    try block.@"or"(.{ .reg = rn }, .{ .reg = rm });
     return false;
 }
 
 pub fn or_imm_R0(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const r0 = try load_register_for_writing(block, ctx, 0);
-    try block.append(.{ .Or = .{ .dst = .{ .reg = r0 }, .src = .{ .imm32 = bit_manip.zero_extend(instr.nd8.d) } } });
+    try block.@"or"(.{ .reg = r0 }, .{ .imm32 = bit_manip.zero_extend(instr.nd8.d) });
     return false;
 }
 
@@ -3565,23 +3565,23 @@ pub fn sett(block: *IRBlock, _: *JITContext, _: sh4.Instr) !bool {
     // Warning: Invalid t here if we ever cache it. (set_t/load_t)
     var sr = sh4_mem("sr");
     sr.mem.size = 8;
-    try block.append(.{ .Or = .{ .dst = sr, .src = .{ .imm8 = @as(u8, 1) << @bitOffsetOf(sh4.SR, "t") } } });
+    try block.@"or"(sr, .{ .imm8 = @as(u8, 1) << @bitOffsetOf(sh4.SR, "t") });
     return false;
 }
 pub fn clrt(block: *IRBlock, _: *JITContext, _: sh4.Instr) !bool {
     // Warning: Invalid t here if we ever cache it. (set_t/load_t)
     var sr = sh4_mem("sr");
     sr.mem.size = 8;
-    try block.append(.{ .And = .{ .dst = sr, .src = .{ .imm8 = ~(@as(u8, 1) << @bitOffsetOf(sh4.SR, "t")) } } });
+    try block.@"and"(sr, .{ .imm8 = ~(@as(u8, 1) << @bitOffsetOf(sh4.SR, "t")) });
     return false;
 }
 
 pub fn sets(block: *IRBlock, _: *JITContext, _: sh4.Instr) !bool {
-    try block.append(.{ .Or = .{ .dst = sh4_mem("sr"), .src = .{ .imm32 = @as(u32, 1) << @bitOffsetOf(sh4.SR, "s") } } });
+    try block.@"or"(sh4_mem("sr"), .{ .imm32 = @as(u32, 1) << @bitOffsetOf(sh4.SR, "s") });
     return false;
 }
 pub fn clrs(block: *IRBlock, _: *JITContext, _: sh4.Instr) !bool {
-    try block.append(.{ .And = .{ .dst = sh4_mem("sr"), .src = .{ .imm32 = ~(@as(u32, 1) << @bitOffsetOf(sh4.SR, "s")) } } });
+    try block.@"and"(sh4_mem("sr"), .{ .imm32 = ~(@as(u32, 1) << @bitOffsetOf(sh4.SR, "s")) });
     return false;
 }
 
