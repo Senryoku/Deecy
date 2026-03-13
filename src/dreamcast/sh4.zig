@@ -258,7 +258,6 @@ pub const SH4 = struct {
         instructions.init_table();
 
         var sh4: SH4 = .{
-            ._dc = dc,
             ._operand_cache = try allocator.alloc(u8, 0x2000), // NOTE: Actual Operand cache is 16k, but we're only emulating the RAM accessible part, which is 8k.
             .p4_registers = try allocator.alloc(u8, 0x1000),
             .itlb = try allocator.alloc(mmu.TLBEntry, 4),
@@ -285,6 +284,7 @@ pub const SH4 = struct {
         @memset(sh4.p4_registers, 0);
 
         sh4.reset();
+        sh4._dc = dc;
 
         return sh4;
     }

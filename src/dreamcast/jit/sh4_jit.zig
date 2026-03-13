@@ -217,7 +217,7 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
             }
 
             /// Commit without clearing the dirty bit.
-            pub fn commit_speculatively(self: *@This(), block: *IRBlock) !void {
+            pub fn commit_speculatively(self: *const @This(), block: *IRBlock) !void {
                 if (self.guest) |guest_reg| {
                     if (self.modified) {
                         try block.mov(
@@ -272,7 +272,7 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
 
         /// Commit without clearing the dirty bit. Allows it to be called in a branch for an early exit without
         /// disturbing the normal flow of execution.
-        pub fn commit_all_speculatively(self: *@This(), block: *IRBlock) !void {
+        pub fn commit_all_speculatively(self: *const @This(), block: *IRBlock) !void {
             for (&self.entries) |*reg|
                 try reg.commit_speculatively(block);
         }
@@ -369,6 +369,8 @@ pub const JITContext = struct {
             .{ .host = .xmm13 },
         },
     },
+    /// Will be emitted after the main body of the block to keep these slow paths outside of the main flow of execution.
+    mmu_translation_slow_paths: std.ArrayList(MMUTranslationSlowPath) = .empty,
 
     pub fn init(cpu: *sh4.SH4) @This() {
         const physical_pc = get_cached_physical_pc(cpu);
@@ -536,6 +538,16 @@ pub const JITContext = struct {
         if (idx >= self.jumps_to_end.len)
             return error.TooManyJumpsToEndOfBlock;
         self.jumps_to_end[idx] = jmp;
+    }
+
+    pub fn push_mmu_slow_path(self: *@This(), info: MMUTranslationSlowPath) !void {
+        try self.mmu_translation_slow_paths.append(self.cpu._allocator, info);
+    }
+
+    pub fn emit_mmu_translation_slow_paths(self: *@This(), block: *IRBlock, exit_ptr: usize) !void {
+        for (self.mmu_translation_slow_paths.items) |info|
+            try info.emit(block, exit_ptr);
+        self.mmu_translation_slow_paths.deinit(self.cpu._allocator);
     }
 };
 
@@ -965,11 +977,12 @@ pub const SH4JIT = struct {
             if (jmp) |j| j.patch();
 
         try b.sub(sh4_mem("_pending_cycles"), .{ .imm32 = ctx.cycles });
+        const exit_ptr = @intFromPtr(&self.block_cache.buffer[self.return_offset]);
         // Jump to the next block (Disabled when instrumentation is on, otherwise it would be a hassle to measure individual blocks)
         if (!ctx.force_exit and ctx.cycles < MaxCyclesPerExecution and ctx.fpscr_pr != .Unknown and ctx.fpscr_sz != .Unknown and !BasicBlock.EnableInstrumentation) {
-            var skip = try b.jmp(.Sign);
+            try b.append(.{ .Jmp = .{ .condition = .Sign, .dst = .{ .abs = exit_ptr } } });
             try b.cmp(.{ .mem = .{ .base = SH4PtrRegister, .displacement = @offsetOf(sh4.SH4, "interrupt_requests"), .size = 64 } }, .{ .imm8 = 0 });
-            var handle_interrupt = try b.jmp(.NotEqual);
+            try b.append(.{ .Jmp = .{ .condition = .NotEqual, .dst = .{ .abs = exit_ptr } } });
 
             const const_key: u32 = @bitCast(BlockCache.Key{
                 .addr = 0,
@@ -979,7 +992,7 @@ pub const SH4JIT = struct {
             });
             const Key: JIT.Operand = .{ .reg = ArgRegisters[0] };
 
-            var skip_key_compute: ?JIT.PatchableJump = null;
+            var mmu_instruction_translation_call_jump: ?JIT.PatchableJump = null;
             if (ctx.mmu_enabled) {
                 // NOTE: In some cases we could easily convince ourselves that the PC cannot possibly cross a page boundary here.
                 //       This could be used to completely skip MMU translation and further optimize this.
@@ -1009,21 +1022,12 @@ pub const SH4JIT = struct {
                 const mask = (@as(u32, 1) << page_size) - 1;
                 // Compute the physical PC assuming we're still on the same 1K page (and the TLB did not change).
                 try b.mov(Key, .{ .reg = ReturnRegister });
-                try b.append(.{ .And = .{ .dst = Key, .src = .{ .imm32 = mask } } });
-                try b.append(.{ .Or = .{ .dst = Key, .src = .{ .imm32 = ctx.start_physical_pc & (~mask) } } });
+                try b.@"and"(Key, .{ .imm32 = mask });
+                try b.@"or"(Key, .{ .imm32 = ctx.start_physical_pc & (~mask) });
                 // Compare next virtual page with the current one
                 try b.shr(.{ .reg = ReturnRegister }, page_size);
                 try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.start_pc >> page_size });
-                const same_page = try b.jmp(.Equal);
-
-                try call(b, &ctx, runtime_instruction_mmu_translation);
-                if (Key.reg != ReturnRegister)
-                    try b.mov(Key, .{ .reg = ReturnRegister });
-                // This function returns the updated block key directly.
-                // FPSCR might change in case of exception, and it is easier to access from zig than from assembly (not to mention code size).
-                // It also keeps the happy path as simple as possible. We can now jump directly after the key computation.
-                skip_key_compute = try b.jmp(.Always);
-                same_page.patch();
+                mmu_instruction_translation_call_jump = try b.jmp(.NotEqual);
             } else {
                 try b.mov(Key, sh4_mem("pc"));
             }
@@ -1036,15 +1040,15 @@ pub const SH4JIT = struct {
             // measure that, and we'd have to check the CPU model for fast BMI2 support, and opt out otherwise (it is really that bad on Zen 2).
             try b.mov(.{ .reg = ReturnRegister }, Key);
             try b.shr(.{ .reg = ReturnRegister }, 3);
-            try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0x80_0000 } } });
+            try b.@"and"(.{ .reg = ReturnRegister }, .{ .imm32 = 0x80_0000 });
             try b.shr(Key, 1);
-            try b.append(.{ .And = .{ .dst = Key, .src = .{ .imm32 = 0x7F_FFFF } } });
-            try b.append(.{ .Or = .{ .dst = Key, .src = .{ .reg = ReturnRegister } } });
+            try b.@"and"(Key, .{ .imm32 = 0x7F_FFFF });
+            try b.@"or"(Key, .{ .reg = ReturnRegister });
 
             if (const_key != 0)
-                try b.append(.{ .Or = .{ .dst = Key, .src = .{ .imm32 = const_key } } });
+                try b.@"or"(Key, .{ .imm32 = const_key });
 
-            if (skip_key_compute) |j| j.patch();
+            const get_offset = b.label();
 
             // Retrieve offset
             if (@sizeOf(BasicBlock) != 4)
@@ -1055,12 +1059,21 @@ pub const SH4JIT = struct {
             try b.add(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[0] });
             try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
 
-            skip.patch();
-            handle_interrupt.patch();
+            // MMU instruction translation slow path.
+            if (mmu_instruction_translation_call_jump) |jmp| {
+                jmp.patch();
+                try call(b, &ctx, runtime_instruction_mmu_translation);
+                if (Key.reg != ReturnRegister)
+                    try b.mov(Key, .{ .reg = ReturnRegister });
+                try b.back_jmp(.Always, get_offset);
+            }
+        } else {
+            // Enough cycles have passed, back to JIT entry point to restore host state.
+            try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = exit_ptr } } });
         }
 
-        // Enough cycles have passed, back to JIT entry point to restore host state.
-        try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = @intFromPtr(&self.block_cache.buffer[self.return_offset]) } } });
+        // Append additional cold code paths. Keeping those outside of the main flow of execution helps performance.
+        try ctx.emit_mmu_translation_slow_paths(b, exit_ptr);
 
         for (b.instructions.items, 0..) |instr, idx|
             sh4_jit_log.debug("[{d: >4}] {f}", .{ idx, instr });
@@ -1210,22 +1223,22 @@ pub const SH4JIT = struct {
     }
 };
 
-fn call(block: *IRBlock, ctx: *JITContext, func: anytype) !void {
+fn call(block: *IRBlock, ctx: *const JITContext, func: anytype) !void {
+    try call_safe(block, &ctx.fpr_cache, func);
+}
+
+fn call_safe(block: *IRBlock, fpr_cache: *const @FieldType(JITContext, "fpr_cache"), func: anytype) !void {
     if (Architecture.CallingConvention == .x86_64_sysv) {
-        if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
-            try block.append(.{ .SaveFPRegisters = .{
-                .count = highest_saved_register_used + 1,
-            } });
+        if (fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
+            try block.append(.{ .SaveFPRegisters = .{ .count = highest_saved_register_used + 1 } });
         }
     }
 
     try block.call(func);
 
     if (Architecture.CallingConvention == .x86_64_sysv) {
-        if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
-            try block.append(.{ .RestoreFPRegisters = .{
-                .count = highest_saved_register_used + 1,
-            } });
+        if (fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
+            try block.append(.{ .RestoreFPRegisters = .{ .count = highest_saved_register_used + 1 } });
         }
     }
 }
@@ -1685,17 +1698,17 @@ fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime ac
 }
 
 /// Attempts an address translation and return the translated address to addr. Exits the current block if an exception is raised.
-fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_size: u32, block: *IRBlock, ctx: *JITContext, addr: JIT.Register, register_to_save: ?JIT.Register) !void {
-    var vpn_match: ?JIT.PatchableJump = null;
+fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_size: u32, block: *IRBlock, ctx: *JITContext, address_register: JIT.Register, register_to_save: ?JIT.Register) !void {
     if (Optimizations.mmu_translation_cache) {
         const CurrentVPN = JIT.Operand{ .reg = ArgRegisters[0] };
         const CacheBase: JIT.Register = ArgRegisters[2];
         const CacheIndex: JIT.Register = ArgRegisters[3];
 
         // Check the MMU cache (assuming a 1k page) and use that as a possible fast path.
-        std.debug.assert(addr != ArgRegisters[0]);
-        std.debug.assert(addr != ArgRegisters[2]);
-        std.debug.assert(addr != ArgRegisters[3]);
+        std.debug.assert(address_register != ArgRegisters[0]);
+        std.debug.assert(address_register != ArgRegisters[2]);
+        std.debug.assert(address_register != ArgRegisters[3]);
+        std.debug.assert(register_to_save != ArgRegisters[0]);
         std.debug.assert(register_to_save != ArgRegisters[2]);
         std.debug.assert(register_to_save != ArgRegisters[3]);
 
@@ -1703,7 +1716,7 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
         try block.mov(.{ .reg64 = CacheBase }, .{ .imm64 = @intFromPtr(MMUCachePtr) });
 
         // Compute current VPN
-        try block.mov(CurrentVPN, .{ .reg = addr });
+        try block.mov(CurrentVPN, .{ .reg = address_register });
         try block.shr(CurrentVPN, 10);
 
         // Select the cache entry based on the VPN
@@ -1712,43 +1725,110 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
 
         // Compare with cached VPN
         try block.cmp(CurrentVPN, .{ .mem = .{ .base = CacheBase, .index = CacheIndex, .scale = ._8, .displacement = @offsetOf(MMUCacheEntry, "vpn"), .size = 32 } });
-        var vpn_mismatch = try block.jmp(.NotEqual);
-        // Translate address using cached PPN
-        try block.add(.{ .reg = addr }, .{ .mem = .{ .base = CacheBase, .index = CacheIndex, .scale = ._8, .displacement = @offsetOf(MMUCacheEntry, "offset"), .size = 32 } });
-        vpn_match = try block.jmp(.Always);
-        vpn_mismatch.patch();
+        const vpn_mismatch = try block.jmp(.NotEqual);
 
-        try ctx.gpr_cache.commit_all_speculatively(block);
-        try ctx.fpr_cache.commit_all_speculatively(block);
+        // Translate address using cached PPN
+        try block.add(.{ .reg = address_register }, .{ .mem = .{ .base = CacheBase, .index = CacheIndex, .scale = ._8, .displacement = @offsetOf(MMUCacheEntry, "offset"), .size = 32 } });
+
+        // Delay emiting the slow path after the end of the block for performance.
+        try ctx.push_mmu_slow_path(.{
+            .access_type = access_type,
+            .access_size = access_size,
+            .saved_gpr_cache = ctx.gpr_cache,
+            .saved_fpr_cache = ctx.fpr_cache,
+            .origin_pc = if (ctx.in_delay_slot) ctx.current_pc - 2 else ctx.current_pc,
+            .address_register = address_register,
+            .register_to_save = register_to_save,
+            .vpn_mismatch = vpn_mismatch,
+            .return_label = block.label(),
+            .cycles = ctx.cycles,
+        });
     } else {
         try ctx.gpr_cache.commit_all(block);
         try ctx.fpr_cache.commit_all(block);
+
+        std.debug.assert(register_to_save != ArgRegisters[0]);
+
+        const success_condition = try call_mmu_translation(
+            block,
+            access_type,
+            access_size,
+            &ctx.fpr_cache,
+            if (ctx.in_delay_slot) ctx.current_pc - 2 else ctx.current_pc,
+            address_register,
+            register_to_save,
+        );
+
+        try ctx.add_jump_to_end(try block.jmp(success_condition.invert()));
     }
+}
 
-    std.debug.assert(register_to_save != ArgRegisters[0]);
+const MMUTranslationSlowPath = struct {
+    access_type: sh4.SH4.AccessType,
+    access_size: u32,
 
+    origin_pc: u32,
+    saved_gpr_cache: @FieldType(JITContext, "gpr_cache"),
+    saved_fpr_cache: @FieldType(JITContext, "fpr_cache"),
+    cycles: u32,
+
+    address_register: JIT.Register,
+    register_to_save: ?JIT.Register,
+
+    vpn_mismatch: JIT.PatchableJump,
+    return_label: IRBlock.Label,
+
+    /// exit_ptr: The address to jump to on exception.
+    pub fn emit(self: *const @This(), block: *IRBlock, exit_ptr: u64) !void {
+        self.vpn_mismatch.patch();
+
+        try self.saved_gpr_cache.commit_all_speculatively(block);
+        try self.saved_fpr_cache.commit_all_speculatively(block);
+
+        const success_condition = switch (self.access_type) {
+            inline else => |at| switch (self.access_size) {
+                inline 8, 16, 32, 64 => |as| try call_mmu_translation(block, at, as, &self.saved_fpr_cache, self.origin_pc, self.address_register, self.register_to_save),
+                else => unreachable,
+            },
+        };
+        try block.back_jmp(success_condition, self.return_label);
+
+        try block.sub(sh4_mem("_pending_cycles"), .{ .imm32 = self.cycles });
+        try block.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = exit_ptr } } });
+    }
+};
+
+fn call_mmu_translation(
+    block: *IRBlock,
+    comptime access_type: sh4.SH4.AccessType,
+    comptime access_size: u32,
+    saved_fpr_cache: *const @FieldType(JITContext, "fpr_cache"),
+    origin_pc: u32,
+    address_register: JIT.Register,
+    register_to_save: ?JIT.Register,
+) !JIT.Condition {
     if (register_to_save) |r| {
         try block.push(.{ .reg64 = r });
         try block.push(.{ .reg64 = r });
     }
 
     // Pass the current PC to the handler, we'll use it if an exception is raised.
-    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm32 = if (ctx.in_delay_slot) ctx.current_pc - 2 else ctx.current_pc });
-    if (addr != ArgRegisters[1])
-        try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = addr });
-    try call(block, ctx, runtime_mmu_translation(access_type, access_size).handler);
+    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm32 = origin_pc });
+    if (address_register != ArgRegisters[1])
+        try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = address_register });
+    try call_safe(block, saved_fpr_cache, runtime_mmu_translation(access_type, access_size).handler);
+    // Check if the handler raised an exception.
     try block.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = 0xFFFFFFFF });
-    if (addr != ReturnRegister)
-        try block.mov(.{ .reg = addr }, .{ .reg = ReturnRegister });
+
+    if (address_register != ReturnRegister)
+        try block.mov(.{ .reg = address_register }, .{ .reg = ReturnRegister });
 
     if (register_to_save) |r| {
         try block.pop(.{ .reg64 = r });
         try block.pop(.{ .reg64 = r });
     }
 
-    try ctx.add_jump_to_end(try block.jmp(.Equal));
-
-    if (vpn_match) |j| j.patch();
+    return .NotEqual;
 }
 
 const AddressingMode = union(enum) { HostReg: JIT.Register, Reg: u4, Reg_R0: u4, GBR };

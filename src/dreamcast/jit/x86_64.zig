@@ -174,7 +174,37 @@ pub const Condition = enum {
             .GreaterEqual, .NotLess => 0xD,
             .LessEqual, .NotGreater => 0xE,
             .Greater, .NotLessEqual => 0xF,
-            else => std.debug.panic("Invalid condition: {f}", .{self}),
+            else => std.debug.panic("Invalid condition: {t}", .{self}),
+        };
+    }
+
+    pub fn invert(self: @This()) @This() {
+        return switch (self) {
+            .Overflow => .NotOverflow,
+            .NotOverflow => .Overflow,
+            .Carry => .NotCarry,
+            .NotCarry => .Carry,
+            .Below => .AboveEqual,
+            .AboveEqual => .Below,
+            .Equal => .NotEqual,
+            .NotEqual => .Equal,
+            .Zero => .NotZero,
+            .NotZero => .Zero,
+            .Above => .NotAbove,
+            .NotAbove => .Above,
+            .BelowEqual => .NotBelowEqual,
+            .NotBelowEqual => .BelowEqual,
+            .Sign => .NotSign,
+            .NotSign => .Sign,
+            .ParityEven => .ParityOdd,
+            .ParityOdd => .ParityEven,
+            .Less => .GreaterEqual,
+            .GreaterEqual => .Less,
+            .LessEqual => .NotLessEqual,
+            .NotLessEqual => .LessEqual,
+            .Greater => .NotGreater,
+            .NotGreater => .Greater,
+            else => std.debug.panic("Can't invert condition '{t}'", .{self}),
         };
     }
 };
@@ -316,6 +346,8 @@ pub const Operand = union(enum) {
     }
 };
 
+const JumpDestination = union(enum) { rel: i32, abs_indirect: Operand, abs: u64 };
+
 pub const Instruction = union(enum) {
     Nop, // Usefull to patch out instructions without having to rewrite the entire block.
     Break, // For Debugging
@@ -354,7 +386,7 @@ pub const Instruction = union(enum) {
     Sarx: struct { dst: Register, src: Operand, amount: Register },
     Shlx: struct { dst: Register, src: Operand, amount: Register },
     Shrx: struct { dst: Register, src: Operand, amount: Register },
-    Jmp: struct { condition: Condition, dst: union(enum) { rel: i32, abs_indirect: Operand, abs: u64 } },
+    Jmp: struct { condition: Condition, dst: JumpDestination },
     BlockEpilogue: void,
     Convert: struct { dst: Operand, src: Operand },
     // FIXME: This only exists because I haven't added a way to specify the size the GPRs.
@@ -1716,8 +1748,17 @@ pub const Emitter = struct {
         });
         try self.emit(i8, rel);
     }
+    fn emit_jmp_rel32(self: *@This(), condition: Condition, rel: i32) !void {
+        if (condition != .Always)
+            try self.emit(u8, 0x0F);
+        try self.emit(u8, switch (condition) {
+            .Always => 0xE9,
+            else => |c| 0x80 | c.nibble(),
+        });
+        try self.emit(u32, @bitCast(rel));
+    }
 
-    pub fn jmp(self: *@This(), next_intructions: []const Instruction, condition: Condition, current_idx: u32, dst: anytype) !void {
+    pub fn jmp(self: *@This(), next_intructions: []const Instruction, condition: Condition, current_idx: u32, dst: JumpDestination) !void {
         switch (dst) {
             .rel => |rel| {
                 // TODO: Support more destination than just immediate relative.
@@ -1746,7 +1787,7 @@ pub const Emitter = struct {
                     if (!jumps.found_existing)
                         jumps.value_ptr.* = .{};
 
-                    try jumps.value_ptr.*.add(.{
+                    try jumps.value_ptr.add(.{
                         .size = .r8,
                         .source = self.block_size,
                         .address_to_patch = address_to_patch,
@@ -1754,31 +1795,23 @@ pub const Emitter = struct {
                     return;
                 }
 
-                if (condition != .Always)
-                    try self.emit(u8, 0x0F);
-
-                try self.emit(u8, switch (condition) {
-                    .Always => 0xE9,
-                    else => |c| 0x80 | c.nibble(),
-                });
-
-                const address_to_patch = self.block_size;
                 std.debug.assert(rel != 0);
                 if (rel < 0) {
-                    const next_instr_address = address_to_patch + 4;
                     std.debug.assert(target_idx >= 0);
-                    try self.emit(u32, @bitCast(@as(i32, @intCast(self._instruction_offsets[target_idx])) - @as(i32, @intCast(next_instr_address))));
+                    var next_instr_address: i32 = @intCast(self.block_size + 1 + 4);
+                    if (condition != .Always) next_instr_address += 1;
+                    try self.emit_jmp_rel32(condition, @as(i32, @intCast(self._instruction_offsets[target_idx])) - next_instr_address);
                 } else {
-                    try self.emit(u32, 0xA0C0FFEE);
+                    try self.emit_jmp_rel32(condition, 0x10C0FFEE);
 
                     const jumps = try self.forward_jumps_to_patch.getOrPut(target_idx);
                     if (!jumps.found_existing)
                         jumps.value_ptr.* = .{};
 
-                    try jumps.value_ptr.*.add(.{
+                    try jumps.value_ptr.add(.{
                         .size = .r32,
                         .source = self.block_size,
-                        .address_to_patch = address_to_patch,
+                        .address_to_patch = self.block_size - 4,
                     });
                 }
             },
@@ -1793,17 +1826,16 @@ pub const Emitter = struct {
                 }
             },
             .abs => |op| {
-                if (condition != .Always) return error.UnsupportedAbsoluteJumpCondition;
                 const rip: i64 = @intCast(@intFromPtr(self.block_buffer.ptr) + self.block_size);
                 const rel_8 = @as(i64, @intCast(op)) - (rip + 1 + 1);
-                const rel_32 = @as(i64, @intCast(op)) - (rip + 1 + 4);
+                const opcode_size: i64 = if (condition != .Always) 2 else 1;
+                const rel_32 = @as(i64, @intCast(op)) - (rip + opcode_size + 4);
                 if (rel_8 >= std.math.minInt(i8) and rel_8 <= std.math.maxInt(i8)) {
-                    try self.emit(u8, 0xEB);
-                    try self.emit(u8, @bitCast(@as(i8, @intCast(rel_8))));
+                    return self.emit_jmp_rel8(condition, @intCast(rel_8));
                 } else if (rel_32 >= std.math.minInt(i32) and rel_32 <= std.math.maxInt(i32)) {
-                    try self.emit(u8, 0xE9);
-                    try self.emit(u32, @bitCast(@as(i32, @intCast(rel_32))));
+                    return self.emit_jmp_rel32(condition, @intCast(rel_32));
                 } else {
+                    if (condition != .Always) return error.UnsupportedConditionalAbsoluteJump;
                     // Turn into
                     //   mov rax, op
                     //   jmp rax

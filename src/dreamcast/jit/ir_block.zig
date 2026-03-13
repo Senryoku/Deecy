@@ -150,6 +150,15 @@ pub const IRBlock = struct {
         }
     }
 
+    // NOTE: offset could also be a register
+    pub fn bit_test(self: *@This(), src: Operand, offset: u8) !void {
+        try self.instructions.append(self._allocator, .{ .BitTest = .{ .src = src, .offset = .{ .imm8 = offset } } });
+    }
+
+    pub fn test_(self: *@This(), lhs: Operand, rhs: Operand) !void {
+        try self.instructions.append(self._allocator, .{ .Test = .{ .lhs = lhs, .rhs = rhs } });
+    }
+
     // Forward Jump
     pub fn jmp(self: *@This(), condition: Condition) !PatchableJump {
         try self.instructions.append(self._allocator, .{ .Jmp = .{ .condition = condition, .dst = .{ .rel = 0x00C0FFEE } } });
@@ -160,13 +169,19 @@ pub const IRBlock = struct {
         };
     }
 
-    // NOTE: offset could also be a register
-    pub fn bit_test(self: *@This(), src: Operand, offset: u8) !void {
-        try self.instructions.append(self._allocator, .{ .BitTest = .{ .src = src, .offset = .{ .imm8 = offset } } });
+    pub const Label = enum(u64) { _ };
+
+    pub fn label(self: *const @This()) Label {
+        return @enumFromInt(self.instructions.items.len);
     }
 
-    pub fn test_(self: *@This(), lhs: Operand, rhs: Operand) !void {
-        try self.instructions.append(self._allocator, .{ .Test = .{ .lhs = lhs, .rhs = rhs } });
+    pub fn back_jmp(self: *@This(), condition: Condition, dest: Label) !void {
+        const dest_index = @intFromEnum(dest);
+        std.debug.assert(dest_index < self.instructions.items.len);
+        try self.instructions.append(self._allocator, .{ .Jmp = .{
+            .condition = condition,
+            .dst = .{ .rel = @intCast(@as(i64, @intCast(dest_index)) - @as(i64, @intCast(self.instructions.items.len))) },
+        } });
     }
 
     pub fn emit(self: *@This(), buffer: []u8) !u32 {
