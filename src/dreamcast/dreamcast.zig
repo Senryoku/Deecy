@@ -446,20 +446,6 @@ pub const Dreamcast = struct {
             try self.cpu.write(u32, p[0], p[1]);
         }
 
-        // Load IP.bin from disc (16 first sectors of the last track)
-        // FIXME: Here we assume the last track is the 3rd.
-        if (self.gdrom.disc) |*disc|
-            _ = try disc.load_bytes(45150, 16 * 2048, self.ram[0x00008000..]);
-
-        // IP.bin patches
-        inline for (.{
-            .{ 0xAC0090D8, 0x5113 },
-            .{ 0xAC00940A, 0x000B },
-            .{ 0xAC00940C, 0x0009 },
-        }) |p| {
-            try self.cpu.write(u16, p[0], p[1]);
-        }
-
         // Patch some functions apparently used by interrupts
         // (And some other random stuff that the boot ROM sets for some reason
         //  and I'm afraid some games might use. I'm not taking any more chances)
@@ -495,6 +481,25 @@ pub const Dreamcast = struct {
         self.gpu._get_register(u32, .SPG_WIDTH).* = 0x03F1933F;
         self.gpu._get_register(u32, .SPG_LOAD).* = 0x020C0359;
         self.gpu.finalize_deserialization();
+    }
+
+    pub fn load_ip_bin_from_disc(self: *@This()) !void {
+        if (self.gdrom.disc) |*disc| {
+            // Look into the PVD for an IP.BIN file and load it into RAM. This should fail on original discs.
+            _ = disc.load_file("IP.BIN;1", self.ram[0x00008000..]) catch {
+                // If not found, load the first 16 sectors of the first data track of the high density session (normal behaviour).
+                _ = disc.load_sectors(45150, 16 * 2048, self.ram[0x00008000..]);
+
+                // IP.bin patches (from the original bootrom)
+                inline for (.{
+                    .{ 0xAC0090D8, 0x5113 },
+                    .{ 0xAC00940A, 0x000B },
+                    .{ 0xAC00940C, 0x0009 },
+                }) |p| {
+                    try self.cpu.write(u16, p[0], p[1]);
+                }
+            };
+        }
     }
 
     pub fn set_flash_settings(self: *@This(), region: Region, lang: Language, video_mode: VideoMode) void {

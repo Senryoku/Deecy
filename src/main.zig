@@ -232,16 +232,21 @@ pub fn main() !void {
 
         if (skip_bios) {
             try dc.skip_bios(true);
+            try dc.load_ip_bin_from_disc();
 
-            // Load 1STREAD.BIN (Actual name might change)
-            const header_size: u32 = dc.gdrom.disc.?.get_first_data_track().?.header_size();
-            const first_read_name = dc.gdrom.disc.?.get_first_data_track().?.data[0x60 + header_size .. 0x70 + header_size];
+            // Load 1ST_READ.BIN (Actual name might change, get it from IP.BIN loaded in RAM)
+            const first_read_name = dc.ram[0x00008000..][0x60..0x70];
             const name_end = std.mem.indexOfScalar(u8, first_read_name, 0x20) orelse first_read_name.len;
             var first_read: []u8 = try allocator.alloc(u8, name_end + 2);
             defer allocator.free(first_read);
             @memcpy(first_read[0..name_end], first_read_name[0..name_end]);
             @memcpy(first_read[name_end .. name_end + 2], ";1");
-            _ = try dc.gdrom.disc.?.load_file(first_read, dc.ram[0x00010000..]);
+            _ = dc.gdrom.disc.?.load_file(first_read, dc.ram[0x00010000..]) catch |err| {
+                if (!std.mem.eql(u8, first_read, "1ST_READ.BIN;1")) {
+                    std.log.err("Failed to load '{s}': {t}. Checking '1ST_READ.BIN;1'...", .{ first_read, err });
+                    _ = try dc.gdrom.disc.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]);
+                } else return err;
+            };
         }
 
         for (AvailableHacks) |hack| {

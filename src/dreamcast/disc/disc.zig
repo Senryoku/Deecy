@@ -76,7 +76,10 @@ pub const Disc = union(enum) {
             const dir_record: *const CD.DirectoryRecord = @ptrCast(sector[curr_offset..].ptr);
             if (std.mem.eql(u8, dir_record.get_file_identifier(), filename))
                 return try self.load_bytes(lba_to_fad(dir_record.location), dir_record.data_length, dest);
-            curr_offset += dir_record.length; // FIXME: Handle sector boundaries?
+            curr_offset += dir_record.length;
+            // FIXME: Handle sector boundaries?
+            if (curr_offset + @sizeOf(CD.DirectoryRecord) >= sector.len)
+                return error.NotFound;
         }
         return error.NotFound;
     }
