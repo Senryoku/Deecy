@@ -67,6 +67,13 @@ const AvailableHacks = [_]struct { name: []const u8, hacks: []const Hack }{
             .{ .addr = 0x0C018F42, .instr = &[_]u16{0x9} },
         },
     },
+    .{
+        .name = "4S T-1401N",
+        .hacks = &[_]Hack{
+            .{ .addr = 0x0C266C28, .instr = &[_]u16{0x0000} },
+            .{ .addr = 0x0C266C2A, .instr = &[_]u16{0x3F40} },
+        },
+    },
 };
 
 var EnabledHacks: ?[]const Hack = null;
@@ -337,7 +344,7 @@ pub fn main() !void {
         }
 
         if (d.dc.gpu.read_register(Holly.FB_R_CTRL, .FB_R_CTRL).enable) {
-            d.renderer.draw(d.config.window_size.width, d.config.window_size.height); //  Blit to screen
+            d.renderer.draw(d.config.window_size.width, d.config.window_size.height, d.config.renderer.aspect_ratio); //  Blit to screen
         }
 
         try d.draw_ui();

@@ -752,17 +752,33 @@ pub fn draw(self: *@This()) !void {
                         return;
                     }
                     zgui.text("Curent Resolution: {d}x{d}", .{ d.renderer.resolution.width, d.renderer.resolution.height });
+                    var resolution_update = false;
+                    var resolution: enum(u8) { Native = 1, x2 = 2, x3 = 3, x4 = 4, x5 = 5, x6 = 6 } = @enumFromInt(d.renderer.resolution.width / d.config.renderer.aspect_ratio.width());
                     zgui.setNextItemWidth(dropdown_size);
-                    var resolution: enum(u8) { Native = 1, x2 = 2, x3 = 3, x4 = 4, x5 = 5, x6 = 6 } = @enumFromInt(d.renderer.resolution.width / Deecy.Renderer.NativeResolution.width);
                     if (zgui.comboFromEnum("Resolution", &resolution)) {
+                        resolution_update = true;
+                        d.config.renderer.internal_resolution_factor = @intFromEnum(resolution);
+                    }
+                    zgui.setNextItemWidth(dropdown_size);
+                    if (zgui.comboFromEnum("Aspect Ratio", &d.config.renderer.aspect_ratio)) {
+                        resolution_update = true;
+                    }
+                    zgui.setItemTooltip(
+                        \\ Anything other than 4:3 will require a compatible (or modified) game.
+                        \\   4:3             Default
+                        \\   16:9 (Stretch)  Rendered at the normal resolution, but streched horizontally to 16:9. Cheap and accurate. (Anamorphic widescreen)
+                        \\   16:9            Rendered at an increased horizontal resolution. More expensive and might be less compatible.
+                    , .{});
+                    if (resolution_update) {
                         d.gctx_queue_mutex.lock();
                         defer d.gctx_queue_mutex.unlock();
-                        d.config.renderer.internal_resolution_factor = @intFromEnum(resolution);
-                        d.renderer.resolution = .{ .width = Deecy.Renderer.NativeResolution.width * @intFromEnum(resolution), .height = Deecy.Renderer.NativeResolution.height * @intFromEnum(resolution) };
+                        d.renderer.resolution = .{
+                            .width = d.config.renderer.aspect_ratio.width() * d.config.renderer.internal_resolution_factor,
+                            .height = Deecy.Renderer.NativeResolution.height * d.config.renderer.internal_resolution_factor,
+                        };
                         d.renderer.on_inner_resolution_change();
                         //  Force a re-render if we're paused
-                        if (d.running)
-                            try d.renderer.render(&d.dc.gpu, false);
+                        if (!d.running) try d.renderer.render(&d.dc.gpu, false);
                     }
                     zgui.setNextItemWidth(dropdown_size);
                     _ = zgui.comboFromEnum("Display Mode", &d.config.renderer.display_mode);

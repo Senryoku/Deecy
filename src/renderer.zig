@@ -751,8 +751,24 @@ pub const Renderer = struct {
 
     pub const Configuration = struct {
         pub const TextureFilter = enum { @"Application Driven", @"Force Nearest", @"Force Linear" };
+        pub const AspectRatio = enum {
+            /// Default
+            @"4:3",
+            /// Rendered as 640x480 stretched to 16:9. Cheap, should always work.
+            @"16:9 (Stretch)",
+            /// Real 16:9 (854x480). More pixels, more demanding, might be less compatibility.
+            @"16:9",
+
+            pub fn width(self: @This()) u32 {
+                return switch (self) {
+                    .@"4:3", .@"16:9 (Stretch)" => NativeResolution.width,
+                    .@"16:9" => 854,
+                };
+            }
+        };
 
         internal_resolution_factor: u32 = 2,
+        aspect_ratio: AspectRatio = .@"4:3",
         display_mode: DisplayMode = .Center,
         /// Filter used when blitting the rendered frame to the host surface.
         scaling_filter: Filter = .Linear,
@@ -1341,7 +1357,7 @@ pub const Renderer = struct {
         var renderer = try allocator.create(Renderer);
         renderer.* = .{
             .config = config,
-            .resolution = .{ .width = config.internal_resolution_factor * NativeResolution.width, .height = config.internal_resolution_factor * NativeResolution.height },
+            .resolution = .{ .width = config.internal_resolution_factor * config.aspect_ratio.width(), .height = config.internal_resolution_factor * NativeResolution.height },
 
             .blit_vertex_buffer = blit_vertex_buffer,
             .blit_index_buffer = blit_index_buffer,
@@ -3002,24 +3018,26 @@ pub const Renderer = struct {
     }
 
     fn convert_clipping(self: *@This(), user_clip: ?HollyModule.UserTileClipInfo) HollyModule.UserTileClipInfo {
-        const factor = @divTrunc(self.resolution.width, NativeResolution.width);
-        const x = factor * self.global_clip.x.min;
-        const y = factor * self.global_clip.y.min;
-        const width = @min(factor * (self.global_clip.x.max - self.global_clip.x.min), self.resolution.width);
-        const height = @min(factor * (self.global_clip.y.max - self.global_clip.y.min), self.resolution.height);
+        // TODO: Revert to integer math only when possible?
+        const x_factor = @as(f32, @floatFromInt(self.resolution.width)) / @as(f32, @floatFromInt(NativeResolution.width));
+        const y_factor = @as(f32, @floatFromInt(self.resolution.height)) / @as(f32, @floatFromInt(NativeResolution.height));
+        const x: u32 = @intFromFloat(x_factor * @as(f32, @floatFromInt(self.global_clip.x.min)));
+        const y: u32 = @intFromFloat(y_factor * @as(f32, @floatFromInt(self.global_clip.y.min)));
+        const width: u32 = @intFromFloat(@min(x_factor * @as(f32, @floatFromInt(self.global_clip.x.max - self.global_clip.x.min)), @as(f32, @floatFromInt(self.resolution.width))));
+        const height: u32 = @intFromFloat(@min(y_factor * @as(f32, @floatFromInt(self.global_clip.y.max - self.global_clip.y.min)), @as(f32, @floatFromInt(self.resolution.height))));
 
         if (user_clip) |uc| {
             // FIXME: Handle other usages.
             //        Use Stencil for OutsideEnabled
             if (uc.usage == .InsideEnabled) {
-                const scaled_x = @max(factor *| uc.x, x);
-                const scaled_y = @max(factor *| uc.y, y);
+                const scaled_x = @max(@as(u32, @intFromFloat(x_factor * @as(f32, @floatFromInt(uc.x)))), x);
+                const scaled_y = @max(@as(u32, @intFromFloat(y_factor * @as(f32, @floatFromInt(uc.y)))), y);
                 return .{
                     .usage = .InsideEnabled,
                     .x = @min(scaled_x, self.resolution.width),
                     .y = @min(scaled_y, self.resolution.height),
-                    .width = @min(@min(factor *| uc.width, width), self.resolution.width -| scaled_x),
-                    .height = @min(@min(factor *| uc.height, height), self.resolution.height -| scaled_y),
+                    .width = @min(@min(@as(u32, @intFromFloat(x_factor * @as(f32, @floatFromInt(uc.width)))), width), self.resolution.width -| scaled_x),
+                    .height = @min(@min(@as(u32, @intFromFloat(y_factor * @as(f32, @floatFromInt(uc.height)))), height), self.resolution.height -| scaled_y),
                 };
             }
         }
@@ -3845,11 +3863,11 @@ pub const Renderer = struct {
 
     /// Blit the last rendered frame to the window surface.
     /// Locks _gctx_queue_mutex.
-    pub fn draw(self: *const @This(), window_width: u32, window_height: u32) void {
+    pub fn draw(self: *const @This(), window_width: u32, window_height: u32, aspect_ratio: Configuration.AspectRatio) void {
         self._gctx_queue_mutex.lock();
         defer self._gctx_queue_mutex.unlock();
 
-        self.update_blit_to_screen_vertex_buffer(window_width, window_height);
+        self.update_blit_to_screen_vertex_buffer(window_width, window_height, aspect_ratio);
 
         if (self._gctx.lookupResource(self.blit_pipeline)) |pipeline| {
             var surface: zgpu.wgpu.SurfaceTexture = undefined;
@@ -4136,8 +4154,8 @@ pub const Renderer = struct {
     }
 
     // Assumes gctx_queue_mutex is locked.
-    pub fn update_blit_to_screen_vertex_buffer(self: *const @This(), width: u32, height: u32) void {
-        const iw: f32 = @floatFromInt(self.resolution.width);
+    pub fn update_blit_to_screen_vertex_buffer(self: *const @This(), width: u32, height: u32, aspect_ratio: Configuration.AspectRatio) void {
+        const iw: f32 = if (aspect_ratio == .@"16:9 (Stretch)") 16.0 / 9.0 * @as(f32, @floatFromInt(self.resolution.height)) else @floatFromInt(self.resolution.width);
         const ih: f32 = @floatFromInt(self.resolution.height);
         const tw: f32 = @floatFromInt(width);
         const th: f32 = @floatFromInt(height);
