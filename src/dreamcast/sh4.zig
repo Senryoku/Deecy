@@ -326,7 +326,7 @@ pub const SH4 = struct {
         self.p4_register(u32, .TEA).* = 0;
         self.p4_register(u32, .MMUCR).* = 0;
 
-        self.p4_register(u32, ._FF000030).* = 0x040205C1;
+        self.p4_register(u32, @enumFromInt(0xFF000030)).* = 0x040205C1;
 
         self.p4_register(u8, .BASRA).* = undefined;
         self.p4_register(u8, .BASRB).* = undefined;
@@ -1596,27 +1596,6 @@ pub const SH4 = struct {
                             // Ignore it, it's not implemented but it also doesn't fit in our P4 register remapping.
                             return;
                         },
-                        @intFromEnum(P4Register.SCFTDR2) => {
-                            check_type(&[_]type{u8}, T, "Invalid P4 Write({}) to SCFTDR2\n", .{T});
-
-                            var stdout_buffer: [128]u8 = undefined;
-                            var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-                            const stdout = &stdout_writer.interface;
-
-                            stdout.print("\u{001b}[44m\u{001b}[97m{c}\u{001b}[0m", .{value}) catch |err| {
-                                sh4_log.err(termcolor.red("Error writing serial output: {}\n"), .{err});
-                            };
-                            stdout.flush() catch |err| {
-                                sh4_log.err(termcolor.red("Error flushing stdout: {}\n"), .{err});
-                            };
-
-                            // Immediately mark transfer as complete.
-                            //   Or rather, attempts to, this is not enough.
-                            // const SCFSR2 = self.p4_register(HardwareRegisters.SCFSR2, .SCFSR2);
-                            // SCFSR2.*.tend = 1;
-                            // FIXME: The serial interface is not implemented at all.
-                            return;
-                        },
                         @intFromEnum(P4Register.RTCSR), @intFromEnum(P4Register.RTCNT), @intFromEnum(P4Register.RTCOR) => {
                             check_type(&[_]type{u16}, T, "Invalid P4 Write({}) to RTCSR\n", .{T});
                             std.debug.assert(value & 0xFF00 == 0b10100101_00000000);
@@ -1640,10 +1619,49 @@ pub const SH4 = struct {
                             return;
                         },
                         // Serial Interface
+                        @intFromEnum(P4Register.SCFTDR2) => {
+                            check_type(&[_]type{u8}, T, "Invalid P4 Write({}) to SCFTDR2\n", .{T});
+
+                            var stdout_buffer: [128]u8 = undefined;
+                            var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                            const stdout = &stdout_writer.interface;
+
+                            stdout.print("\u{001b}[44m\u{001b}[97m{c}\u{001b}[0m", .{value}) catch |err| {
+                                sh4_log.err(termcolor.red("Error writing serial output: {}\n"), .{err});
+                            };
+                            stdout.flush() catch |err| {
+                                sh4_log.err(termcolor.red("Error flushing stdout: {}\n"), .{err});
+                            };
+
+                            // Immediately mark transfer as complete.
+                            const status_register = self.p4_register(P4.SCFSR2, .SCFSR2);
+                            status_register.tdfe = true;
+
+                            const control_register = self.p4_register(P4.SCSCR2, .SCSCR2);
+                            const fifo_control = self.p4_register(P4.SCFCR2, .SCFCR2);
+                            if (control_register.tie) {
+                                sh4_log.warn("Unimplemented SCIF_TXI interrupt enabled at {d} bytes.", .{fifo_control.ttrg.bytes()});
+                                // self.request_interrupt(Interrupt.SCIF_TXI);
+                            }
+                            return;
+                        },
                         @intFromEnum(P4Register.SCFSR2) => {
                             check_type(&[_]type{u16}, T, "Invalid P4 Write({}) to SCFSR2\n", .{T});
+                            const val: P4.SCFSR2 = @bitCast(value);
+                            sh4_log.debug("Write to SCFSR2: {any}", .{val});
                             // Writable bits can only be cleared.
-                            // self.p4_register(u16, .SCFSR2).* &= (value | 0b11111111_00001100);
+                            // TODO: "Also note that in order to clear these flags they must be read as 1 beforehand."
+                            self.p4_register(u16, .SCFSR2).* &= (value | 0b11111111_00001100);
+                            return;
+                        },
+                        @intFromEnum(P4Register.SCFCR2) => {
+                            // FIFO Control Register
+                            check_type(&[_]type{u16}, T, "Invalid P4 Write({}) to SCFCR2\n", .{T});
+                            const val: P4.SCFCR2 = @bitCast(value);
+                            sh4_log.debug("Write to SCFCR2: {any}", .{val});
+                            if (val.rfrst) sh4_log.debug("  Resetting Receive FIFO", .{});
+                            if (val.tfrst) sh4_log.debug("  Resetting Transmit FIFO", .{});
+                            self.p4_register(P4.SCFCR2, .SCFSR2).* = val;
                             return;
                         },
                         0xFFEB0000 => {

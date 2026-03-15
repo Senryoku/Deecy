@@ -17,14 +17,18 @@ pub const P4Register = enum(u32) {
     QACR0 = 0xFF000038,
     QACR1 = 0xFF00003C,
 
-    PMCR1 = 0xFF000084, // Performance Counter Control Register  1
-    PMCR2 = 0xFF000088, // Performance Counter Control Register 2
-    PC1H = 0xFF100004, // Performance counter 1H
-    PC1L = 0xFF100008, // Performance counter 1L
-    PC2H = 0xFF10000C, // Performance counter 2H
-    PC2L = 0xFF100010, // Performance counter 2L
-
-    _FF000030 = 0xFF000030,
+    /// Performance Counter Control Register 1
+    PMCR1 = 0xFF000084,
+    /// Performance Counter Control Register 2
+    PMCR2 = 0xFF000088,
+    /// Performance counter 1H
+    PC1H = 0xFF100004,
+    /// Performance counter 1L
+    PC1L = 0xFF100008,
+    /// Performance counter 2H
+    PC2H = 0xFF10000C,
+    /// Performance counter 2L
+    PC2L = 0xFF100010,
 
     // UBC
     BARA = 0xFF200000,
@@ -113,16 +117,26 @@ pub const P4Register = enum(u32) {
     SCSPTR1 = 0xFFE0001C,
 
     // SCIF
-    SCSMR2 = 0xFFE80000, // Serial mode register
-    SCBRR2 = 0xFFE80004, // Bit rate register
-    SCSCR2 = 0xFFE80008, // Serial control register
-    SCFTDR2 = 0xFFE8000C, // Transmit FIFO data register
-    SCFSR2 = 0xFFE80010, // Serial status register
-    SCFRDR2 = 0xFFE80014, // Receive FIFO data register
-    SCFCR2 = 0xFFE80018, // FIFO control register
-    SCFDR2 = 0xFFE8001C, // FIFO data count register
-    SCSPTR2 = 0xFFE80020, // Serial port register
-    SCLSR2 = 0xFFE80024, // Line status register
+    /// Serial mode register
+    SCSMR2 = 0xFFE80000,
+    /// Bit rate register
+    SCBRR2 = 0xFFE80004,
+    /// Serial control register
+    SCSCR2 = 0xFFE80008,
+    /// Transmit FIFO data register
+    SCFTDR2 = 0xFFE8000C,
+    /// Serial status register
+    SCFSR2 = 0xFFE80010,
+    /// Receive FIFO data register
+    SCFRDR2 = 0xFFE80014,
+    /// FIFO control register
+    SCFCR2 = 0xFFE80018,
+    /// FIFO data count register
+    SCFDR2 = 0xFFE8001C,
+    /// Serial port register
+    SCSPTR2 = 0xFFE80020,
+    /// Line status register
+    SCLSR2 = 0xFFE80024,
 
     SDMR = 0xFF940190,
 
@@ -319,6 +333,112 @@ pub const FRQCR = packed struct(u16) {
         std.debug.assert(PeripheralClockRatio == 4); // For optimisation purposes
         return PeripheralClockRatio;
     }
+};
+
+/// FIFO Control Register
+pub const SCFCR2 = packed struct(u16) {
+    /// Loopback Test (LOOP): Internally connects the transmit output pin (TxD2) and receive input pin (RxD2), and the ~RTS2 pin and ~CTS2 pin, enabling loopback testing.
+    loop: bool,
+    /// Receive FIFO Data Register Reset (RFRST): Invalidates the receive data in the receive FIFO data register and resets it to the empty state.
+    rfrst: bool,
+    /// Transmit FIFO Data Register Reset (TFRST): Invalidates the transmit data in the transmit FIFO data register and resets it to the empty state.
+    tfrst: bool,
+    /// Modem Control Enable (MCE): Enables the ~CTS2 and ~RTS2 modem control signals.
+    mce: bool,
+    /// Transmit FIFO Data Number Trigger (TTRG1, TTRG0): These bits are used
+    /// to set the number of remaining transmit data bytes that sets the transmit FIFO data register
+    /// empty (TDFE) flag in the serial status register (SCFSR2).
+    /// The TDFE flag is set when the number of transmit data bytes in SCFTDR2 is equal to or less than the trigger set number.
+    ttrg: enum(u2) {
+        @"8" = 0b00,
+        @"4" = 0b01,
+        @"2" = 0b10,
+        @"1" = 0b11,
+
+        pub fn bytes(self: @This()) u8 {
+            return switch (self) {
+                .@"8" => 8,
+                .@"4" => 4,
+                .@"2" => 2,
+                .@"1" => 1,
+            };
+        }
+    },
+    /// Receive FIFO Data Number Trigger (RTRG1, RTRG0): These bits are used to
+    /// set the number of receive data bytes that sets the receive data full (RDF) flag in the serial status
+    /// register (SCFSR2).
+    /// The RDF flag is set when the number of receive data bytes in SCFRDR2 is equal to or greater than the trigger set number.
+    rtrg: enum(u2) {
+        @"1" = 0b00,
+        @"4" = 0b01,
+        @"8" = 0b10,
+        @"14" = 0b11,
+
+        pub fn bytes(self: @This()) u8 {
+            return switch (self) {
+                .@"1" => 1,
+                .@"4" => 4,
+                .@"8" => 8,
+                .@"14" => 14,
+            };
+        }
+    },
+    _: u8,
+};
+
+/// Serial Control Register
+pub const SCSCR2 = packed struct(u16) {
+    _0: u1 = 0,
+    /// Clock Enable 1
+    cke1: bool = false,
+    _1: u1 = 0,
+    /// Receive Error Interrupt Enable
+    reie: bool = false,
+    /// Receive Enable
+    re: bool = true,
+    /// Transmit Enable
+    te: bool = true,
+    /// Receive Interrupt Enable
+    rie: bool = false,
+    /// Transmit Interrupt Enable
+    tie: bool = false,
+    _: u8 = 0,
+};
+
+/// Serial Status Register
+pub const SCFSR2 = packed struct(u16) {
+    /// Receive Data Ready
+    ///   Indicates that there are fewer than the receive trigger set number of
+    ///   data bytes in SCFRDR2, and no further data has arrived for at least
+    ///   15 etu after the stop bit of the last data received.
+    dr: bool = false,
+    /// Receive FIFO Data Full (RDF)
+    ///   Indicates that the received data has been transferred from SCRSR2 to
+    ///   SCFRDR2, and the number of receive data bytes in SCFRDR2 is equal to or
+    ///   greater than the receive trigger number set by bits RTRG1 and RTRG0
+    ///   in the FIFO control register (SCFCR2).
+    rdf: bool = false,
+    /// Parity Error
+    per: bool = false,
+    /// Framing Error
+    fer: bool = false,
+    /// Break Detect
+    brk: bool = false,
+    /// Transmit FIFO Data Empty
+    ///   Indicates that data has been transferred from SCFTDR2 to SCTSR2,
+    ///   the number of data bytes in SCFTDR2 has fallen to or below the
+    ///   transmit trigger data number set by bits TTRG1 and TTRG0 in the
+    ///   FIFO control register (SCFCR2), and new transmit data can be written to SCFTDR2.
+    tdfe: bool = true,
+    /// Transmit End
+    ///   Indicates that there is no valid data in SCFTDR2 when the last bit of the transmit character is sent, and transmission has been ended.
+    tend: bool = true,
+    /// Receive Error
+    er: bool = false,
+    /// Number of Framing Errors
+    fer_number: u4 = 0,
+    /// Number of Parity Errors
+    per_number: u4 = 0,
 };
 
 const PerformanceMeasurementItems = enum(u6) {

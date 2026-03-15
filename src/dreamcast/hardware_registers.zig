@@ -285,19 +285,6 @@ pub const SB_ISTEXT = packed struct(u32) {
     }
 };
 
-pub const SCFSR2 = packed struct(u16) {
-    dr: u1 = 0,
-    rdf: u1 = 0,
-    per: u1 = 0,
-    fer: u1 = 0,
-    brk: u1 = 0,
-    tdfe: u1 = 1,
-    tend: u1 = 1,
-    er: u1 = 0,
-    fer_number: u4 = 0,
-    per_number: u4 = 0,
-};
-
 // SB_ADSUSP - SB_E1SUSP - SB_E2SUSP - SB_DDSUSP
 pub const SB_SUSP = packed struct(u32) {
     dma_suspend_request: u1 = 0, // Write Only
