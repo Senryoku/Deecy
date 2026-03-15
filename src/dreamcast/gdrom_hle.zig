@@ -75,11 +75,7 @@ pub fn mainloop(dc: *Dreamcast) void {
             gdrom_hle_log.info("    GDROM {t} sector={d} size={d} destination=0x{X:0>8}", .{ dc.gdrom_hle.command, lba, size, dest });
             const read = dc.gdrom.disc.?.load_sectors(lba, size, @as([*]u8, @ptrCast(dc._get_memory(dest)))[0 .. 2352 * size]);
 
-            dc.schedule_interrupt(.{ .EoD_GDROM = 1 }, 100_000 * size);
-            dc.schedule_external_interrupt(.{ .GDRom = 1 }, 100_000 * size);
-
             dc.gdrom_hle.result = .{ 0, 0, read, 0 };
-
             dc.gdrom.state = .Standby;
         },
         .Init => {
