@@ -1,0 +1,136 @@
+const std = @import("std");
+const zgui = @import("zgui");
+
+const GameFile = @import("../deecy_ui.zig").GameFile;
+const Cheats = @import("../cheats.zig");
+const Icons = @import("./common.zig").Icons;
+
+selected_file: ?*const GameFile = null,
+cheats: std.ArrayList(Cheats.Cheat) = .empty,
+
+pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    for (self.cheats.items) |*c| c.deinit(allocator);
+    self.cheats.deinit(allocator);
+    self.cheats = .empty;
+
+    self.selected_file = null;
+}
+
+pub fn setup(self: *@This(), allocator: std.mem.Allocator, entry: *const GameFile) !void {
+    std.debug.assert(self.selected_file == null);
+    self.selected_file = entry;
+    if (try Cheats.load(allocator, entry.product_name, entry.product_id)) |cheats| {
+        self.cheats = .fromOwnedSlice(cheats);
+    }
+    // TODO: Load per-game settings for this game.
+}
+
+pub fn open(self: *@This()) void {
+    _ = self;
+    zgui.openPopup("Game Settings", .{});
+}
+
+fn close(self: *@This(), allocator: std.mem.Allocator) void {
+    if (self.selected_file) |f|
+        Cheats.save(allocator, f.product_name, f.product_id, self.cheats.items) catch |err|
+            std.log.err("Failed to save cheats: {t}", .{err});
+    zgui.closeCurrentPopup();
+    self.deinit(allocator);
+}
+
+/// Needs to be called on the same stack ID as open()
+pub fn draw(self: *@This(), allocator: std.mem.Allocator) !void {
+    if (zgui.beginPopupModal("Game Settings", .{ .flags = .{ .always_auto_resize = true } })) {
+        if (zgui.beginTabBar("GameSettingsTabBar", .{})) {
+            // if (zgui.beginTabItem("Settings", .{})) {
+            //     zgui.textUnformatted("TODO: Game Settings");
+            //     zgui.endTabItem();
+            // }
+            if (zgui.beginTabItem("Cheats", .{})) {
+                var buffer: [256:0]u8 = undefined;
+                var cheat_index_to_delete: ?usize = null;
+                if (zgui.beginChild("##Scrollable", .{ .w = 640, .h = 480, .child_flags = .{ .frame_style = true } })) {
+                    if (self.cheats.items.len == 0) zgui.textUnformatted("No cheats.");
+
+                    for (self.cheats.items, 0..) |*c, i| {
+                        zgui.pushIntId(@intCast(i));
+                        defer zgui.popId();
+
+                        _ = zgui.checkbox("##Enabled", .{ .v = &c.enabled });
+                        zgui.sameLine(.{});
+                        @memset(&buffer, 0);
+                        @memcpy(buffer[0..@min(buffer.len, c.name.len)], c.name[0..@min(buffer.len, c.name.len)]);
+                        if (zgui.inputText("##Name", .{ .buf = &buffer, .flags = .{} })) {
+                            allocator.free(c.name);
+                            c.name = try allocator.dupe(u8, buffer[0..std.mem.indexOfScalar(u8, &buffer, 0).?]);
+                        }
+                        zgui.sameLine(.{});
+                        if (zgui.button(Icons.Trash, .{})) cheat_index_to_delete = i;
+
+                        zgui.indent(.{});
+                        defer zgui.unindent(.{});
+
+                        var action_index_to_delete: ?usize = null;
+                        for (c.actions, 0..) |*a, aidx| {
+                            zgui.pushIntId(@intCast(aidx));
+                            defer zgui.popId();
+
+                            var addr: i32 = @intCast(a.address);
+                            zgui.setNextItemWidth(100.0);
+                            if (zgui.inputInt("##Address", .{ .v = &addr, .step = 0, .flags = .{ .chars_hexadecimal = true } }))
+                                a.address = @intCast(std.math.clamp(addr, 0x0C000000, 0x0D000000));
+                            zgui.sameLine(.{});
+                            var value_type = std.meta.activeTag(a.value);
+                            zgui.setNextItemWidth(64.0);
+                            if (zgui.comboFromEnum("##Type", &value_type)) {
+                                switch (value_type) {
+                                    inline else => |vt| a.value = @unionInit(Cheats.Value, @tagName(vt), 0),
+                                }
+                            }
+                            zgui.sameLine(.{});
+                            switch (a.value) {
+                                inline else => |*v| {
+                                    zgui.setNextItemWidth(100.0);
+                                    _ = zgui.inputScalar("##Value", @typeInfo(@TypeOf(v)).pointer.child, .{ .v = v, .step = null, .flags = .{ .chars_hexadecimal = true } });
+                                },
+                            }
+                            zgui.sameLine(.{});
+                            if (zgui.button(Icons.Trash, .{})) action_index_to_delete = i;
+                        }
+                        if (action_index_to_delete) |idx| {
+                            var tmp = try allocator.alloc(Cheats.Action, c.actions.len - 1);
+                            @memcpy(tmp[0..idx], c.actions[0..idx]);
+                            @memcpy(tmp[idx..], c.actions[idx + 1 ..]);
+                            allocator.free(c.actions);
+                            c.actions = tmp;
+                        }
+                        if (zgui.button(Icons.CirclePlus ++ " Add Action", .{})) {
+                            var tmp = try allocator.alloc(Cheats.Action, c.actions.len + 1);
+                            @memcpy(tmp[0..c.actions.len], c.actions);
+                            tmp[c.actions.len] = .{ .address = 0, .value = .{ .u32 = 0 } };
+                            allocator.free(c.actions);
+                            c.actions = tmp;
+                        }
+                    }
+                    zgui.endChild();
+                }
+                if (cheat_index_to_delete) |idx|
+                    self.cheats.orderedRemove(idx).deinit(allocator);
+
+                if (zgui.button(Icons.SquarePlus ++ " Add Cheat", .{})) {
+                    const new_cheat = Cheats.Cheat{
+                        .enabled = true,
+                        .name = try allocator.dupe(u8, "New Cheat"),
+                        .actions = try allocator.alloc(Cheats.Action, 1),
+                    };
+                    new_cheat.actions[0] = .{ .address = 0x0C000000, .value = .{ .u32 = 0 } };
+                    try self.cheats.append(allocator, new_cheat);
+                }
+                zgui.endTabItem();
+            }
+            zgui.endTabBar();
+        }
+        if (zgui.button("Save & Close", .{})) self.close(allocator);
+        zgui.endPopup();
+    }
+}

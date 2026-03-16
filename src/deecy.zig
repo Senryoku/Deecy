@@ -36,6 +36,8 @@ pub const UI = @import("./deecy_ui.zig");
 const DebugUI = @import("./debug_ui.zig");
 const Shortcuts = @import("./ui/shortcuts.zig");
 
+const Cheats = @import("./cheats.zig");
+
 const lz4 = @import("lz4");
 
 const deecy_log = std.log.scoped(.deecy);
@@ -152,16 +154,6 @@ fn glfw_resize_callback(window: *zglfw.Window, width: i32, height: i32) callconv
 const assets_dir = "assets/";
 const DefaultFont = @embedFile(assets_dir ++ "fonts/Hack-Regular.ttf");
 const IconFont = @embedFile(assets_dir ++ "fonts/Font Awesome 7 Free-Solid-900.otf");
-
-/// Replaces invalid characters with underscores
-fn safe_path(path: []u8) void {
-    for (path) |*c| {
-        switch (c.*) {
-            '0'...'9', 'A'...'Z', 'a'...'z', '.', '[', ']', '{', '}', '-', '/' => {},
-            else => c.* = '_',
-        }
-    }
-}
 
 fn file_exists(path: []const u8) !bool {
     const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
@@ -398,6 +390,8 @@ _dc_thread: ?std.Thread = null, // Used for unlimited frame rate, i.e. when real
 enable_jit: bool = true,
 breakpoints: std.ArrayList(u32),
 
+enabled_cheats: ?[]const Cheats.Cheat = null,
+
 controllers: [4]?struct {
     id: zglfw.Joystick,
     rumble: struct {
@@ -458,10 +452,8 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
             const conf_str = try file.readToEndAllocOptions(allocator, 1024 * 1024, null, .@"8", 0);
             defer allocator.free(conf_str);
             @setEvalBranchQuota(2000);
-            var diagnostics: std.zon.parse.Diagnostics = .{};
-            defer diagnostics.deinit(allocator);
             const zon = std.zon.parse.fromSlice(helpers.Partial(Configuration), allocator, conf_str, null, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
-                deecy_log.err("Failed to parse config file: {t}.\n{f}", .{ err, diagnostics });
+                deecy_log.err("Failed to parse config file: {t}.", .{err});
                 break :config .{};
             };
             break :config helpers.to_complete(Configuration, zon);
@@ -649,6 +641,8 @@ pub fn destroy(self: *@This()) void {
     self.pause();
     self.wait_async_jobs();
 
+    self.deinit_enabled_cheats();
+
     self.save_config() catch |err| deecy_log.err("Error writing config: {t}", .{err});
     std.zon.parse.free(self._allocator, self.config);
 
@@ -674,6 +668,14 @@ pub fn destroy(self: *@This()) void {
     zglfw.terminate();
 
     self._allocator.destroy(self);
+}
+
+fn deinit_enabled_cheats(self: *@This()) void {
+    if (self.enabled_cheats) |cheats| {
+        for (cheats) |c| c.deinit(self._allocator);
+        self._allocator.free(cheats);
+        self.enabled_cheats = null;
+    }
 }
 
 fn auto_populate_joysticks(self: *@This()) !void {
@@ -1280,6 +1282,22 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
         }
     }
 
+    // Load cheats
+    self.deinit_enabled_cheats();
+    if (try Cheats.load(self._allocator, self.get_product_name().?, self.get_product_id().?)) |cheats| {
+        defer self._allocator.free(cheats);
+        // Filter out disabled cheats
+        var cheat_list = std.ArrayList(Cheats.Cheat).empty;
+        defer cheat_list.deinit(self._allocator);
+        for (cheats) |cheat| {
+            if (cheat.enabled) {
+                try cheat_list.append(self._allocator, cheat);
+                deecy_log.info(termcolor.green("[+]") ++ " Enabled cheat '{s}'.", .{cheat.name});
+            } else cheat.deinit(self._allocator);
+        }
+        self.enabled_cheats = try cheat_list.toOwnedSlice(self._allocator);
+    }
+
     if (self.config.per_game_vmu) try self.load_per_game_vmu();
     try self.check_save_state_slots();
 
@@ -1315,7 +1333,7 @@ fn userdata_game_directory(self: *@This()) !?[]const u8 {
     const product_id = self.get_product_id() orelse return null;
     const product_name = self.get_product_name() orelse "INVALID";
     const folder_name = try std.fmt.allocPrint(self._allocator, "{s}[{s}]", .{ product_name, product_id });
-    safe_path(folder_name);
+    HostPaths.safe_path(folder_name);
     defer self._allocator.free(folder_name);
     const path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), folder_name });
     return path;
@@ -1714,7 +1732,21 @@ fn display_missing_file_error(self: *@This(), comptime fmt: []const u8, args: an
     return .exit;
 }
 
+fn apply_cheats(self: *@This()) void {
+    if (self.enabled_cheats) |cheats| {
+        for (cheats) |cheat| {
+            for (cheat.actions) |action| {
+                switch (action.value) {
+                    inline else => |v| self.dc.write(@TypeOf(v), action.address, v),
+                }
+            }
+        }
+    }
+}
+
 fn run_for(self: *@This(), sh4_cycles: u64) void {
+    self.apply_cheats();
+
     self._cycles_to_run += @intCast(sh4_cycles);
     if (self.enable_jit) {
         while (self._cycles_to_run > 0) {
@@ -1750,7 +1782,8 @@ fn run_for(self: *@This(), sh4_cycles: u64) void {
 // Used for uncapped framerate (no audio output)
 fn dc_thread_loop(self: *@This()) void {
     while (self.running) {
-        self.run_for(128);
+        const refresh_rate = self.dc.target_refresh_rate();
+        self.run_for(DreamcastModule.Dreamcast.SH4Clock / refresh_rate.as_u64());
     }
 }
 
@@ -1788,7 +1821,7 @@ fn save_screenshot_impl(self: *const @This()) !void {
         day_seconds.getSecondsIntoMinute(),
     });
     defer self._allocator.free(filepath);
-    safe_path(filepath);
+    HostPaths.safe_path(filepath);
 
     // Make sure the directory exists.
     if (std.fs.path.dirname(filepath)) |dir|

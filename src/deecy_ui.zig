@@ -27,23 +27,25 @@ const wait_for = @import("./ui/wait_for_input.zig");
 
 const Self = @This();
 
-const GameFile = struct {
+pub const GameFile = struct {
     path: [:0]const u8,
     name: [:0]const u8,
+    product_name: ?[]const u8,
+    product_id: ?[]const u8,
     texture: ?zgpu.TextureHandle,
     view: ?zgpu.TextureViewHandle,
 
     pub fn free(self: *@This(), allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) void {
         allocator.free(self.path);
         allocator.free(self.name);
-        if (self.texture) |texture| {
-            gctx.releaseResource(texture);
-            self.texture = null;
-        }
-        if (self.view) |view| {
-            gctx.releaseResource(view);
-            self.view = null;
-        }
+        if (self.product_name) |pn| allocator.free(pn);
+        if (self.product_id) |pid| allocator.free(pid);
+        if (self.texture) |texture| gctx.releaseResource(texture);
+        if (self.view) |view| gctx.releaseResource(view);
+        self.product_name = null;
+        self.product_id = null;
+        self.texture = null;
+        self.view = null;
     }
 
     pub fn sort(_: void, a: @This(), b: @This()) bool {
@@ -65,6 +67,8 @@ vmu_displays: [4]struct {
 binary_loaded: bool = false, // Indicates if we're running a raw binary loaded directly in RAM (not from a disc) (FIXME: Used to avoid drawing the game library when pausing without a disc. Clunky.)
 disc_files: std.ArrayList(GameFile) = .empty,
 disc_files_mutex: std.Thread.Mutex = .{}, // Used during disc_files population (then assumed to be constant outside of refresh_games)
+
+game_settings: @import("./ui/game_settings.zig") = .{},
 
 notifications: Notifications,
 
@@ -91,6 +95,8 @@ pub fn destroy(self: *@This()) void {
         self.deecy.gctx.releaseResource(texture.texture);
         self.deecy.gctx.releaseResource(texture.view);
     }
+
+    self.game_settings.deinit(self.allocator);
 
     self.notifications.deinit();
 
@@ -203,8 +209,20 @@ pub fn draw_vmus(self: *@This(), editable: bool) void {
     zgui.popStyleVar(.{});
 }
 
+fn update_game_info(self: *@This(), path: []const u8, product_name: []const u8, product_id: []const u8) void {
+    self.disc_files_mutex.lock();
+    defer self.disc_files_mutex.unlock();
+    for (self.disc_files.items) |*entry| {
+        if (std.mem.eql(u8, entry.path, path)) {
+            entry.product_name = self.allocator.dupe(u8, product_name) catch null;
+            entry.product_id = self.allocator.dupe(u8, product_id) catch null;
+            return;
+        }
+    }
+}
+
 // Locks gctx_queue_mutex.
-fn update_game_info(self: *@This(), path: []const u8, image_width: u32, image_height: u32, image: []const u8) void {
+fn update_game_texture(self: *@This(), path: []const u8, image_width: u32, image_height: u32, image: []const u8) void {
     self.deecy.gctx_queue_mutex.lock();
     const texture = self.deecy.gctx.createTexture(.{
         .usage = .{ .texture_binding = true, .copy_dst = true },
@@ -252,10 +270,14 @@ fn get_game_image(self: *@This(), path: []const u8, cache: ?*GameInfoCache) void
 
     var disc = Disc.init(allocator, path) catch |err| {
         ui_log.err("Failed to load disc '{s}': {t}", .{ path, err });
-        if (cache) |c| c.add(path, .{ .width = 0, .height = 0 }, null) catch {};
+        if (cache) |c| c.add(path, "NoName", "NoID", .{ .width = 0, .height = 0 }, null) catch {};
         return;
     };
     defer disc.deinit(allocator);
+
+    const product_name = disc.get_product_name() orelse "NoName";
+    const product_id = disc.get_product_id() orelse "NoID";
+    self.update_game_info(path, product_name, product_id);
 
     const tex_buffer: []u8 = allocator.alloc(u8, 1024 * 1024) catch |err| {
         ui_log.err("Failed to allocate texture buffer: {t}", .{err});
@@ -266,15 +288,15 @@ fn get_game_image(self: *@This(), path: []const u8, cache: ?*GameInfoCache) void
     if (disc.load_file("0GDTEX.PVR;1", tex_buffer)) |len| {
         if (PVRFile.decode(allocator, tex_buffer[0..len])) |result| {
             defer result.deinit(allocator);
-            self.update_game_info(path, result.width, result.height, result.bgra);
-            if (cache) |c| c.add(path, .{ .width = result.width, .height = result.height }, result.bgra) catch {};
+            self.update_game_texture(path, result.width, result.height, result.bgra);
+            if (cache) |c| c.add(path, product_name, product_id, .{ .width = result.width, .height = result.height }, result.bgra) catch {};
         } else |err| {
             ui_log.err(termcolor.red("Failed to decode 0GDTEX.PVR for '{s}': {t}"), .{ path, err });
-            if (cache) |c| c.add(path, .{ .width = 0, .height = 0 }, null) catch {};
+            if (cache) |c| c.add(path, product_name, product_id, .{ .width = 0, .height = 0 }, null) catch {};
         }
     } else |err| {
         ui_log.info("Failed to find 0GDTEX.PVR for '{s}': {t}", .{ path, err });
-        if (cache) |c| c.add(path, .{ .width = 0, .height = 0 }, null) catch {};
+        if (cache) |c| c.add(path, product_name, product_id, .{ .width = 0, .height = 0 }, null) catch {};
     }
 }
 
@@ -282,11 +304,13 @@ const lz4 = @import("lz4");
 
 const GameInfoCache = struct {
     const Signature: u32 = 0x43444247;
-    const Version: u32 = 2;
+    const Version: u32 = 3;
 
     const Entry = struct {
         path: []const u8,
         name: []const u8,
+        product_name: []const u8,
+        product_id: []const u8,
         image_size: struct { width: u32, height: u32 },
         image: ?[]const u8,
     };
@@ -335,14 +359,16 @@ const GameInfoCache = struct {
     }
 
     /// Thread safe
-    pub fn add(self: *@This(), path: []const u8, image_size: struct { width: u32, height: u32 }, image: ?[]const u8) !void {
+    pub fn add(self: *@This(), path: []const u8, product_name: []const u8, product_id: []const u8, image_size: struct { width: u32, height: u32 }, image: ?[]const u8) !void {
         self._mutex.lock();
         defer self._mutex.unlock();
         const arena_alloc = self._arena.allocator();
         const duped_path = try arena_alloc.dupe(u8, path);
         try self.map.put(duped_path, .{
             .path = duped_path,
-            .name = duped_path,
+            .name = try arena_alloc.dupe(u8, std.fs.path.basename(path)),
+            .product_name = try arena_alloc.dupe(u8, product_name),
+            .product_id = try arena_alloc.dupe(u8, product_id),
             .image_size = .{ .width = image_size.width, .height = image_size.height },
             .image = if (image) |i| try arena_alloc.dupe(u8, i) else null,
         });
@@ -362,6 +388,8 @@ const GameInfoCache = struct {
             const value = entry.value_ptr.*;
             try write_string(uncompressed_writer, value.path);
             try write_string(uncompressed_writer, value.name);
+            try write_string(uncompressed_writer, value.product_name);
+            try write_string(uncompressed_writer, value.product_id);
             try uncompressed_writer.writeInt(u32, value.image_size.width, .little);
             try uncompressed_writer.writeInt(u32, value.image_size.height, .little);
             if (value.image) |image| try uncompressed_writer.writeAll(image);
@@ -410,6 +438,8 @@ const GameInfoCache = struct {
         for (0..count) |_| {
             const path = try read_string(&reader);
             const name = try read_string(&reader);
+            const product_name = try read_string(&reader);
+            const product_id = try read_string(&reader);
             const image_size_width = try reader.takeInt(u32, .little);
             const image_size_height = try reader.takeInt(u32, .little);
             const image_byte_size = image_size_width * image_size_height * 4;
@@ -419,6 +449,9 @@ const GameInfoCache = struct {
             self.map.putAssumeCapacity(path, .{
                 .path = path,
                 .name = name,
+                .product_name = product_name,
+                .product_id = product_id,
+
                 .image_size = .{ .width = image_size_width, .height = image_size_height },
                 .image = image,
             });
@@ -469,8 +502,10 @@ pub fn refresh_games(self: *@This()) !void {
                     const name = try self.allocator.dupeZ(u8, entry.basename);
                     errdefer self.allocator.free(name);
                     try tmp_disc_files.append(self.allocator, .{
-                        .name = name,
                         .path = path,
+                        .name = name,
+                        .product_name = null,
+                        .product_id = null,
                         .texture = null,
                         .view = null,
                     });
@@ -497,8 +532,9 @@ pub fn refresh_games(self: *@This()) !void {
         for (0..self.disc_files.items.len) |file_idx| { // NOTE: I want to prioritize the first items on the list, and spawning jobs in the reverse order seem to do the trick for some reason ¯\_(ツ)_/¯
             const idx = self.disc_files.items.len - 1 - file_idx;
             if (cache.get(self.disc_files.items[idx].path)) |entry| {
+                self.update_game_info(entry.path, entry.product_name, entry.product_id);
                 if (entry.image) |image|
-                    self.update_game_info(entry.path, entry.image_size.width, entry.image_size.height, image);
+                    self.update_game_texture(entry.path, entry.image_size.width, entry.image_size.height, image);
             } else {
                 pool.spawnWg(&wait_group, get_game_image, .{ self, self.disc_files.items[idx].path, cache });
             }
@@ -1274,6 +1310,7 @@ pub fn draw_game_library(self: *@This()) !void {
                 return true;
             }
         };
+        var open_game_settings = false;
         zgui.setNextItemWidth(150.0);
         if (zgui.inputTextWithHint("##Search", .{ .hint = "Search file...", .buf = @ptrCast(&static.display_game_search), .flags = .{ .auto_select_all = true } })) {
             static.lowercase_buffer = @splat(0);
@@ -1363,6 +1400,8 @@ pub fn draw_game_library(self: *@This()) !void {
                             _ = zgui.tableNextColumn();
                             zgui.alignTextToFramePadding();
                             if (entry.path.len > 3) zgui.text("{s} ", .{entry.path[entry.path.len - 3 ..]});
+
+                            // TODO: Button to open game settings
                         }
                         zgui.endTable();
                     }
@@ -1379,7 +1418,7 @@ pub fn draw_game_library(self: *@This()) !void {
                     zgui.pushStyleVar1f(.{ .idx = .frame_rounding, .v = 8.0 });
                     defer zgui.popStyleVar(.{ .count = 3 });
                     var displayed_count: usize = 0;
-                    for (self.disc_files.items, 0..) |entry, idx| {
+                    for (self.disc_files.items, 0..) |*entry, idx| {
                         if (!static.match(entry.name)) continue;
                         {
                             zgui.beginGroup();
@@ -1388,6 +1427,7 @@ pub fn draw_game_library(self: *@This()) !void {
                             defer zgui.popId();
 
                             const cursor_pos = zgui.getCursorScreenPos();
+                            zgui.setNextItemAllowOverlap();
                             if (zgui.button("##Launch", .{ .w = 256.0, .h = 256.0 + 8.0 + title_height }))
                                 try d.load_and_start(entry.path);
                             zgui.setCursorScreenPos(.{ cursor_pos[0] + text_padding[0], cursor_pos[1] + text_padding[1] });
@@ -1419,7 +1459,16 @@ pub fn draw_game_library(self: *@This()) !void {
                                 defer zgui.popFont();
                                 var ext: [3]u8 = undefined;
                                 for (0..ext.len) |i| ext[i] = std.ascii.toUpper(entry.path[entry.path.len - 3 + i]);
-                                draw_list.addText(.{ cursor_pos[0] + 220.0, cursor_pos[1] + 264.0 }, 0x80808080, "{s}", .{ext});
+                                draw_list.addText(.{ cursor_pos[0] + 8.0, cursor_pos[1] + 264.0 }, 0x80808080, "{s}", .{ext});
+                            }
+                            {
+                                zgui.pushFont(null, 24.0);
+                                defer zgui.popFont();
+                                zgui.setCursorScreenPos(.{ cursor_pos[0] + 228.0, cursor_pos[1] + 260.0 });
+                                if (zgui.button(Icons.Gear, .{})) {
+                                    try self.game_settings.setup(self.allocator, entry);
+                                    open_game_settings = true;
+                                }
                             }
                         }
 
@@ -1427,6 +1476,8 @@ pub fn draw_game_library(self: *@This()) !void {
                             zgui.setMouseCursor(.hand);
                             if (zgui.beginTooltip()) {
                                 zgui.text("{s}", .{entry.name});
+                                zgui.text("Name: '{s}'", .{entry.product_name orelse "<Unknown>"});
+                                zgui.text("ID:   '{s}'", .{entry.product_id orelse "<Unknown>"});
                                 zgui.endTooltip();
                             }
                         }
@@ -1437,5 +1488,7 @@ pub fn draw_game_library(self: *@This()) !void {
                 },
             }
         }
+        if (open_game_settings) self.game_settings.open();
+        try self.game_settings.draw(self.allocator);
     }
 }

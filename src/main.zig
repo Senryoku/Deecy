@@ -50,34 +50,6 @@ fn trapa_handler(app: *anyopaque) void {
     @as(*Deecy, @ptrCast(@alignCast(app))).pause();
 }
 
-const Hack = struct { addr: u32, instr: []const u16 };
-
-const AvailableHacks = [_]struct { name: []const u8, hacks: []const Hack }{
-    .{
-        .name = "Loop Checker version 1.00",
-        .hacks = &[_]Hack{
-            .{ .addr = 0x0C0196DA, .instr = &[_]u16{0x9} },
-            .{ .addr = 0x0C0196EC, .instr = &[_]u16{0x9} },
-        },
-    },
-    .{
-        .name = "DC CHECKER for Repair v2.050",
-        .hacks = &[_]Hack{
-            .{ .addr = 0x0C018F54, .instr = &[_]u16{0x9} },
-            .{ .addr = 0x0C018F42, .instr = &[_]u16{0x9} },
-        },
-    },
-    .{
-        .name = "4S T-1401N",
-        .hacks = &[_]Hack{
-            .{ .addr = 0x0C266C28, .instr = &[_]u16{0x0000} },
-            .{ .addr = 0x0C266C2A, .instr = &[_]u16{0x3F40} },
-        },
-    },
-};
-
-var EnabledHacks: ?[]const Hack = null;
-
 pub extern "kernel32" fn timeBeginPeriod(uPeriod: std.os.windows.UINT) callconv(.winapi) std.os.windows.UINT; // MMRESULT
 pub extern "kernel32" fn timeEndPeriod(uPeriod: std.os.windows.UINT) callconv(.winapi) std.os.windows.UINT; // MMRESULT
 pub extern "kernel32" fn AttachConsole(dwProcessId: std.os.windows.DWORD) callconv(.winapi) std.os.windows.BOOL;
@@ -256,14 +228,6 @@ pub fn main() !void {
             };
         }
 
-        for (AvailableHacks) |hack| {
-            if (std.mem.count(u8, path, hack.name) > 0) {
-                EnabledHacks = hack.hacks;
-                std.log.info("  Enabled hacks for '{s}'", .{hack.name});
-                break;
-            }
-        }
-
         if (load_state) |state| {
             try d.load_state(state);
         }
@@ -303,16 +267,6 @@ pub fn main() !void {
         const now = zglfw.getTime();
         d.update(@floatCast(now - then));
         then = now;
-
-        if (EnabledHacks) |hacks| {
-            for (hacks) |hack| {
-                var addr = hack.addr;
-                for (hack.instr) |instr| {
-                    dc.cpu.write_physical(u16, addr, instr);
-                    addr += 2;
-                }
-            }
-        }
 
         // Framebuffer has been written to by the CPU.
         // Update the host texture and blit it to our render target.

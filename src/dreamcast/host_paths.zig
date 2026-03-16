@@ -21,6 +21,16 @@ fn generate_appdata_path(buf: []u8, path: []const u8) []const u8 {
     return buf[0..p.len];
 }
 
+/// Replaces invalid characters with underscores
+pub fn safe_path(path: []u8) void {
+    for (path) |*c| {
+        switch (c.*) {
+            '0'...'9', 'A'...'Z', 'a'...'z', '.', '[', ']', '{', '}', '-', '/' => {},
+            else => c.* = '_',
+        }
+    }
+}
+
 pub fn get_data_path() []const u8 {
     if (path_config.use_appdata_dir) {
         _mutex.lock();
@@ -41,4 +51,14 @@ pub fn get_userdata_path() []const u8 {
         return userdata_path;
     }
     return path_config.userdata_path;
+}
+
+pub fn userdata_game_directory(allocator: std.mem.Allocator, product_id: ?[]const u8, product_name: ?[]const u8) ![]const u8 {
+    const safe_product_id = product_id orelse "UNKNOWN";
+    const safe_product_name = product_name orelse "UNKNOWN";
+    const folder_name = try std.fmt.allocPrint(allocator, "{s}[{s}]", .{ safe_product_name, safe_product_id });
+    safe_path(folder_name);
+    defer allocator.free(folder_name);
+    const path = try std.fs.path.join(allocator, &[_][]const u8{ get_userdata_path(), folder_name });
+    return path;
 }
