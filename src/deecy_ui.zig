@@ -3,7 +3,8 @@ const builtin = @import("builtin");
 const comptime_config = @import("config");
 const termcolor = @import("termcolor");
 const custom_log = @import("custom_log.zig");
-const Once = @import("helpers").Once;
+const helpers = @import("helpers");
+const Once = helpers.Once;
 
 const zglfw = @import("zglfw");
 const zgui = @import("zgui");
@@ -753,7 +754,32 @@ pub fn draw(self: *@This()) !void {
             }
             zgui.endMenu();
         }
+        var open_about_popup = false;
+        if (zgui.beginMenu("Help", true)) {
+            if (zgui.menuItem("About", .{})) open_about_popup = true;
+            zgui.endMenu();
+        }
         zgui.endMainMenuBar();
+
+        if (open_about_popup)
+            zgui.openPopup("About", .{});
+        if (zgui.beginPopupModal("About", .{ .flags = .{ .always_auto_resize = true } })) {
+            zgui.text("Deecy v{s} {s} {t} (Commit {s})", .{ comptime_config.version, helpers.title_case_enum(builtin.os.tag), comptime_config.optimize, comptime_config.git_commit });
+            zgui.textUnformatted(Icons.Globe);
+            zgui.sameLine(.{});
+            zgui.textLinkOpenURL("Website", "https://senryoku.github.io/Deecy/");
+            zgui.textUnformatted(Icons.Check);
+            zgui.sameLine(.{});
+            zgui.textLinkOpenURL("Compatibilty List", "https://senryoku.github.io/Deecy/compatibility.html");
+            zgui.textUnformatted(Icons.FileCode);
+            zgui.sameLine(.{});
+            zgui.textLinkOpenURL("GitHub Repository", "https://github.com/Senryoku/Deecy");
+            zgui.separator();
+            if (zgui.button("Close", .{})) {
+                zgui.closeCurrentPopup();
+            }
+            zgui.endPopup();
+        }
     }
 
     if (!d.running and d.dc.gdrom.disc == null and !self.binary_loaded)
