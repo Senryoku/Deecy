@@ -895,7 +895,8 @@ pub fn init_peripheral(self: *@This(), port: u8, slot: u8) !void {
 }
 
 pub fn load_per_game_vmu(self: *@This()) !void {
-    if (try self.userdata_game_directory()) |game_dir| {
+    if (self.dc.gdrom.disc != null) {
+        const game_dir = try self.userdata_game_directory();
         defer self._allocator.free(game_dir);
         const vmu_path = try std.fs.path.join(self._allocator, &[_][]const u8{ game_dir, "vmu_0.bin" });
         defer self._allocator.free(vmu_path);
@@ -1284,7 +1285,7 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
 
     // Load cheats
     self.deinit_enabled_cheats();
-    if (try Cheats.load(self._allocator, self.get_product_name().?, self.get_product_id().?)) |cheats| {
+    if (try Cheats.load(self._allocator, self.get_product_name(), self.get_product_id())) |cheats| {
         defer self._allocator.free(cheats);
         // Filter out disabled cheats
         var cheat_list = std.ArrayList(Cheats.Cheat).empty;
@@ -1301,37 +1302,35 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
     if (self.config.per_game_vmu) try self.load_per_game_vmu();
     try self.check_save_state_slots();
 
-    deecy_log.info("Loaded '{s}' ({s}).", .{ self.get_product_name() orelse "Unknown Title", self.get_product_id() orelse "Unknown ID" });
+    deecy_log.info("Loaded '{s}' ({s}).", .{ self.get_product_name(), self.get_product_id() });
 
     var title = try std.ArrayList(u8).initCapacity(self._allocator, 64);
     defer title.deinit(self._allocator);
     try title.appendSlice(self._allocator, "Deecy");
-    if (self.get_product_name()) |name| {
-        try title.appendSlice(self._allocator, " - ");
-        try title.appendSlice(self._allocator, name);
-        if (self.get_product_id()) |id| {
-            try title.appendSlice(self._allocator, " (");
-            try title.appendSlice(self._allocator, id);
-            try title.append(self._allocator, ')');
-        }
-    }
+    try title.appendSlice(self._allocator, " - ");
+    try title.appendSlice(self._allocator, self.get_product_name());
+    try title.appendSlice(self._allocator, " (");
+    try title.appendSlice(self._allocator, self.get_product_id());
+    try title.append(self._allocator, ')');
     try title.append(self._allocator, 0);
     self.window.setTitle(title.items[0 .. title.items.len - 1 :0]);
 }
 
-pub fn get_product_name(self: *const @This()) ?[]const u8 {
-    return if (self.dc.gdrom.disc) |*disc| disc.get_product_name() else null;
+pub fn get_product_name(self: *const @This()) []const u8 {
+    if (self.dc.gdrom.disc) |*disc| return disc.get_product_name() orelse "UNNAMED_DISC";
+    return "UNNAMED";
 }
 
-pub fn get_product_id(self: *const @This()) ?[]const u8 {
-    return if (self.dc.gdrom.disc) |*disc| disc.get_product_id() else null;
+pub fn get_product_id(self: *const @This()) []const u8 {
+    if (self.dc.gdrom.disc) |*disc| return disc.get_product_id() orelse "NO_DISC_ID";
+    return "NO_ID";
 }
 
 /// Game specific sub directory name (for VMUs, save states...)
 /// Caller owns the returned string.
-fn userdata_game_directory(self: *@This()) !?[]const u8 {
-    const product_id = self.get_product_id() orelse return null;
-    const product_name = self.get_product_name() orelse "INVALID";
+fn userdata_game_directory(self: *@This()) ![]const u8 {
+    const product_name = self.get_product_name();
+    const product_id = self.get_product_id();
     const folder_name = try std.fmt.allocPrint(self._allocator, "{s}[{s}]", .{ product_name, product_id });
     HostPaths.safe_path(folder_name);
     defer self._allocator.free(folder_name);
@@ -1341,7 +1340,7 @@ fn userdata_game_directory(self: *@This()) !?[]const u8 {
 
 /// Caller owns the returned string
 fn save_state_path(self: *@This(), index: usize) ![]const u8 {
-    const game_dir = try self.userdata_game_directory() orelse try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), "NoDisc" });
+    const game_dir = try self.userdata_game_directory();
     defer self._allocator.free(game_dir);
     var buf: [32]u8 = undefined;
     const file_name = try std.fmt.bufPrint(&buf, "save_{d}.sav", .{index});
@@ -1812,7 +1811,7 @@ fn save_screenshot_impl(self: *const @This()) !void {
     const year_day = epoch_seconds.getEpochDay().calculateYearDay();
     const month_day = year_day.calculateMonthDay();
     const filepath = try std.fmt.allocPrint(self._allocator, "screenshots/{s}_{d:0>4}-{d:0>2}-{d:0>2}_{d:0>2}-{d:0>2}-{d:0>2}.bmp", .{
-        self.get_product_name() orelse "Unknown",
+        self.get_product_name(),
         year_day.year,
         month_day.month.numeric(),
         month_day.day_index + 1,

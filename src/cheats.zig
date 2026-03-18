@@ -52,14 +52,14 @@ pub fn get_builtin_cheats(product_name: []const u8, product_id: []const u8) ?[]c
 }
 
 /// Caller owns the returned memory
-pub fn path(allocator: std.mem.Allocator, product_id: ?[]const u8, product_name: ?[]const u8) ![]const u8 {
-    const game_dir = try HostPaths.userdata_game_directory(allocator, product_id, product_name);
+pub fn path(allocator: std.mem.Allocator, product_name: []const u8, product_id: []const u8) ![]const u8 {
+    const game_dir = try HostPaths.userdata_game_directory(allocator, product_name, product_id);
     defer allocator.free(game_dir);
     return try std.fs.path.join(allocator, &[_][]const u8{ game_dir, "cheats.zon" });
 }
 
-pub fn save(allocator: std.mem.Allocator, product_id: ?[]const u8, product_name: ?[]const u8, cheats: []const Cheat) !void {
-    const cheat_path = try path(allocator, product_id, product_name);
+pub fn save(allocator: std.mem.Allocator, product_name: []const u8, product_id: []const u8, cheats: []const Cheat) !void {
+    const cheat_path = try path(allocator, product_name, product_id);
     defer allocator.free(cheat_path);
 
     if (std.fs.path.dirname(cheat_path)) |dir| try std.fs.cwd().makePath(dir);
@@ -74,16 +74,15 @@ pub fn save(allocator: std.mem.Allocator, product_id: ?[]const u8, product_name:
 }
 
 /// Caller owns the returned memory
-pub fn load(allocator: std.mem.Allocator, product_id: ?[]const u8, product_name: ?[]const u8) !?[]Cheat {
-    const cheat_path = try path(allocator, product_id, product_name);
+pub fn load(allocator: std.mem.Allocator, product_name: []const u8, product_id: []const u8) !?[]Cheat {
+    const cheat_path = try path(allocator, product_name, product_id);
     defer allocator.free(cheat_path);
 
     const file = std.fs.cwd().openFile(cheat_path, .{}) catch |err| {
         switch (err) {
             error.FileNotFound => {
-                if (product_id == null or product_name == null) return null;
                 // Load default cheats.
-                if (get_builtin_cheats(product_id.?, product_name.?)) |builtin_cheats| {
+                if (get_builtin_cheats(product_name, product_id)) |builtin_cheats| {
                     var cheat_list: std.ArrayList(Cheat) = .empty;
                     errdefer {
                         for (cheat_list.items) |cheat| cheat.deinit(allocator);
@@ -93,7 +92,7 @@ pub fn load(allocator: std.mem.Allocator, product_id: ?[]const u8, product_name:
                         try cheat_list.append(allocator, try cheat.dupe(allocator));
                     const slice = try cheat_list.toOwnedSlice(allocator);
 
-                    try save(allocator, product_id, product_name, slice);
+                    try save(allocator, product_name, product_id, slice);
 
                     return slice;
                 }

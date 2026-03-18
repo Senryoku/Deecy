@@ -35,15 +35,30 @@
     },
     .{
         .game = .{
-            .name = "SoulCalibur",
+            .name = "SoulCalibur (US)",
             .product_name = "SOULCALIBUR",
-            .product_id = "4S T-1401N",
+            .product_id = "T1401N    V1.000",
         },
         .cheats = .{
             .{
                 .name = "Widescreen",
                 .actions = .{
                     .{ .address = 0x0C266C28, .value = .{ .u32 = 0x3F400000 } },
+                },
+            },
+        },
+    },
+    .{
+        .game = .{
+            .name = "SoulCalibur (EU)",
+            .product_name = "SOULCALIBUR",
+            .product_id = "T1401D  50V1.001",
+        },
+        .cheats = .{
+            .{
+                .name = "Widescreen",
+                .actions = .{
+                    .{ .address = 0x0C2D6138, .value = .{ .u32 = 0x3F400000 } },
                 },
             },
         },

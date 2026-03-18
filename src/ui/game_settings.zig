@@ -19,8 +19,9 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
 pub fn setup(self: *@This(), allocator: std.mem.Allocator, entry: *const GameFile) !void {
     std.debug.assert(self.selected_file == null);
     self.selected_file = entry;
-    if (try Cheats.load(allocator, entry.product_name, entry.product_id)) |cheats| {
-        self.cheats = .fromOwnedSlice(cheats);
+    if (entry.product_name != null and entry.product_id != null) {
+        if (try Cheats.load(allocator, entry.product_name.?, entry.product_id.?)) |cheats|
+            self.cheats = .fromOwnedSlice(cheats);
     }
     // TODO: Load per-game settings for this game.
 }
@@ -32,8 +33,9 @@ pub fn open(self: *@This()) void {
 
 fn close(self: *@This(), allocator: std.mem.Allocator) void {
     if (self.selected_file) |f|
-        Cheats.save(allocator, f.product_name, f.product_id, self.cheats.items) catch |err|
-            std.log.err("Failed to save cheats: {t}", .{err});
+        if (f.product_name != null and f.product_id != null)
+            Cheats.save(allocator, f.product_name.?, f.product_id.?, self.cheats.items) catch |err|
+                std.log.err("Failed to save cheats: {t}", .{err});
     zgui.closeCurrentPopup();
     self.deinit(allocator);
 }
@@ -75,9 +77,9 @@ pub fn draw(self: *@This(), allocator: std.mem.Allocator) !void {
                             zgui.pushIntId(@intCast(aidx));
                             defer zgui.popId();
 
-                            var addr: i32 = @intCast(a.address);
+                            var addr: u32 = a.address;
                             zgui.setNextItemWidth(100.0);
-                            if (zgui.inputInt("##Address", .{ .v = &addr, .step = 0, .flags = .{ .chars_hexadecimal = true } }))
+                            if (zgui.inputScalar("##Address", u32, .{ .v = &addr, .step = null, .cfmt = "%08X", .flags = .{ .chars_hexadecimal = true } }))
                                 a.address = @intCast(std.math.clamp(addr, 0x0C000000, 0x0D000000));
                             zgui.sameLine(.{});
                             var value_type = std.meta.activeTag(a.value);
@@ -91,7 +93,7 @@ pub fn draw(self: *@This(), allocator: std.mem.Allocator) !void {
                             switch (a.value) {
                                 inline else => |*v| {
                                     zgui.setNextItemWidth(100.0);
-                                    _ = zgui.inputScalar("##Value", @typeInfo(@TypeOf(v)).pointer.child, .{ .v = v, .step = null, .flags = .{ .chars_hexadecimal = true } });
+                                    _ = zgui.inputScalar("##Value", @typeInfo(@TypeOf(v)).pointer.child, .{ .v = v, .step = null, .cfmt = "%X", .flags = .{ .chars_hexadecimal = true } });
                                 },
                             }
                             zgui.sameLine(.{});
