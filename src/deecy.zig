@@ -1328,18 +1328,12 @@ pub fn get_product_id(self: *const @This()) []const u8 {
 
 /// Game specific sub directory name (for VMUs, save states...)
 /// Caller owns the returned string.
-fn userdata_game_directory(self: *@This()) ![]const u8 {
-    const product_name = self.get_product_name();
-    const product_id = self.get_product_id();
-    const folder_name = try std.fmt.allocPrint(self._allocator, "{s}[{s}]", .{ product_name, product_id });
-    HostPaths.safe_path(folder_name);
-    defer self._allocator.free(folder_name);
-    const path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), folder_name });
-    return path;
+fn userdata_game_directory(self: *const @This()) ![]const u8 {
+    return HostPaths.userdata_game_directory(self._allocator, self.get_product_name(), self.get_product_id());
 }
 
 /// Caller owns the returned string
-fn save_state_path(self: *@This(), index: usize) ![]const u8 {
+fn save_state_path(self: *const @This(), index: usize) ![]const u8 {
     const game_dir = try self.userdata_game_directory();
     defer self._allocator.free(game_dir);
     var buf: [32]u8 = undefined;
@@ -1734,9 +1728,30 @@ fn display_missing_file_error(self: *@This(), comptime fmt: []const u8, args: an
 fn apply_cheats(self: *@This()) void {
     if (self.enabled_cheats) |cheats| {
         for (cheats) |cheat| {
+            var skipped: u32 = 0;
             for (cheat.actions) |action| {
-                switch (action.value) {
-                    inline else => |v| self.dc.write(@TypeOf(v), action.address, v),
+                if (skipped > 0) {
+                    skipped -= 1;
+                    continue;
+                }
+                switch (action) {
+                    .Write => |wa| switch (wa.value) {
+                        inline else => |v| self.dc.write(@TypeOf(v), wa.address, v),
+                    },
+                    .Condition => |ca| {
+                        switch (ca.value) {
+                            inline else => |v| {
+                                const value = self.dc.read(@TypeOf(v), ca.address);
+                                const result = switch (ca.condition) {
+                                    .Equal => value == v,
+                                    .Different => value != v,
+                                    .LessThan => value < v,
+                                    .GreaterThan => value > v,
+                                };
+                                if (!result) skipped = ca.count;
+                            },
+                        }
+                    },
                 }
             }
         }

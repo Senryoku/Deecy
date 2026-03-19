@@ -2,9 +2,43 @@ const std = @import("std");
 const log = std.log.scoped(.cheats);
 
 const HostPaths = @import("dreamcast").HostPaths;
+const codebreaker = @import("codebreaker.zig");
+
+pub const Condition = enum {
+    Equal,
+    Different,
+    LessThan,
+    GreaterThan,
+
+    pub fn from_codebreaker(cb: codebreaker.Condition) Condition {
+        return switch (cb) {
+            .Equal => .Equal,
+            .Different => .Different,
+            .LessThan => .LessThan,
+            .GreaterThan => .GreaterThan,
+        };
+    }
+};
 
 pub const Value = union(enum) { u8: u8, u16: u16, u32: u32, u64: u64 };
-pub const Action = struct { address: u32, value: Value };
+pub const Action = union(enum) {
+    Write: struct { address: u32 = 0x0C000000, value: Value = .{ .u32 = 0 } },
+    Condition: struct { condition: Condition = .Equal, count: u8 = 1, address: u32 = 0x0C000000, value: Value = .{ .u32 = 0 } },
+
+    pub fn address_ptr(self: *@This()) *u32 {
+        return switch (self.*) {
+            .Write => |*w| &w.address,
+            .Condition => |*c| &c.address,
+        };
+    }
+
+    pub fn value_ptr(self: *@This()) *Value {
+        return switch (self.*) {
+            .Write => |*w| &w.value,
+            .Condition => |*c| &c.value,
+        };
+    }
+};
 
 pub const Cheat = struct {
     name: []const u8,

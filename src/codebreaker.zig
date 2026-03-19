@@ -46,11 +46,13 @@ pub const Code = union(Type) {
     Condition: struct {
         condition: Condition,
         address: u32,
+        value: u16,
     },
     MultipleCondition: struct {
         condition: Condition,
         address: u32,
-        count: u32,
+        value: u16,
+        count: u8,
     },
     StartWrite: void,
 };
@@ -81,6 +83,16 @@ pub fn parse(allocator: std.mem.Allocator, reader: *std.Io.Reader) ![]Code {
                 }, try reader.take(8), 16);
                 try codes.append(allocator, @unionInit(Code, @tagName(u), .{ .address = address, .value = value }));
             },
+            .Condition => {
+                const address = 0x0C000000 | control & 0x00FFFFFF;
+                try toss_whitespace(reader);
+                const data = try std.fmt.parseUnsigned(u32, try reader.take(8), 16);
+                try codes.append(allocator, .{ .Condition = .{
+                    .condition = @enumFromInt((control >> 16) & 0x0F),
+                    .address = address,
+                    .value = @truncate(data),
+                } });
+            },
             else => return error.UnsupportedType,
             _ => return error.UnknownType,
         }
@@ -88,9 +100,10 @@ pub fn parse(allocator: std.mem.Allocator, reader: *std.Io.Reader) ![]Code {
     return codes.toOwnedSlice(allocator);
 }
 
-test "parse" {
+test "Simple Write 32" {
     const allocator = std.testing.allocator;
     const buff =
+        \\ 
         \\ 026625C0
         \\ 
         \\ 43700000
@@ -101,4 +114,23 @@ test "parse" {
     const codes = try parse(allocator, &reader);
     defer allocator.free(codes);
     std.debug.print("codes: {any}\n", .{codes});
+    try std.testing.expectEqual(1, codes.len);
+    try std.testing.expectEqual(0x006625C0, codes[0].u32.address);
+    try std.testing.expectEqual(0x43700000, codes[0].u32.value);
+}
+
+test "Condition" {
+    const allocator = std.testing.allocator;
+    const buff =
+        \\ 0D301582
+        \\ 00008BFB
+    ;
+    var reader: std.Io.Reader = .fixed(buff);
+    const codes = try parse(allocator, &reader);
+    defer allocator.free(codes);
+    std.debug.print("codes: {any}\n", .{codes});
+    try std.testing.expectEqual(1, codes.len);
+    try std.testing.expectEqual(.Equal, codes[0].Condition.condition);
+    try std.testing.expectEqual(0x00301582, codes[0].Condition.address);
+    try std.testing.expectEqual(0x00008BFB, codes[0].Condition.value);
 }

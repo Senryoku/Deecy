@@ -78,20 +78,38 @@ pub fn draw(self: *@This(), allocator: std.mem.Allocator) !void {
                             zgui.pushIntId(@intCast(aidx));
                             defer zgui.popId();
 
-                            var addr: u32 = a.address;
+                            var action_type = std.meta.activeTag(a.*);
                             zgui.setNextItemWidth(100.0);
-                            if (zgui.inputScalar("##Address", u32, .{ .v = &addr, .step = null, .cfmt = "%08X", .flags = .{ .chars_hexadecimal = true } }))
-                                a.address = @intCast(std.math.clamp(addr, 0x0C000000, 0x0D000000));
+                            if (zgui.comboFromEnum("##ActionType", &action_type)) {
+                                switch (action_type) {
+                                    inline else => |at| a.* = @unionInit(Cheats.Action, @tagName(at), .{}),
+                                }
+                            }
+
+                            if (a.* == .Condition) {
+                                zgui.sameLine(.{});
+                                zgui.setNextItemWidth(100.0);
+                                _ = zgui.comboFromEnum("##Condition", &a.Condition.condition);
+                                zgui.sameLine(.{});
+                                zgui.setNextItemWidth(100.0);
+                                if (zgui.inputScalar("##Count", u8, .{ .v = &a.Condition.count, .step = 1, .cfmt = "%d", .flags = .{} })) {}
+                            }
+
                             zgui.sameLine(.{});
-                            var value_type = std.meta.activeTag(a.value);
+                            const addr = a.address_ptr();
+                            zgui.setNextItemWidth(100.0);
+                            if (zgui.inputScalar("##Address", u32, .{ .v = addr, .step = null, .cfmt = "%08X", .flags = .{ .chars_hexadecimal = true } }))
+                                addr.* = @intCast(std.math.clamp(addr.*, 0x0C000000, 0x0D000000));
+                            zgui.sameLine(.{});
+                            var value_type = std.meta.activeTag(a.value_ptr().*);
                             zgui.setNextItemWidth(64.0);
                             if (zgui.comboFromEnum("##Type", &value_type)) {
                                 switch (value_type) {
-                                    inline else => |vt| a.value = @unionInit(Cheats.Value, @tagName(vt), 0),
+                                    inline else => |vt| a.value_ptr().* = @unionInit(Cheats.Value, @tagName(vt), 0),
                                 }
                             }
                             zgui.sameLine(.{});
-                            switch (a.value) {
+                            switch (a.value_ptr().*) {
                                 inline else => |*v| {
                                     zgui.setNextItemWidth(100.0);
                                     _ = zgui.inputScalar("##Value", @typeInfo(@TypeOf(v)).pointer.child, .{ .v = v, .step = null, .cfmt = "%X", .flags = .{ .chars_hexadecimal = true } });
@@ -110,7 +128,7 @@ pub fn draw(self: *@This(), allocator: std.mem.Allocator) !void {
                         if (zgui.button(Icons.CirclePlus ++ " Add Action", .{})) {
                             var tmp = try allocator.alloc(Cheats.Action, c.actions.len + 1);
                             @memcpy(tmp[0..c.actions.len], c.actions);
-                            tmp[c.actions.len] = .{ .address = 0, .value = .{ .u32 = 0 } };
+                            tmp[c.actions.len] = .{ .Write = .{} };
                             allocator.free(c.actions);
                             c.actions = tmp;
                         }
@@ -127,7 +145,7 @@ pub fn draw(self: *@This(), allocator: std.mem.Allocator) !void {
                         .name = try allocator.dupe(u8, "New Cheat"),
                         .actions = try allocator.alloc(Cheats.Action, 1),
                     };
-                    new_cheat.actions[0] = .{ .address = 0x0C000000, .value = .{ .u32 = 0 } };
+                    new_cheat.actions[0] = .{ .Write = .{} };
                     try self.cheats.append(allocator, new_cheat);
                 }
                 zgui.sameLine(.{});
@@ -162,11 +180,12 @@ fn import_cheat_popup(self: *@This(), allocator: std.mem.Allocator) !void {
             defer actions.deinit(allocator);
             for (cheats) |c| {
                 try actions.append(allocator, switch (c) {
-                    .u8 => |v| .{ .address = 0x0C000000 + v.address, .value = .{ .u8 = v.value } },
-                    .u16 => |v| .{ .address = 0x0C000000 + v.address, .value = .{ .u16 = v.value } },
-                    .u32 => |v| .{ .address = 0x0C000000 + v.address, .value = .{ .u32 = v.value } },
+                    .u8 => |v| .{ .Write = .{ .address = 0x0C000000 + v.address, .value = .{ .u8 = v.value } } },
+                    .u16 => |v| .{ .Write = .{ .address = 0x0C000000 + v.address, .value = .{ .u16 = v.value } } },
+                    .u32 => |v| .{ .Write = .{ .address = 0x0C000000 + v.address, .value = .{ .u32 = v.value } } },
+                    .Condition => |v| .{ .Condition = .{ .condition = .from_codebreaker(v.condition), .count = 1, .address = 0x0C000000 + v.address, .value = .{ .u16 = v.value } } },
                     else => {
-                        log.err("Unsupported codebreaker cheat: {any}", .{c});
+                        log.err("Unsupported CodeBreaker cheat: {any}", .{c});
                         zgui.openPopup("Import Error", .{});
                         static.last_error = error.UnsupportedType;
                         break :cancel;
@@ -182,14 +201,14 @@ fn import_cheat_popup(self: *@This(), allocator: std.mem.Allocator) !void {
             zgui.closeCurrentPopup();
         } else |err| {
             static.last_error = err;
-            log.err("Failed to parse codebreaker cheat: {t}", .{err});
+            log.err("Failed to parse CodeBreaker cheat: {t}", .{err});
             zgui.openPopup("Import Error", .{});
         }
     }
     if (zgui.button("Cancel", .{})) zgui.closeCurrentPopup();
 
     if (zgui.beginPopupModal("Import Error", .{ .flags = .{ .always_auto_resize = true } })) {
-        zgui.text("Failed to import codebreaker cheat: {t}", .{static.last_error});
+        zgui.text("Failed to import CodeBreaker cheat: {t}", .{static.last_error});
         if (zgui.button("Ok", .{})) zgui.closeCurrentPopup();
         zgui.endPopup();
     }

@@ -10,8 +10,8 @@
                 .name = "Bypass serial check",
                 .enabled = true,
                 .actions = .{
-                    .{ .address = 0x0C0196DA, .value = .{ .u16 = 0x9 } },
-                    .{ .address = 0x0C0196EC, .value = .{ .u16 = 0x9 } },
+                    .{ .Write = .{ .address = 0x0C0196DA, .value = .{ .u16 = 0x9 } } },
+                    .{ .Write = .{ .address = 0x0C0196EC, .value = .{ .u16 = 0x9 } } },
                 },
             },
         },
@@ -27,8 +27,39 @@
                 .name = "Bypass serial check",
                 .enabled = true,
                 .actions = .{
-                    .{ .address = 0x0C018F54, .value = .{ .u16 = 0x9 } },
-                    .{ .address = 0x0C018F42, .value = .{ .u16 = 0x9 } },
+                    .{ .Write = .{ .address = 0x0C018F54, .value = .{ .u16 = 0x9 } } },
+                    .{ .Write = .{ .address = 0x0C018F42, .value = .{ .u16 = 0x9 } } },
+                },
+            },
+        },
+    },
+    .{
+        .game = .{
+            .name = "Crazy Taxi (EU)",
+            .product_name = "CRAZY TAXI",
+            .product_id = "MK-51035  V1.000",
+        },
+        .cheats = .{
+            .{
+                .name = "Widescreen",
+                .actions = .{
+                    .{ .Write = .{ .address = 0x0C2B3410, .value = .{ .u32 = 0x43700000 } } },
+                },
+            },
+        },
+    },
+    .{
+        .game = .{
+            .name = "Grandia II (US)",
+            .product_name = "GRANDIA2",
+            .product_id = "T17716N   V1.001",
+        },
+        .cheats = .{
+            .{
+                .name = "60 FPS Battles",
+                .actions = .{
+                    .{ .Condition = .{ .condition = .Equal, .count = 1, .address = 0x0C301582, .value = .{ .u16 = 0x8BFB } } },
+                    .{ .Write = .{ .address = 0x0C301582, .value = .{ .u16 = 0x0009 } } },
                 },
             },
         },
@@ -43,7 +74,7 @@
             .{
                 .name = "Widescreen",
                 .actions = .{
-                    .{ .address = 0x0C266C28, .value = .{ .u32 = 0x3F400000 } },
+                    .{ .Write = .{ .address = 0x0C266C28, .value = .{ .u32 = 0x3F400000 } } },
                 },
             },
         },
@@ -58,7 +89,7 @@
             .{
                 .name = "Widescreen",
                 .actions = .{
-                    .{ .address = 0x0C2D6138, .value = .{ .u32 = 0x3F400000 } },
+                    .{ .Write = .{ .address = 0x0C2D6138, .value = .{ .u32 = 0x3F400000 } } },
                 },
             },
         },
