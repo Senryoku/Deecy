@@ -1,5 +1,6 @@
 const std = @import("std");
 const zgui = @import("zgui");
+const log = std.log.scoped(.game_settings);
 
 const GameFile = @import("../deecy_ui.zig").GameFile;
 const Cheats = @import("../cheats.zig");
@@ -114,12 +115,13 @@ pub fn draw(self: *@This(), allocator: std.mem.Allocator) !void {
                             c.actions = tmp;
                         }
                     }
-                    zgui.endChild();
                 }
+                zgui.endChild();
+
                 if (cheat_index_to_delete) |idx|
                     self.cheats.orderedRemove(idx).deinit(allocator);
 
-                if (zgui.button(Icons.SquarePlus ++ " Add Cheat", .{})) {
+                if (zgui.button(Icons.SquarePlus ++ " New Cheat", .{})) {
                     const new_cheat = Cheats.Cheat{
                         .enabled = true,
                         .name = try allocator.dupe(u8, "New Cheat"),
@@ -128,11 +130,67 @@ pub fn draw(self: *@This(), allocator: std.mem.Allocator) !void {
                     new_cheat.actions[0] = .{ .address = 0x0C000000, .value = .{ .u32 = 0 } };
                     try self.cheats.append(allocator, new_cheat);
                 }
+                zgui.sameLine(.{});
+                if (zgui.button("Import", .{}))
+                    zgui.openPopup("Import Cheat", .{});
+
+                if (zgui.beginPopupModal("Import Cheat", .{ .flags = .{ .always_auto_resize = true } })) {
+                    try self.import_cheat_popup(allocator);
+                    zgui.endPopup();
+                }
+
                 zgui.endTabItem();
             }
             zgui.endTabBar();
         }
         if (zgui.button("Save & Close", .{})) self.close(allocator);
+        zgui.endPopup();
+    }
+}
+
+fn import_cheat_popup(self: *@This(), allocator: std.mem.Allocator) !void {
+    const static = struct {
+        var import_buffer: [256:0]u8 = @splat(0);
+        var last_error: anyerror = error.None;
+    };
+    _ = zgui.inputTextMultiline("##ImportText", .{ .buf = &static.import_buffer, .w = 320, .h = 240, .flags = .{} });
+    if (zgui.button("Import##Button", .{})) {
+        var reader: std.Io.Reader = .fixed(std.mem.sliceTo(&static.import_buffer, 0));
+        if (@import("../codebreaker.zig").parse(allocator, &reader)) |cheats| cancel: {
+            defer allocator.free(cheats);
+            var actions: std.ArrayList(Cheats.Action) = .empty;
+            defer actions.deinit(allocator);
+            for (cheats) |c| {
+                try actions.append(allocator, switch (c) {
+                    .u8 => |v| .{ .address = 0x0C000000 + v.address, .value = .{ .u8 = v.value } },
+                    .u16 => |v| .{ .address = 0x0C000000 + v.address, .value = .{ .u16 = v.value } },
+                    .u32 => |v| .{ .address = 0x0C000000 + v.address, .value = .{ .u32 = v.value } },
+                    else => {
+                        log.err("Unsupported codebreaker cheat: {any}", .{c});
+                        zgui.openPopup("Import Error", .{});
+                        static.last_error = error.UnsupportedType;
+                        break :cancel;
+                    },
+                });
+            }
+            const new_cheat = Cheats.Cheat{
+                .enabled = true,
+                .name = try allocator.dupe(u8, "Imported Cheat"),
+                .actions = try actions.toOwnedSlice(allocator),
+            };
+            try self.cheats.append(allocator, new_cheat);
+            zgui.closeCurrentPopup();
+        } else |err| {
+            static.last_error = err;
+            log.err("Failed to parse codebreaker cheat: {t}", .{err});
+            zgui.openPopup("Import Error", .{});
+        }
+    }
+    if (zgui.button("Cancel", .{})) zgui.closeCurrentPopup();
+
+    if (zgui.beginPopupModal("Import Error", .{ .flags = .{ .always_auto_resize = true } })) {
+        zgui.text("Failed to import codebreaker cheat: {t}", .{static.last_error});
+        if (zgui.button("Ok", .{})) zgui.closeCurrentPopup();
         zgui.endPopup();
     }
 }
