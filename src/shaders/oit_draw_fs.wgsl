@@ -54,8 +54,6 @@ fn main(
         false
     );
 
-    if final_color.area0.a == 0 && final_color.area1.a == 0 { discard; }
-
     // Add the fragment to the linked list
 
     // The index in the heads buffer corresponding to the head data for the fragment at the current location.
