@@ -2172,8 +2172,8 @@ pub const Renderer = struct {
 
         // Clip values are pre-scaling, convert them to pixel coordinates.
         self.global_clip.x.min = scale_x * self.write_back_parameters.x_clip.min;
-        self.global_clip.x.max = scale_y * @min(@as(u16, self.write_back_parameters.x_clip.max) + 1, ta_clip.x);
-        self.global_clip.y.min = scale_x * self.write_back_parameters.y_clip.min;
+        self.global_clip.x.max = scale_x * @min(@as(u16, self.write_back_parameters.x_clip.max) + 1, ta_clip.x);
+        self.global_clip.y.min = scale_y * self.write_back_parameters.y_clip.min;
         self.global_clip.y.max = scale_y * @min(@as(u16, self.write_back_parameters.y_clip.max) + 1, ta_clip.y);
 
         self.render_size = .{
