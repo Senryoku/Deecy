@@ -5,17 +5,17 @@ const HostPaths = @import("dreamcast").HostPaths;
 const codebreaker = @import("codebreaker.zig");
 
 pub const Condition = enum {
-    Equal,
-    Different,
-    LessThan,
-    GreaterThan,
+    @"=",
+    @"!=",
+    @"<",
+    @">",
 
     pub fn from_codebreaker(cb: codebreaker.Condition) Condition {
         return switch (cb) {
-            .Equal => .Equal,
-            .Different => .Different,
-            .LessThan => .LessThan,
-            .GreaterThan => .GreaterThan,
+            .Equal => .@"=",
+            .Different => .@"!=",
+            .LessThan => .@"<",
+            .GreaterThan => .@">",
         };
     }
 };
@@ -23,7 +23,7 @@ pub const Condition = enum {
 pub const Value = union(enum) { u8: u8, u16: u16, u32: u32, u64: u64 };
 pub const Action = union(enum) {
     Write: struct { address: u32 = 0x0C000000, value: Value = .{ .u32 = 0 } },
-    Condition: struct { condition: Condition = .Equal, count: u8 = 1, address: u32 = 0x0C000000, value: Value = .{ .u32 = 0 } },
+    Condition: struct { condition: Condition = .@"=", count: u8 = 1, address: u32 = 0x0C000000, value: Value = .{ .u32 = 0 } },
 
     pub fn address_ptr(self: *@This()) *u32 {
         return switch (self.*) {

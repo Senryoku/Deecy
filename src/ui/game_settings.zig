@@ -55,8 +55,8 @@ pub fn draw(self: *@This(), allocator: std.mem.Allocator) !void {
                 if (zgui.beginChild("##Scrollable", .{ .w = 640, .h = 480, .child_flags = .{ .frame_style = true } })) {
                     if (self.cheats.items.len == 0) zgui.textUnformatted("No cheats.");
 
-                    for (self.cheats.items, 0..) |*c, i| {
-                        zgui.pushIntId(@intCast(i));
+                    for (self.cheats.items, 0..) |*c, cheat_idx| {
+                        zgui.pushIntId(@intCast(cheat_idx));
                         defer zgui.popId();
 
                         _ = zgui.checkbox("##Enabled", .{ .v = &c.enabled });
@@ -68,38 +68,39 @@ pub fn draw(self: *@This(), allocator: std.mem.Allocator) !void {
                             c.name = try allocator.dupe(u8, buffer[0..std.mem.indexOfScalar(u8, &buffer, 0).?]);
                         }
                         zgui.sameLine(.{});
-                        if (zgui.button(Icons.Trash, .{})) cheat_index_to_delete = i;
+                        if (zgui.button(Icons.Trash, .{})) cheat_index_to_delete = cheat_idx;
 
                         zgui.indent(.{});
                         defer zgui.unindent(.{});
 
                         var action_index_to_delete: ?usize = null;
-                        for (c.actions, 0..) |*a, aidx| {
-                            zgui.pushIntId(@intCast(aidx));
+                        for (c.actions, 0..) |*a, action_index| {
+                            zgui.pushIntId(@intCast(action_index));
                             defer zgui.popId();
 
                             var action_type = std.meta.activeTag(a.*);
-                            zgui.setNextItemWidth(100.0);
+                            zgui.setNextItemWidth(110.0);
                             if (zgui.comboFromEnum("##ActionType", &action_type)) {
                                 switch (action_type) {
                                     inline else => |at| a.* = @unionInit(Cheats.Action, @tagName(at), .{}),
                                 }
                             }
-
                             if (a.* == .Condition) {
                                 zgui.sameLine(.{});
-                                zgui.setNextItemWidth(100.0);
-                                _ = zgui.comboFromEnum("##Condition", &a.Condition.condition);
-                                zgui.sameLine(.{});
-                                zgui.setNextItemWidth(100.0);
-                                if (zgui.inputScalar("##Count", u8, .{ .v = &a.Condition.count, .step = 1, .cfmt = "%d", .flags = .{} })) {}
+                                zgui.setNextItemWidth(32.0);
+                                if (zgui.inputScalar("##Count", u8, .{ .v = &a.Condition.count, .step = null, .cfmt = "%d", .flags = .{} })) {}
                             }
 
                             zgui.sameLine(.{});
                             const addr = a.address_ptr();
-                            zgui.setNextItemWidth(100.0);
+                            zgui.setNextItemWidth(80.0);
                             if (zgui.inputScalar("##Address", u32, .{ .v = addr, .step = null, .cfmt = "%08X", .flags = .{ .chars_hexadecimal = true } }))
                                 addr.* = @intCast(std.math.clamp(addr.*, 0x0C000000, 0x0D000000));
+                            if (a.* == .Condition) {
+                                zgui.sameLine(.{});
+                                zgui.setNextItemWidth(50.0);
+                                _ = zgui.comboFromEnum("##Condition", &a.Condition.condition);
+                            }
                             zgui.sameLine(.{});
                             var value_type = std.meta.activeTag(a.value_ptr().*);
                             zgui.setNextItemWidth(64.0);
@@ -111,12 +112,12 @@ pub fn draw(self: *@This(), allocator: std.mem.Allocator) !void {
                             zgui.sameLine(.{});
                             switch (a.value_ptr().*) {
                                 inline else => |*v| {
-                                    zgui.setNextItemWidth(100.0);
+                                    zgui.setNextItemWidth(80.0);
                                     _ = zgui.inputScalar("##Value", @typeInfo(@TypeOf(v)).pointer.child, .{ .v = v, .step = null, .cfmt = "%X", .flags = .{ .chars_hexadecimal = true } });
                                 },
                             }
                             zgui.sameLine(.{});
-                            if (zgui.button(Icons.Trash, .{})) action_index_to_delete = i;
+                            if (zgui.button(Icons.Trash, .{})) action_index_to_delete = action_index;
                         }
                         if (action_index_to_delete) |idx| {
                             var tmp = try allocator.alloc(Cheats.Action, c.actions.len - 1);

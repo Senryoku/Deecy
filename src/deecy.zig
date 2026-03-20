@@ -1743,10 +1743,10 @@ fn apply_cheats(self: *@This()) void {
                             inline else => |v| {
                                 const value = self.dc.read(@TypeOf(v), ca.address);
                                 const result = switch (ca.condition) {
-                                    .Equal => value == v,
-                                    .Different => value != v,
-                                    .LessThan => value < v,
-                                    .GreaterThan => value > v,
+                                    .@"=" => value == v,
+                                    .@"!=" => value != v,
+                                    .@"<" => value < v,
+                                    .@">" => value > v,
                                 };
                                 if (!result) skipped = ca.count;
                             },

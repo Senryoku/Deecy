@@ -58,7 +58,7 @@
             .{
                 .name = "60 FPS Battles",
                 .actions = .{
-                    .{ .Condition = .{ .condition = .Equal, .count = 1, .address = 0x0C301582, .value = .{ .u16 = 0x8BFB } } },
+                    .{ .Condition = .{ .condition = .@"=", .count = 1, .address = 0x0C301582, .value = .{ .u16 = 0x8BFB } } },
                     .{ .Write = .{ .address = 0x0C301582, .value = .{ .u16 = 0x0009 } } },
                 },
             },
@@ -90,6 +90,37 @@
                 .name = "Widescreen",
                 .actions = .{
                     .{ .Write = .{ .address = 0x0C2D6138, .value = .{ .u32 = 0x3F400000 } } },
+                },
+            },
+        },
+    },
+    .{
+        .game = .{
+            .name = "Speed Devils (US)",
+            .product_name = "SPEED DEVILS",
+            .product_id = "T17702N   V1.004",
+        },
+        .cheats = .{
+            .{
+                .name = "60 FPS",
+                .actions = .{
+                    .{ .Write = .{ .address = 0x0C0D79E8, .value = .{ .u16 = 0xE400 } } },
+                    .{ .Write = .{ .address = 0x0C05B6EC, .value = .{ .u16 = 0x0444 } } },
+                },
+            },
+        },
+    },
+    .{
+        .game = .{
+            .name = "TrickStyle",
+            .product_name = "TRICKSTYLE",
+            .product_id = "T-8102N   V1.000",
+        },
+        .cheats = .{
+            .{
+                .name = "60 FPS",
+                .actions = .{
+                    .{ .Write = .{ .address = 0x0C0F50C8, .value = .{ .u16 = 0xE400 } } },
                 },
             },
         },
