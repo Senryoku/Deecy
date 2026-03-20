@@ -345,9 +345,11 @@ pub const MaplePort = union(enum) {
         switch (self.*) {
             .emulated => |*e| return e.handle_command(dc, data),
             .physical => |p| return DreamPicoPort.send_command(dc, p.physical_port, data),
-            else => {},
+            .none => {
+                dc.cpu.write_physical(u32, data[0], 0xFFFFFFFF); // "No connection"
+                return 1;
+            },
         }
-        return 0;
     }
 };
 
