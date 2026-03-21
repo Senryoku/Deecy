@@ -828,7 +828,9 @@ pub const Renderer = struct {
     shift_stencil_buffer_modifier_volume_pipeline: zgpu.RenderPipelineHandle = .{},
     open_modifier_volume_pipeline: zgpu.RenderPipelineHandle = .{},
     modifier_volume_apply_pipeline: zgpu.RenderPipelineHandle = .{},
-    translucent_pipeline: zgpu.RenderPipelineHandle = .{},
+    translucent_pipeline_no_culling: zgpu.RenderPipelineHandle = .{},
+    translucent_pipeline_front_culling: zgpu.RenderPipelineHandle = .{},
+    translucent_pipeline_back_culling: zgpu.RenderPipelineHandle = .{},
     translucent_modvol_pipeline: zgpu.RenderPipelineHandle = .{},
     translucent_modvol_merge_pipeline: zgpu.ComputePipelineHandle = .{},
     blend_pipeline: zgpu.ComputePipelineHandle = .{},
@@ -1179,7 +1181,7 @@ pub const Renderer = struct {
             translucent_bind_group_layout,
         });
         defer gctx.releaseResource(translucent_pipeline_layout);
-        const translucent_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+        const translucent_pipeline_descriptor_no_culling = wgpu.RenderPipelineDescriptor{
             .vertex = .{
                 .module = opaque_vertex_shader_module,
                 .entry_point = .init("main"),
@@ -1200,6 +1202,10 @@ pub const Renderer = struct {
                 .targets = &color_targets,
             },
         };
+        var translucent_pipeline_descriptor_front_culling = translucent_pipeline_descriptor_no_culling;
+        translucent_pipeline_descriptor_front_culling.primitive.cull_mode = .front;
+        var translucent_pipeline_descriptor_back_culling = translucent_pipeline_descriptor_no_culling;
+        translucent_pipeline_descriptor_back_culling.primitive.cull_mode = .back;
 
         // Translucent fragment blending pipeline
 
@@ -1474,7 +1480,9 @@ pub const Renderer = struct {
         }
 
         _ = try gctx.createComputePipelineAsync(allocator, blend_pipeline_layout, blend_pipeline_descriptor, &renderer.blend_pipeline);
-        _ = try gctx.createRenderPipelineAsync(allocator, translucent_pipeline_layout, translucent_pipeline_descriptor, &renderer.translucent_pipeline);
+        _ = try gctx.createRenderPipelineAsync(allocator, translucent_pipeline_layout, translucent_pipeline_descriptor_no_culling, &renderer.translucent_pipeline_no_culling);
+        _ = try gctx.createRenderPipelineAsync(allocator, translucent_pipeline_layout, translucent_pipeline_descriptor_front_culling, &renderer.translucent_pipeline_front_culling);
+        _ = try gctx.createRenderPipelineAsync(allocator, translucent_pipeline_layout, translucent_pipeline_descriptor_back_culling, &renderer.translucent_pipeline_back_culling);
 
         _ = try gctx.createRenderPipelineAsync(allocator, modifier_volume_pipeline_layout, closed_modifier_volume_pipeline_descriptor, &renderer.closed_modifier_volume_pipeline);
         _ = try gctx.createRenderPipelineAsync(allocator, modifier_volume_pipeline_layout, shift_stencil_buffer_modifier_volume_pipeline_descriptor, &renderer.shift_stencil_buffer_modifier_volume_pipeline);
@@ -1670,7 +1678,9 @@ pub const Renderer = struct {
         self._gctx.releaseResource(self.translucent_modvol_bind_group_layout);
         self._gctx.releaseResource(self.translucent_modvol_pipeline);
         self._gctx.releaseResource(self.translucent_bind_group_layout);
-        self._gctx.releaseResource(self.translucent_pipeline);
+        self._gctx.releaseResource(self.translucent_pipeline_no_culling);
+        self._gctx.releaseResource(self.translucent_pipeline_front_culling);
+        self._gctx.releaseResource(self.translucent_pipeline_back_culling);
 
         self._gctx.releaseResource(self.modifier_volume_apply_pipeline);
         self._gctx.releaseResource(self.open_modifier_volume_pipeline);
@@ -3570,7 +3580,7 @@ pub const Renderer = struct {
                                 .start_y = start_y,
                             };
 
-                            if (gctx.lookupResource(self.translucent_pipeline)) |pipeline| {
+                            if (gctx.lookupResource(self.translucent_pipeline_no_culling)) |pipeline_no_culling| {
                                 const oit_color_attachments = [_]wgpu.RenderPassColorAttachment{.{
                                     .view = target.resized.view,
                                     .load_op = .load,
@@ -3587,18 +3597,27 @@ pub const Renderer = struct {
                                     pass.release();
                                 }
 
-                                pass.setPipeline(pipeline);
-
                                 pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
                                 pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
 
                                 pass.setBindGroup(0, textures_bind_group, &.{uniform_mem.offset});
                                 pass.setBindGroup(2, translucent_bind_group, &.{oit_uniform_mem.offset});
 
+                                var culling_mode: HollyModule.CullingMode = .None;
+                                pass.setPipeline(pipeline_no_culling);
+
                                 for (render_pass.translucent_pass.steps.items) |step| {
                                     var it = step.iterator();
-                                    while (it.next()) |entry| {
+                                    while (it.next()) |entry| skip: {
                                         if (entry.value_ptr.draw_calls.count() > 0) {
+                                            if (entry.key_ptr.culling_mode != culling_mode) {
+                                                culling_mode = entry.key_ptr.culling_mode;
+                                                pass.setPipeline(gctx.lookupResource(switch (culling_mode) {
+                                                    .None, .Small => self.translucent_pipeline_no_culling,
+                                                    .Negative => self.translucent_pipeline_front_culling,
+                                                    .Positive => self.translucent_pipeline_back_culling,
+                                                }) orelse break :skip);
+                                            }
                                             for (entry.value_ptr.draw_calls.values()) |draw_call| {
                                                 if (draw_call.index_count > 0) {
                                                     var clip = self.convert_clipping(draw_call.user_clip);
