@@ -2351,26 +2351,13 @@ pub const Renderer = struct {
             self.max_depth = @max(self.max_depth, vertices[i].z);
         }
 
-        // FIXME: In Crazy Taxi (and 2) and Soulcalibur, the vertices coordinates make no sense, even if the data format seems right:
-        //     40000000 -       2.00
-        //     43820000 -     260.00
-        //     3727C5AC -       0.00
-        //     FF000000 - (Packed color)
-        //     43160000 -     150.00
-        //     40000000 -       2.00
-        //     3727C5AC -       0.00
-        //     FF000000 - (Packed color)
-        //     440C0000 -     560.00
-        //     43820000 -     260.00
-        //     3727C5AC -       0.00
-        //     FF000000 - (Packed color)
-        // There's obviously something I don't understand here.
-        // Overriding the coordinates to cover the screen for now, I'm tired of seeing the broken framebuffer (Oh yeah, that's another bug.)
         // NOTE: MetalliC's comment about background rendering:
         //       "it's a bit brainfuck, and I don't think it was documented anywhere how exactly PVR2 background rendered...
         //        in short - it takes 3 vertices and calculate interpolation, UV, shading etc coefficients as for triangle rendering. but iterate these coefficients to fill the whole screen"
         //  Example of an effect that my current "solution" will fail to render correctly (Naomi example, but there might be some in the DC library too): https://youtu.be/gtIwGUG9iZk?t=127
-        const screen_width: f32 = 640.0; // FIXME: Hack within a hack, hardcording the screen size too.
+
+        // We'll simply draw a quad covering the whole screen. This will be fine as long as the background has a uniform color, but will break for more complicated cases.
+        const screen_width: f32 = if (self.write_back_parameters.scaler_ctl.horizontal_scaling_enable) 1280.0 else 640.0;
         const screen_height: f32 = 480.0;
         vertices[0].x = 0.0;
         vertices[0].y = 0.0;
@@ -2384,7 +2371,7 @@ pub const Renderer = struct {
             .x = vertices[1].x,
             .y = vertices[2].y,
             .z = vertices[2].z,
-            // NOTE: I have no idea how the color is computed, looking at the boot menu, this seems right.
+            // NOTE: As stated above, this is an oversimplification. Looks okay in the boot menu.
             .base_color = vertices[2].base_color,
             .u = vertices[2].u,
             .v = vertices[1].v,
