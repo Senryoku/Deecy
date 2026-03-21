@@ -1739,8 +1739,10 @@ pub const SH4 = struct {
     pub fn read(self: *@This(), comptime T: type, virtual_addr: u32) error{ DataAddressErrorRead, DataTLBMissRead, DataTLBProtectionViolation, DataTLBMultipleHit }!T {
         const unauthorized = DataProtectedCheck and (self.sr.md == 0 and virtual_addr & 0x8000_0000 != 0 and !(virtual_addr & 0xFC00_0000 == 0xE000_0000 and self.read_p4_register(mmu.MMUCR, .MMUCR).sqmd == 0));
         const unaligned = DataAlignmentCheck and virtual_addr & (@sizeOf(T) - 1) != 0;
-        if (unauthorized or unaligned)
+        if (unauthorized or unaligned) {
+            self.report_address_exception(virtual_addr);
             return error.DataAddressErrorRead;
+        }
         const physical_address = self.translate_address(.Read, virtual_addr) catch |err| {
             self.report_address_exception(virtual_addr);
             switch (err) {
@@ -1773,8 +1775,10 @@ pub const SH4 = struct {
     pub fn write(self: *@This(), comptime T: type, virtual_addr: u32, value: T) error{ DataAddressErrorWrite, DataTLBMissWrite, InitialPageWrite, DataTLBProtectionViolation, DataTLBMultipleHit }!void {
         const unauthorized = DataProtectedCheck and (self.sr.md == 0 and virtual_addr & 0x8000_0000 != 0 and !(virtual_addr & 0xFC00_0000 == 0xE000_0000 and self.read_p4_register(mmu.MMUCR, .MMUCR).sqmd == 0));
         const unaligned = DataAlignmentCheck and virtual_addr & (@sizeOf(T) - 1) != 0;
-        if (unauthorized or unaligned)
+        if (unauthorized or unaligned) {
+            self.report_address_exception(virtual_addr);
             return error.DataAddressErrorWrite;
+        }
         const physical_address = self.translate_address(.Write, virtual_addr) catch |err| {
             self.report_address_exception(virtual_addr);
             switch (err) {

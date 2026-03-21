@@ -55,6 +55,8 @@ fn fetch_and_execute(self: *SH4, virtual_addr: u32) void {
             error.IllegalInstruction => .GeneralIllegalInstruction,
             error.SlotIllegalInstruction => .SlotIllegalInstruction,
             error.UnconditionalTrap => .UnconditionalTrap,
+            error.DataAddressErrorRead => .DataAddressErrorRead,
+            error.DataAddressErrorWrite => .DataAddressErrorWrite,
             else => std.debug.panic("Unexpected exception in _execute: {t}", .{err}),
         });
         return;
