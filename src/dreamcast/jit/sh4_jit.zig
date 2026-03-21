@@ -392,6 +392,10 @@ pub const JITContext = struct {
         };
     }
 
+    pub fn deinit(self: *@This()) void {
+        self.mmu_translation_slow_paths.deinit(self.cpu._allocator);
+    }
+
     // Unconditional forward jump
     pub fn skip_instructions(self: *@This(), count: u32) void {
         self.index += count;
@@ -548,6 +552,7 @@ pub const JITContext = struct {
         for (self.mmu_translation_slow_paths.items) |info|
             try info.emit(block, exit_ptr);
         self.mmu_translation_slow_paths.deinit(self.cpu._allocator);
+        self.mmu_translation_slow_paths = .empty;
     }
 };
 
@@ -798,6 +803,7 @@ pub const SH4JIT = struct {
 
     pub noinline fn compile(self: *@This(), start_ctx: JITContext) !*BasicBlock {
         var ctx = start_ctx;
+        defer ctx.deinit();
 
         if (start_ctx.mmu_enabled and self.block_invalidation == .None) {
             sh4_jit_log.warn("MMU enabled: Switching to 'Hash' block invalidation strategy.", .{});
