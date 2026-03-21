@@ -769,7 +769,7 @@ pub const Dreamcast = struct {
             else => {},
         }
 
-        return @as(*const T, @ptrCast(@alignCast(
+        return @as(*align(1) const T, @ptrCast(@alignCast(
             @constCast(self)._get_memory(addr),
         ))).*;
     }
@@ -851,7 +851,7 @@ pub const Dreamcast = struct {
             else => {},
         }
 
-        @as(*T, @ptrCast(@alignCast(
+        @as(*align(1) T, @ptrCast(@alignCast(
             self._get_memory(addr),
         ))).* = value;
     }

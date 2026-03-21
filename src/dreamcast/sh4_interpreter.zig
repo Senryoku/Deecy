@@ -51,7 +51,9 @@ fn fetch_and_execute(self: *SH4, virtual_addr: u32) void {
             error.DataTLBMissWrite => .DataTLBMissWrite,
             error.InitialPageWrite => .InitialPageWrite,
             error.FPUDisabled => .GeneralFPUDisable,
+            error.SlotFPUDisabled => .SlotFPUDisable,
             error.IllegalInstruction => .GeneralIllegalInstruction,
+            error.SlotIllegalInstruction => .SlotIllegalInstruction,
             error.UnconditionalTrap => .UnconditionalTrap,
             else => std.debug.panic("Unexpected exception in _execute: {t}", .{err}),
         });
@@ -1100,7 +1102,7 @@ inline fn d12_label(cpu: *SH4, opcode: Instr) void {
     cpu.pc -= 2;
 }
 
-inline fn execute_delay_slot(cpu: *SH4, addr: u32) void {
+inline fn execute_delay_slot(cpu: *SH4, addr: u32) !void {
     // Set PC to the instruction that triggered the delay slot in case an exception is raised inside the delay slot.
     const current_pc = cpu.pc;
     cpu.pc = addr - 2;
@@ -1108,7 +1110,7 @@ inline fn execute_delay_slot(cpu: *SH4, addr: u32) void {
 
     // An exception was raised when fetching the instruction. Adjust the PC to compensate for PC advancement in fetch_and_execute and return.
     if (cpu.pc != addr - 2) {
-        cpu.pc -= 2;
+        cpu.pc -%= 2;
         return;
     }
 
@@ -1120,18 +1122,12 @@ inline fn execute_delay_slot(cpu: *SH4, addr: u32) void {
     //     Privileged instructions: LDC, STC, RTE, LDTLB, SLEEP, but excluding LDC/STC instructions that access GBR
     //   Decoding of a PC-relative MOV instruction or MOVA instruction
 
-    _execute(cpu, opcode) catch |err| {
-        cpu.jump_to_exception(switch (err) {
-            error.DataTLBMissRead => .DataTLBMissRead,
-            error.DataTLBMissWrite => .DataTLBMissWrite,
-            error.InitialPageWrite => .InitialPageWrite,
-            error.FPUDisabled => .SlotFPUDisable,
-            error.IllegalInstruction => .SlotIllegalInstruction,
-            error.UnconditionalTrap => .UnconditionalTrap,
-            else => std.debug.panic("Unexpected exception in execute_delay_slot: {t}", .{err}),
-        });
-        cpu.pc -= 2; // Compensate for PC advancement in fetch_and_execute.
-        return;
+    _execute(cpu, opcode) catch |exception| {
+        return switch (exception) {
+            error.FPUDisabled => error.SlotFPUDisabled,
+            error.IllegalInstruction => error.SlotIllegalInstruction,
+            else => exception,
+        };
     };
 
     // Restore PC
@@ -1149,9 +1145,9 @@ pub fn bfs_label(cpu: *SH4, opcode: Instr) !void {
         d8_label(cpu, opcode);
     } else { // Don't execute the delay slot twice.
         cpu.pc += 4;
-        cpu.pc -= 2; // -2 to account for the generic, inavoidable pc advancement of the current implementation.
+        cpu.pc -= 2; // -2 to account for the generic, unavoidable pc advancement of the current implementation.
     }
-    execute_delay_slot(cpu, delay_slot);
+    try execute_delay_slot(cpu, delay_slot);
 }
 pub fn bt_label(cpu: *SH4, opcode: Instr) !void {
     if (cpu.sr.t) {
@@ -1164,40 +1160,40 @@ pub fn bts_label(cpu: *SH4, opcode: Instr) !void {
         d8_label(cpu, opcode);
     } else { // Don't execute the delay slot twice.
         cpu.pc += 4;
-        cpu.pc -= 2; // -2 to account for the generic, inavoidable pc advancement of the current implementation.
+        cpu.pc -%= 2; // -2 to account for the generic, unavoidable pc advancement of the current implementation.
     }
-    execute_delay_slot(cpu, delay_slot);
+    try execute_delay_slot(cpu, delay_slot);
 }
 pub fn bra_label(cpu: *SH4, opcode: Instr) !void {
     const delay_slot = cpu.pc + 2;
     d12_label(cpu, opcode);
-    execute_delay_slot(cpu, delay_slot);
+    try execute_delay_slot(cpu, delay_slot);
 }
 pub fn braf_Rn(cpu: *SH4, opcode: Instr) !void {
     const delay_slot = cpu.pc + 2;
     cpu.pc +%= 4 + cpu.R(opcode.nmd.n).*;
-    cpu.pc -= 2; // execute will allready add +2
-    execute_delay_slot(cpu, delay_slot);
+    cpu.pc -%= 2; // execute will already add +2
+    try execute_delay_slot(cpu, delay_slot);
 }
 pub fn bsr_label(cpu: *SH4, opcode: Instr) !void {
     const delay_slot = cpu.pc + 2;
     cpu.pr = cpu.pc + 4;
     d12_label(cpu, opcode);
-    execute_delay_slot(cpu, delay_slot);
+    try execute_delay_slot(cpu, delay_slot);
 }
 pub fn bsrf_Rn(cpu: *SH4, opcode: Instr) !void {
     const delay_slot = cpu.pc + 2;
     cpu.pr = cpu.pc + 4;
     // Note: The Boot ROM seem to intentionally wrap around the address.
     cpu.pc +%= 4 + cpu.R(opcode.nmd.n).*;
-    cpu.pc -= 2; // execute will allready add +2
-    execute_delay_slot(cpu, delay_slot);
+    cpu.pc -%= 2; // execute will already add +2
+    try execute_delay_slot(cpu, delay_slot);
 }
 pub fn jmp_atRn(cpu: *SH4, opcode: Instr) !void {
     const delay_slot = cpu.pc + 2;
     cpu.pc = cpu.R(opcode.nmd.n).*;
-    cpu.pc -= 2; // -2 to account for the standard +2
-    execute_delay_slot(cpu, delay_slot);
+    cpu.pc -%= 2; // -2 to account for the standard +2
+    try execute_delay_slot(cpu, delay_slot);
 }
 // Makes a delayed branch to the subroutine procedure at the specified address after execution of the following instruction.
 // Return address (PC + 4) is saved in PR, and a branch is made to the address indicated by general register Rm. JSR is used in combination with RTS for subroutine procedure calls.
@@ -1208,14 +1204,14 @@ pub fn jsr_Rn(cpu: *SH4, opcode: Instr) !void {
     const delay_slot = cpu.pc + 2;
     cpu.pr = cpu.pc + 4;
     cpu.pc = cpu.R(opcode.nmd.n).*;
-    cpu.pc -= 2; // -2 to account for the standard +2
-    execute_delay_slot(cpu, delay_slot);
+    cpu.pc -%= 2; // -2 to account for the standard +2
+    try execute_delay_slot(cpu, delay_slot);
 }
 pub fn rts(cpu: *SH4, _: Instr) !void {
     const delay_slot = cpu.pc + 2;
     cpu.pc = cpu.pr;
-    cpu.pc -= 2; // execute will add +2
-    execute_delay_slot(cpu, delay_slot);
+    cpu.pc -%= 2; // execute will add +2
+    try execute_delay_slot(cpu, delay_slot);
 }
 
 pub fn clrmac(cpu: *SH4, _: Instr) !void {
