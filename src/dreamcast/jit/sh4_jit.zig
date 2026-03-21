@@ -839,11 +839,8 @@ pub const SH4JIT = struct {
                         try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = RAMBaseRegister, .index = ArgRegisters[2], .size = 16 } });
                     }
                     try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.instructions[0] });
-                    var valid = try b.jmp(.Equal);
                     // Recompile
-                    try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) });
-                    try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
-                    valid.patch();
+                    try b.append(.{ .Jmp = .{ .condition = .NotEqual, .dst = .{ .abs = @intFromPtr(self.block_cache.buffer.ptr) } } });
                 },
                 .Hash => {
                     // Pointer to the start of RAM in ArgRegisters[0]
@@ -862,11 +859,8 @@ pub const SH4JIT = struct {
                     hash_invalidation_value_offset = b.instructions.items.len;
                     try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .imm64 = 0xDEADCAFEDEADCAFE });
                     try b.cmp(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[0] });
-                    var valid = try b.jmp(.Equal);
                     // Recompile
-                    try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) });
-                    try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
-                    valid.patch();
+                    try b.append(.{ .Jmp = .{ .condition = .NotEqual, .dst = .{ .abs = @intFromPtr(self.block_cache.buffer.ptr) } } });
                 },
                 .Always => {
                     // Stupid one that *always* recompiles the block for debugging purposes (i.e. if this one works, this is a cache issue).
