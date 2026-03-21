@@ -99,13 +99,15 @@ pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !Image {
         if (header.image_data_type.mipmapped()) {
             if (header.image_data_type.vq_compressed()) {
                 texels_offset += Renderer.vq_mipmap_offset(image.width);
-            } else if (header.pixel_format == .Palette4BPP or header.pixel_format == .Palette8BPP) {
-                const val: u32 = Renderer.palette_mipmap_offset(image.width);
-                texels_offset += if (header.pixel_format == .Palette4BPP) val / 2 else val;
             } else {
-                texels_offset += Renderer.mipmap_offset(image.width);
+                if (header.pixel_format == .Palette4BPP or header.pixel_format == .Palette8BPP) {
+                    const val: u32 = Renderer.palette_mipmap_offset(image.width);
+                    texels_offset += if (header.pixel_format == .Palette4BPP) val / 2 else val;
+                } else {
+                    texels_offset += Renderer.mipmap_offset(image.width);
+                }
+                texels_offset -= 4; // FIXME: I have no idea why is it off, seems to be fine when textures are uploaded to the PVR.
             }
-            texels_offset -= 4; // FIXME: I have no idea why is it off, seems to be fine when textures are uploaded to the PVR.
         }
 
         if (header.image_data_type.vq_compressed()) {
