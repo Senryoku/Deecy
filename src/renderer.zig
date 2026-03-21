@@ -2867,7 +2867,7 @@ pub const Renderer = struct {
 
                     // Triangle Strips
                     if (self.vertices.items.len - strip_first_vertex_index < 3) {
-                        log.err("Not enough vertices in strip: {d} vertices.", .{self.vertices.items.len - strip_first_vertex_index});
+                        if (Once(@src())) log.err("Ignored strip with only {d} vertices. (This will only be reported once)", .{self.vertices.items.len - strip_first_vertex_index});
                     } else {
                         // "In the case of a flat-shaded polygon, the Shading Color data (the Base Color, Offset Color, and Bump Map parameters) become valid starting with the third vertex after the start of the strip." - Thanks MetalliC for pointing that out!
                         if (isp_tsp_instruction.gouraud == 0) {
@@ -3548,7 +3548,7 @@ pub const Renderer = struct {
 
                                             pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
                                         } else {
-                                            log.warn(termcolor.yellow("TODO: Unhandled Open Translucent Modifier Volume!"), .{});
+                                            if (Once(@src())) log.warn(termcolor.yellow("TODO: Unhandled Open Translucent Modifier Volume! (This will only be reported once)"), .{});
                                             // TODO: Almost the same thing, but the compute shader is really simple: Take the smallest
                                             //       depth value and add a volume from it to "infinity" (1.0+ depth). Or find a more efficient way :)
                                         }
