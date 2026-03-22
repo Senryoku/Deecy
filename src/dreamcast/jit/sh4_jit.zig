@@ -44,6 +44,7 @@ const Optimizations = .{
     .inline_small_forward_jumps = true,
     .inline_backwards_bra = true, // Inlining of backward inconditional branches, before current block entry point. This isn't correctly supported and implementation is very hackish.
     .mmu_translation_cache = true, // EXPERIMENTAL: Check virtual addresses against the last successful translation for a possible fast path.
+    .chain_previous_hashed_blocks = true, // When using hash to invalidate blocks, jump to the previous compiled version of this block if available before re-compiling it.
 };
 
 const VirtualAddressSpace = if (FastMem) switch (builtin.os.tag) {
@@ -859,8 +860,17 @@ pub const SH4JIT = struct {
                     hash_invalidation_value_offset = b.instructions.items.len;
                     try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .imm64 = 0xDEADCAFEDEADCAFE });
                     try b.cmp(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[0] });
-                    // Recompile
-                    try b.append(.{ .Jmp = .{ .condition = .NotEqual, .dst = .{ .abs = @intFromPtr(self.block_cache.buffer.ptr) } } });
+                    if (Optimizations.chain_previous_hashed_blocks and start_ctx.fpscr_sz != .Unknown and start_ctx.fpscr_pr != .Unknown) {
+                        // Jump to the previous version of the block.
+                        // The idea is that some (WinCE) games seem to be repetitively loading/unloading executable code at the same address,
+                        // this lets us potentially re-use already compiled blocks (guarded by the hash) if the game happens to reload the same code,
+                        // instead of re-compiling it every single time and filling the cache very quickly.
+                        const offset = self.block_cache.get(start_ctx.start_physical_pc, if (start_ctx.fpscr_sz == .Double) 1 else 0, if (start_ctx.fpscr_pr == .Double) 1 else 0).offset;
+                        try b.append(.{ .Jmp = .{ .condition = .NotEqual, .dst = .{ .abs = @intFromPtr(self.block_cache.buffer.ptr) + offset } } });
+                    } else {
+                        // Recompile
+                        try b.append(.{ .Jmp = .{ .condition = .NotEqual, .dst = .{ .abs = @intFromPtr(self.block_cache.buffer.ptr) } } });
+                    }
                 },
                 .Always => {
                     // Stupid one that *always* recompiles the block for debugging purposes (i.e. if this one works, this is a cache issue).
