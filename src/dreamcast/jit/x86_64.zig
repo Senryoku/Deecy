@@ -992,7 +992,7 @@ pub const Emitter = struct {
     }
 
     pub fn mov_reg_mem(self: *@This(), comptime direction: enum { MemToReg, RegToMem }, reg: Operand, mem: MemOperand) !void {
-        var reg_64 = mem.size == 64;
+        var reg_64 = reg == .reg64 or mem.size == 64;
 
         if (direction == .MemToReg and mem.size < 32 and reg == .reg)
             reg_64 = true; // Force 64-bit register to be 100% sure all bits are cleared.
