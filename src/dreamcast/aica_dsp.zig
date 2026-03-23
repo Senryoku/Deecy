@@ -121,7 +121,7 @@ pub inline fn write_register(self: *@This(), comptime T: type, local_addr: u32, 
         self._dirty_mpro = true;
 
     if (local_addr >= 4 * MDEC_CT_base)
-        log.warn("Write to DSP register {X:0>4}: We use it for internal operations!", .{local_addr});
+        log.warn("Write to DSP register {X:0>4} = {X:0>8}: We use it for internal operations!", .{ local_addr, value });
 
     switch (T) {
         u8 => @as([*]u8, @ptrCast(self._regs.ptr))[local_addr] = value,

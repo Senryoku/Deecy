@@ -778,15 +778,17 @@ pub const AICA = struct {
     }
 
     pub fn read_register(self: *const AICA, comptime T: type, addr: u32) T {
-        aica_log.debug("Read({}) to AICA Register at 0x{X:0>8}", .{ T, addr });
-
         const local_addr = addr & 0x0000FFFF;
+
+        aica_log.debug("Read({}) to AICA Register at 0x{X:0>8}", .{ T, addr });
+        if (local_addr >= 0x8000) {
+            aica_log.err("Invalid Read({}) to AICA Register at 0x{X:0>8}", .{ T, addr });
+            return 0;
+        }
         if (local_addr % 4 > 1) {
             aica_log.warn(termcolor.yellow("Read({}) to non-existent (not 4 bytes aligned) AICA register at 0x{X:0>8}"), .{ T, addr });
             return 0;
         }
-
-        //aica_log.debug("Read AICA register at 0x{X:0>8} (0x{X:0>8}) = 0x{X:0>8}", .{ addr, local_addr, self.regs[local_addr / 4] });
 
         std.debug.assert(local_addr % 4 == 0 or T == u8);
         const reg_addr = local_addr - (local_addr % 4);
@@ -840,7 +842,7 @@ pub const AICA = struct {
             else => {},
         }
 
-        if (local_addr >= 0x3000 and local_addr < 0x8000)
+        if (local_addr >= 0x3000)
             return self.dsp.read_register(T, local_addr - 0x3000);
 
         return switch (T) {
@@ -852,9 +854,14 @@ pub const AICA = struct {
 
     pub fn write_register(self: *AICA, comptime T: type, addr: u32, value: T) void {
         const local_addr = addr & 0x0000FFFF;
+
         aica_log.debug("Write to AICA Register at 0x{X:0>8} = 0x{X:0>8}", .{ addr, value });
+        if (local_addr >= 0x8000) {
+            aica_log.err("Invalid Write({}) to AICA Register at 0x{X:0>8} = 0x{X:0>8}", .{ T, addr, value });
+            return;
+        }
         if (local_addr % 4 > 1) {
-            aica_log.warn(termcolor.yellow("Unaligned Write({}) to AICA Register at 0x{X:0>8} = 0x{X:0>8}"), .{ T, addr, value });
+            aica_log.warn("Unaligned Write({}) to AICA Register at 0x{X:0>8} = 0x{X:0>8}", .{ T, addr, value });
             return;
         }
 
@@ -993,7 +1000,7 @@ pub const AICA = struct {
             }
         }
 
-        if (local_addr >= 0x3000 and local_addr < 0x8000)
+        if (local_addr >= 0x3000)
             return self.dsp.write_register(T, local_addr - 0x3000, value);
 
         switch (T) {

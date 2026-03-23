@@ -797,7 +797,7 @@ pub const Dreamcast = struct {
                         return self.gpu.write_register(addr, value);
                     },
                     // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF
-                    0x00700000...0x0070FFFF, 0x02700000...0x0270FFFF => {
+                    0x00700000...0x00707FFF, 0x02700000...0x02707FFF => {
                         check_type(&[_]type{ u8, u32 }, T, "Invalid Write({any}) to 0x{X:0>8} (AICA Registers) = 0x{X}\n", .{ T, addr, value });
                         return self.aica.write_register(T, addr & 0x00FFFFFF, value);
                     },
