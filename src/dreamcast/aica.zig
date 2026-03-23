@@ -595,6 +595,20 @@ const LFOPhaseInc = t: {
     break :t table;
 };
 
+fn attenuate(sample: i32, attenuation: u8) i32 {
+    if (attenuation >= 0xF) return 0;
+    // Each step reduces the output by 3dB (muliplies the amplitude by 1/sqrt(2))
+    const factors = comptime f: {
+        var table: [16]f32 = @splat(1.0);
+        for (1..table.len) |i|
+            table[i] = table[i - 1] / @sqrt(2.0);
+        break :f table;
+    };
+    // TODO: Move this to integer only?
+    const s: f32 = @floatFromInt(sample);
+    return @intFromFloat(factors[attenuation] * s);
+}
+
 fn apply_pan_attenuation(sample: i32, level: u4, pan: u5) struct { left: i32, right: i32 } {
     const att = 0xF - level;
     var left_att: u8 = att;
@@ -607,14 +621,7 @@ fn apply_pan_attenuation(sample: i32, level: u4, pan: u5) struct { left: i32, ri
     } else {
         left_att += pan_att;
     }
-
-    var left: i32 = 0;
-    var right: i32 = 0;
-    if (left_att < 0xF)
-        left = sample >> @truncate(left_att);
-    if (right_att < 0xF)
-        right = sample >> @truncate(right_att);
-    return .{ .left = left, .right = right };
+    return .{ .left = attenuate(sample, left_att), .right = attenuate(sample, right_att) };
 }
 
 pub const DSPEmulation = enum { Bypass, Interpreter, JIT };
@@ -1198,13 +1205,8 @@ pub const AICA = struct {
         //        0xE       |   -3dB
         //        0xF       |    0dB
         const attenuation: u4 = 0xF - self.get_reg(u4, .MasterVolume).*;
-        if (attenuation == 0xF) {
-            self.sample_buffer[offset + 0] = 0;
-            self.sample_buffer[offset + 1] = 0;
-        } else {
-            self.sample_buffer[offset + 0] >>= attenuation;
-            self.sample_buffer[offset + 1] >>= attenuation;
-        }
+        self.sample_buffer[offset + 0] = attenuate(self.sample_buffer[offset + 0], attenuation);
+        self.sample_buffer[offset + 1] = attenuate(self.sample_buffer[offset + 1], attenuation);
 
         self.sample_write_offset = (self.sample_write_offset + 2) % self.sample_buffer.len;
         self._samples_counter +%= 1;
@@ -1411,7 +1413,7 @@ pub const AICA = struct {
                 sample = 0;
             } else {
                 // (every 0x40 on the envelope attenuation level is 3dB)
-                sample >>= @truncate(attenuation >> 6);
+                sample = attenuate(sample, @truncate(attenuation >> 6));
             }
         }
 
@@ -1429,7 +1431,7 @@ pub const AICA = struct {
             if (registers.dps_channel_send.level != 0) {
                 const channel = registers.dps_channel_send.channel;
                 const attenuation: u4 = 0xF - registers.dps_channel_send.level;
-                const to_mixs: i32 = (sample << 4) >> attenuation; // MIXS are 20 bits, from 16bit samples.
+                const to_mixs: i32 = attenuate((sample << 4), attenuation); // MIXS are 20 bits, from 16bit samples.
                 self.dsp.add_mixs(channel, @intCast(to_mixs));
             }
         }
