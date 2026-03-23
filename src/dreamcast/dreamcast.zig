@@ -245,18 +245,20 @@ pub const Dreamcast = struct {
     }
 
     pub fn reset(self: *@This()) !void {
+        while (self.scheduled_events.removeOrNull() != null) {}
+        self._global_cycles = 0;
+
         self.cpu.reset();
         self.gpu.reset();
+        try self.aica.reset();
         self.gdrom.reset();
         self.gdrom_hle.reset();
-        try self.aica.reset();
         self.flash.reset();
-        while (self.scheduled_events.removeOrNull() != null) {}
 
         try self.sh4_jit.reset();
 
-        @memset(self.ram[0..], 0x00); // NOTE: Sonic Adventure 2 reads some unitialized memory around 0x0C000050...
-
+        @memset(self.ram, 0x00); // NOTE: Sonic Adventure 2 reads some unitialized memory around 0x0C000050...
+        @memset(self.aram, 0x00);
         @memset(self.hardware_registers, 0x00);
 
         self.hw_register(u32, .SB_FFST).* = 0; // Misc. FIFO Status (0 means empty)
@@ -500,15 +502,6 @@ pub const Dreamcast = struct {
                 }
             };
         }
-    }
-
-    pub fn set_flash_settings(self: *@This(), region: Region, lang: Language, video_mode: VideoMode) void {
-        self.flash[0x1A002] = @as(u8, '0') + @intFromEnum(region);
-        self.flash[0x1A0A2] = @as(u8, '0') + @intFromEnum(region);
-        self.flash[0x1A003] = @as(u8, '0') + @intFromEnum(lang);
-        self.flash[0x1A0A3] = @as(u8, '0') + @intFromEnum(lang);
-        self.flash[0x1A004] = @as(u8, '0') + @intFromEnum(video_mode);
-        self.flash[0x1A0A4] = @as(u8, '0') + @intFromEnum(video_mode);
     }
 
     const RefreshRate = enum(u8) {

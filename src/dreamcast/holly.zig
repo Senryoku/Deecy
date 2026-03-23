@@ -1587,10 +1587,25 @@ pub const Holly = struct {
         @memset(self.vram, 0);
         @memset(self.registers, 0);
 
+        self._ta_current_pass = 0;
+        self._ta_command_buffer = @splat(0);
+        self._ta_command_buffer_index = 0;
+        self._ta_list_type = null;
+        self._ta_current_polygon = null;
+        self._ta_user_tile_clip = null;
+        self._ta_current_volume = null;
+        self._ta_volume_next_polygon_is_last = false;
+
         for (&self._ta_lists) |*ta_lists| {
             for (ta_lists.items) |*list|
-                list.clearRetainingCapacity();
+                list.deinit(self._allocator);
+            ta_lists.clearRetainingCapacity();
+            ta_lists.appendAssumeCapacity(.init());
         }
+
+        self._pixel = 0;
+        self._tmp_subcycles = 0;
+        self._last_spg_update = 0;
 
         self._get_register(u32, .ID).* = 0x17FD11DB;
         self._get_register(u32, .REVISION).* = 0x0011;

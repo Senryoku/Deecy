@@ -1716,7 +1716,9 @@ pub const Renderer = struct {
         for (self.texture_metadata) |arr| {
             for (arr) |*tex| tex.* = .{};
         }
-        for (self.ta_lists.items) |*list| list.clearRetainingCapacity();
+        for (self.ta_lists.items) |*list| list.deinit(self._allocator);
+        self.ta_lists.clearRetainingCapacity();
+        self.ta_lists.appendAssumeCapacity(.init());
         for (self.render_passes.items) |*pass| pass.clearRetainingCapacity(self._allocator);
 
         self.modifier_volume_vertices.clearRetainingCapacity();

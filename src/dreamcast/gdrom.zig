@@ -272,6 +272,7 @@ pub fn reset(self: *@This()) void {
     self.packet_command_idx = 0;
     @memset(&self.packet_command, 0);
     self.audio_state = .{ .buffer = self.audio_state.buffer };
+    self.cd_read_state = .{};
 }
 
 pub fn deinit(self: *@This()) void {

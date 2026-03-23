@@ -221,6 +221,17 @@ pub const SH4 = struct {
 
     store_queues: [2][8]u32 align(32) = undefined,
     _operand_cache: []u8 align(4),
+    // P4 registers are remapped on this smaller range. See p4_register_addr.
+    //   Addresses starts with FF/1F, this can be ignored.
+    //   Then, there are 5 bits that separate registers into different functions.
+    //   Within each function, only the lower 7 bits of the address are relevant,
+    //   the rest is always 0. By shifting the 5 'function' bits, we can easily
+    //   and cheaply remap it to a way smaller memory range.
+    //   The one exception is the virtual register SDMR (SDMR2/SDMR3), which is
+    //   handled by read8 (but not emulated).
+    // + Operand cache RAM mode also clashes with this, it's also dealt with in read/write functions.
+    // + Two performance registers (PMCR1/2, exclusive to SH7091 afaik) also screw this pattern,
+    //   I ignore them in read16/write16.
     p4_registers: []u8 align(4),
     itlb: []mmu.TLBEntry,
     utlb: []mmu.TLBEntry,
@@ -267,22 +278,6 @@ pub const SH4 = struct {
             ._fast_utlb_lookup = if (EnableUTLBFastLookup) try host_memory.virtual_alloc(u8, @as(u32, 1) << (22 + 8)) else {},
         };
 
-        @memset(sh4._operand_cache, 0);
-        sh4._operand_cache_state.* = .{};
-
-        // P4 registers are remapped on this smaller range. See p4_register_addr.
-        //   Addresses starts with FF/1F, this can be ignored.
-        //   Then, there are 5 bits that separate registers into different functions.
-        //   Within each function, only the lower 7 bits of the address are relevant,
-        //   the rest is always 0. By shifting the 5 'function' bits, we can easily
-        //   and cheaply remap it to a way smaller memory range.
-        //   The one exception is the virtual register SDMR (SDMR2/SDMR3), which is
-        //   handled by read8 (but not emulated).
-        // + Operand cache RAM mode also clashes with this, it's also dealt with in read/write functions.
-        // + Two performance registers (PMCR1/2, exclusive to SH7091 afaik) also screw this pattern,
-        //   I ignore them in read16/write16.
-        @memset(sh4.p4_registers, 0);
-
         sh4.reset();
         sh4._dc = dc;
 
@@ -319,6 +314,11 @@ pub const SH4 = struct {
         self.fpscr = .{};
         self.fpul = undefined;
         self.fp_banks = undefined;
+
+        @memset(self._operand_cache, 0);
+        self._operand_cache_state.* = .{};
+
+        @memset(self.p4_registers, 0);
 
         self.p4_register(mmu.PTEH, .PTEH).* = .{};
         self.p4_register(mmu.PTEL, .PTEL).* = .{};
@@ -359,7 +359,6 @@ pub const SH4 = struct {
         self.p4_register(u16, .IPRA).* = 0x0000;
         self.p4_register(u16, .IPRB).* = 0x0000;
         self.p4_register(u16, .IPRC).* = 0x0000;
-        self.compute_interrupt_priorities();
 
         self.p4_register(u8, .TOCR).* = 0x00;
         self.p4_register(u8, .TSTR).* = 0x00;
@@ -368,7 +367,6 @@ pub const SH4 = struct {
             self.p4_register(u32, timer.counter).* = 0xFFFFFFFF;
             self.p4_register(u16, timer.control).* = 0x0000;
         }
-        self._last_timer_update = @splat(0);
 
         self.p4_register(u8, .SCBRR2).* = 0xFF;
         self.p4_register(u16, .SCSCR2).* = 0x0000;
@@ -379,12 +377,18 @@ pub const SH4 = struct {
         self.p4_register(u16, .SCSPTR2).* = 0x0000;
         self.p4_register(u16, .SCLSR2).* = 0x0000;
 
+        self.interrupt_requests = 0;
+        self.compute_interrupt_priorities();
+
+        self._mmu_state = .Disabled;
         for (self.itlb) |*entry| entry.* = .{};
         for (self.utlb) |*entry| entry.* = .{};
         self.reset_utlb_fast_lookup();
 
-        self._mmu_state = .Disabled;
+        self._last_timer_update = @splat(0);
         self.execution_state = .Running;
+        self._pending_cycles = 0;
+        self._operand_cache_state.* = .{};
     }
 
     pub fn software_reset(self: *@This()) void {
