@@ -52,6 +52,17 @@ struct Fragment {
 
 var<workgroup> fragments: array<array<Fragment, MaxFragments>, 8 * 4>;
 
+// Returns true if a should be blended before b (is farther away).
+fn order(a: Fragment, b: Fragment) -> bool {
+	//                           If the depths are equal, use the draw order (vertex index) as a tie breaker.
+	return (a.depth < b.depth || (a.depth == b.depth && (a.index_and_blend_modes >> 12) < (b.index_and_blend_modes >> 12)));
+}
+
+fn blend(src: vec4<f32>, dst: vec4<f32>, blend_modes: u32) -> vec4<f32> {
+	let color = src * get_src_factor(extractBits(blend_modes, 0, 3), src, dst) + dst * get_dst_factor(extractBits(blend_modes, 3, 3), src, dst);
+	return clamp(color, vec4<f32>(0.0), vec4<f32>(1.0));
+}
+
 @compute @workgroup_size(8, 4, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(local_invocation_index) local_idx: u32) {
 	let heads_index = global_id.y * oit_uniforms.target_width + global_id.x;
@@ -85,18 +96,49 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(local_invo
 				fragment.color_area0,
 				fragment.color_area1,
 			);
-			var j = layer_count;
 
+			var i = layer_count;
 			// Look back into the sorted array until we find where we should insert the new fragment, moving up previous fragments as needed.
-			while j > 0u && (to_insert.depth < fragments[local_idx][j - 1u].depth || // If the depths are equal, use the draw order (vertex index) as a tie breaker.
-				(to_insert.depth == fragments[local_idx][j - 1u].depth && (to_insert.index_and_blend_modes >> 12) < (fragments[local_idx][j - 1u].index_and_blend_modes >> 12))) {
-				fragments[local_idx][j] = fragments[local_idx][j - 1u];
-				j--;
+			while i > 0u && order(to_insert, fragments[local_idx][i - 1u]) {
+				fragments[local_idx][i] = fragments[local_idx][i - 1u];
+				i--;
 			}
 
-			fragments[local_idx][j] = to_insert;
-
+			fragments[local_idx][i] = to_insert;
+			
 			layer_count++;
+		}
+
+		// Sorted array is full, but we still have fragments to process
+		while element_index != 0xFFFFFFFFu {
+			let fragment = linked_list.data[element_index];
+			element_index = fragment.next;
+
+			let to_insert = Fragment(
+				fragment.depth,
+				fragment.index_and_blend_modes,
+				fragment.color_area0,
+				fragment.color_area1,
+			);
+
+			// Blend the current furthest fragment immediately.
+			// We loose a tiny bit of accuracy, but this avoids completely discarding fragments, while keeping memory usage constrained, 
+			// and giving priority to the MaxFragments closest fragments to be properly blended.
+			let current_is_furthest = order(to_insert, fragments[local_idx][0]);
+			// NOTE: This doesn't respect areas for simplicity, using Area 0 values.
+			let src = unpack4x8unorm(select(fragments[local_idx][0].color_area0, to_insert.color_area0, current_is_furthest));
+			let blend_modes = extractBits(select(fragments[local_idx][0].index_and_blend_modes, to_insert.index_and_blend_modes, current_is_furthest), 0u, 6);
+			color = blend(src, color, blend_modes);
+
+			if !current_is_furthest {
+				// Move down fragments until we find the place for our new fragment.
+				var i = 0u;
+				while (i < MaxFragments - 1u && !order(to_insert, fragments[local_idx][i + 1u])) {
+					fragments[local_idx][i] = fragments[local_idx][i + 1];
+					i++;
+				}
+				fragments[local_idx][i] = to_insert;
+			}
 		}
 
 		var depth_interfaces_count = 0u;
@@ -118,10 +160,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(local_invo
 			}
 
 			let src = unpack4x8unorm(select(fragment.color_area0, fragment.color_area1, use_area1));
-			let dst = color;
 			let blend_modes = extractBits(fragment.index_and_blend_modes, select(0u, 6u, use_area1), 6);
-			color = src * get_src_factor(extractBits(blend_modes, 0, 3), src, dst) + dst * get_dst_factor(extractBits(blend_modes, 3, 3), src, dst);
-			color = clamp(color, vec4<f32>(0.0), vec4<f32>(1.0));
+			color = blend(src, color, blend_modes);
 		}
 
 		textureStore(output_texture, frag_coords, color);
