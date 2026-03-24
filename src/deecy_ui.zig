@@ -906,6 +906,8 @@ pub fn draw(self: *@This()) !void {
                     zgui.setItemTooltip("Avoid some seams around sprites when upscaling.", .{});
                     _ = zgui.checkbox("Synchronous Render", .{ .v = &d.config.renderer.synchronous_render });
                     zgui.setItemTooltip("Render synchronously with the guest system.\nCan avoid some synchronization issues at a slight performance cost.\nTry this when you notice corrupted textures, especially during transitions.", .{});
+                    _ = zgui.checkbox("Delayed Render", .{ .v = &d.config.renderer.delay_render });
+                    zgui.setItemTooltip("Delay rendering until a frame is actually presented.\nMight slightly increase latency but can prevent flickering or missing pause screens.\nCombine with 'Synchronous Render' for the best compatibility.", .{});
                     _ = zgui.checkbox("Use Pipeline Cache", .{ .v = &d.config.enable_dawn_pipeline_cache });
                     zgui.setItemTooltip("Restart Required.\nReduces 'pop-in' due to pipeline creation delay (shader compilation).", .{});
                     if (builtin.mode == .Debug) {

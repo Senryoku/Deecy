@@ -51,12 +51,12 @@ pub const CableType = enum(u16) {
 pub const AICASync = enum { @"1 ARM Cycle", @"4 ARM Cycles", @"8 ARM Cycles", @"16 ARM Cycles", @"32 ARM Cycles", Sample };
 
 const Callback = struct {
-    function: ?*const fn (*anyopaque, *Dreamcast) void,
-    context: *anyopaque,
+    function: ?*const fn (*anyopaque, *Dreamcast) void = null,
+    context: *anyopaque = undefined,
 
     pub fn call(self: Callback, dc: *Dreamcast) void {
-        if (self.function != null)
-            self.function.?(self.context, dc);
+        if (self.function) |cb|
+            cb(self.context, dc);
     }
 };
 
@@ -149,7 +149,16 @@ pub const Dreamcast = struct {
     scheduled_events: std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare),
     _global_cycles: u64 = 0, // Cycles since the start of emulation.
 
-    on_render_start: Callback = undefined,
+    on_render_start: Callback = .{},
+    on_fb_r_sof1: struct {
+        function: ?*const fn (*anyopaque, dc: *Dreamcast, old_value: u32, new_value: u32) void = null,
+        context: *anyopaque = undefined,
+
+        pub fn call(self: @This(), dc: *Dreamcast, old_value: u32, new_value: u32) void {
+            if (self.function) |cb|
+                cb(self.context, dc, old_value, new_value);
+        }
+    } = .{},
 
     _allocator: std.mem.Allocator,
 

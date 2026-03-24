@@ -623,6 +623,10 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         .function = @ptrCast(&Renderer.on_render_start),
         .context = self.renderer,
     };
+    self.dc.on_fb_r_sof1 = .{
+        .function = @ptrCast(&Renderer.on_fb_r_sof1),
+        .context = self.renderer,
+    };
 
     self.ui = try .create(self._allocator, self);
     self.debug_ui = try .init(self);

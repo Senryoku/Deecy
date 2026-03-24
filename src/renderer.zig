@@ -782,6 +782,11 @@ pub const Renderer = struct {
         /// Render immediately when Render Start is called.
         /// Can avoid some synchronization issues at a slight performance cost (default is to defer GPU processing to the main thread).
         synchronous_render: bool = false,
+        /// Delay rendering until the guest actually wants to present the result (Updates FB_R_SOF).
+        /// Some games render frames without ever presenting them, leading to flickers or wrong pause screens for example if we simply present the last rendered frame
+        /// at all times. A better solution would be to hold N frames (2 for double buffering, but at this point we also might want to process rendering to texture with
+        /// a separate pipeline too...) and present them only as needed, but this would require duplicating all ressources. This is simpler, at a small latency cost.
+        delay_render: bool = false,
     };
 
     const MaxFragmentsPerPixel = 24;
@@ -806,6 +811,9 @@ pub const Renderer = struct {
     /// Owned by Deecy.
     config: *const Configuration,
 
+    /// A to-be-rendered frame is waiting to be presented by the guest (listening to FB_R_SOF changes).
+    render_pending: bool = false,
+    /// Flag for the main thread to render the current frame.
     render_request: bool = false,
     on_render_start_param_base: u32 = 0,
     render_passes: std.ArrayList(RenderPass),
@@ -1710,6 +1718,7 @@ pub const Renderer = struct {
     }
 
     pub fn reset(self: *@This()) void {
+        self.render_pending = false;
         self.render_request = false;
         self.last_frame_timestamp = std.time.microTimestamp();
         self.last_n_frametimes = .{};
@@ -1733,18 +1742,23 @@ pub const Renderer = struct {
         self._gctx_queue_mutex.lock();
         defer self._gctx_queue_mutex.unlock();
 
+        if (self.render_pending) {
+            if (Once(@src())) log.warn("Missed a pending render. Consider enabling 'Synchronous Rendering'.", .{});
+            self.render_pending = false;
+        }
+
         if (self.render_request) {
             if (!render_to_texture) {
-                log.warn(termcolor.yellow("Skipped a frame."), .{});
+                log.warn("Skipped a frame.", .{});
             } else {
-                log.warn(termcolor.yellow("Render to a texture with a pending render request. Consider enabling 'Synchronous Rendering'."), .{});
+                if (Once(@src())) log.warn("Render to a texture with a pending render request. Consider enabling 'Synchronous Rendering'.", .{});
                 // NOTE: This has a greater chance of happening with the frame limiter enabled. Render requests can easily be delayed by a frame.
                 //       We cannot simply wait on the main thread here, as we could end up in a deadlock (On exit for example: main thread joining on the emulation thread,
                 //       while the emulation thread is waiting on the main thread to finish rendering).
                 //       So for now we'll guarantee order of operations by rendering the late frames right here.
                 // Render immediately
                 self.render_request = false;
-                self.update(&dc.gpu) catch |err| return log.err(termcolor.red("Failed to update renderer: {t}"), .{err});
+                self.update(&dc.gpu) catch |err| return log.err("Failed to update renderer: {t}", .{err});
                 self.render(&dc.gpu, false) catch |err| return log.err(termcolor.red("Failed to render: {t}"), .{err});
             }
         }
@@ -1762,7 +1776,7 @@ pub const Renderer = struct {
         while (self.ta_lists.items.len < dc.gpu._ta_lists[list_idx].items.len) self.ta_lists.append(self._allocator, .init()) catch @panic("Out of memory"); // Give back a list with at least as many passes.
         std.mem.swap(std.ArrayList(HollyModule.TALists), &dc.gpu._ta_lists[list_idx], &self.ta_lists);
         if (self.ta_lists.items[0].opaque_list.vertex_strips.items.len == 0 and self.ta_lists.items[0].punchthrough_list.vertex_strips.items.len == 0 and self.ta_lists.items[0].translucent_list.vertex_strips.items.len == 0) {
-            log.warn(termcolor.yellow("on_render_start: Empty TA lists submitted. Is the game trying to reuse the previous TA lists?"), .{});
+            log.warn("on_render_start: Empty TA lists submitted. Is the game trying to reuse the previous TA lists?", .{});
         }
 
         const header_type = dc.gpu.get_region_header_type();
@@ -1792,7 +1806,7 @@ pub const Renderer = struct {
         }
 
         if (region_count != self.ta_lists.items.len)
-            log.warn(termcolor.yellow("Expected {d} regions, found {d}"), .{ self.ta_lists.items.len, region_count });
+            log.warn("Expected {d} regions, found {d}", .{ self.ta_lists.items.len, region_count });
 
         if (region_count < self.render_passes.items.len) {
             for (region_count..self.render_passes.items.len) |i|
@@ -1804,12 +1818,37 @@ pub const Renderer = struct {
         self.update_palette(&dc.gpu);
 
         // Process and render immediately when rendering to a texture. Decouples it from the host refresh rate, and some games require the result to be visible in guest VRAM ASAP.
-        // Othersize, let the main thread process the list asynchronously unless explicitly disabled.
-        self.render_request = !self.config.synchronous_render and !render_to_texture;
+        if (render_to_texture) {
+            self.update(&dc.gpu) catch |err| return log.err("Failed to update renderer: {t}", .{err});
+            self.render(&dc.gpu, render_to_texture) catch |err| return log.err("Failed to render: {t}", .{err});
+        } else {
+            if (self.config.delay_render) {
+                self.render_pending = true;
+            } else {
+                // Let the main thread process the list asynchronously unless explicitly disabled.
+                if (self.config.synchronous_render) {
+                    self.update(&dc.gpu) catch |err| return log.err("Failed to update renderer: {t}", .{err});
+                    self.render(&dc.gpu, false) catch |err| return log.err("Failed to render: {t}", .{err});
+                } else {
+                    self.render_request = true;
+                }
+            }
+        }
+    }
 
-        if (!self.render_request) {
-            self.update(&dc.gpu) catch |err| return log.err(termcolor.red("Failed to update renderer: {t}"), .{err});
-            self.render(&dc.gpu, render_to_texture) catch |err| return log.err(termcolor.red("Failed to render: {t}"), .{err});
+    pub fn on_fb_r_sof1(self: *@This(), dc: *Dreamcast, old_value: u32, new_value: u32) void {
+        if (old_value == new_value or !self.render_pending) return;
+        if (new_value == self.write_back_parameters.fb_w_sof1) {
+            // Let the main thread process the list asynchronously unless explicitly disabled.
+            if (self.config.synchronous_render) {
+                self._gctx_queue_mutex.lock();
+                defer self._gctx_queue_mutex.unlock();
+                self.update(&dc.gpu) catch |err| return log.err("Failed to update renderer: {t}", .{err});
+                self.render(&dc.gpu, false) catch |err| return log.err("Failed to render: {t}", .{err});
+            } else {
+                self.render_request = true;
+            }
+            self.render_pending = false;
         }
     }
 

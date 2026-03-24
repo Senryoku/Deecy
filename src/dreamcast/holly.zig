@@ -1900,6 +1900,12 @@ pub const Holly = struct {
                 self.schedule_interrupts();
                 return;
             },
+            .FB_R_SOF1 => {
+                const old_value = self._get_register_from_addr(u32, addr).*;
+                self._get_register_from_addr(u32, addr).* = v;
+                self._dc.on_fb_r_sof1.call(self._dc, old_value, v);
+                return;
+            },
             else => |reg| {
                 holly_log.debug("Write to Register: @{X:0>8} {s} = {X:0>8}", .{ addr, std.enums.tagName(HollyRegister, reg) orelse "Unknown", v });
             },
