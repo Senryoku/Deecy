@@ -762,7 +762,7 @@ pub const Renderer = struct {
             pub fn width(self: @This()) u32 {
                 return switch (self) {
                     .@"4:3", .@"16:9 (Stretch)" => NativeResolution.width,
-                    .@"16:9" => 854,
+                    .@"16:9" => 856, // NOTE: Should be 854, but 856 still being a multiple of 8 avoids having to add guards to all compute shaders.
                 };
             }
         };
