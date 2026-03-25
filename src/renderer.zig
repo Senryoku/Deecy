@@ -1822,12 +1822,13 @@ pub const Renderer = struct {
             self.update(&dc.gpu) catch |err| return log.err("Failed to update renderer: {t}", .{err});
             self.render(&dc.gpu, render_to_texture) catch |err| return log.err("Failed to render: {t}", .{err});
         } else {
+            if (self.config.synchronous_render)
+                self.update(&dc.gpu) catch |err| return log.err("Failed to update renderer: {t}", .{err});
             if (self.config.delay_render) {
                 self.render_pending = true;
             } else {
                 // Let the main thread process the list asynchronously unless explicitly disabled.
                 if (self.config.synchronous_render) {
-                    self.update(&dc.gpu) catch |err| return log.err("Failed to update renderer: {t}", .{err});
                     self.render(&dc.gpu, false) catch |err| return log.err("Failed to render: {t}", .{err});
                 } else {
                     self.render_request = true;
@@ -1836,6 +1837,7 @@ pub const Renderer = struct {
         }
     }
 
+    /// May lock `_gctx_queue_mutex`.
     pub fn on_fb_r_sof1(self: *@This(), dc: *Dreamcast, old_value: u32, new_value: u32) void {
         if (old_value == new_value or !self.render_pending) return;
         if (new_value == self.write_back_parameters.fb_w_sof1) {
@@ -1843,7 +1845,6 @@ pub const Renderer = struct {
             if (self.config.synchronous_render) {
                 self._gctx_queue_mutex.lock();
                 defer self._gctx_queue_mutex.unlock();
-                self.update(&dc.gpu) catch |err| return log.err("Failed to update renderer: {t}", .{err});
                 self.render(&dc.gpu, false) catch |err| return log.err("Failed to render: {t}", .{err});
             } else {
                 self.render_request = true;
