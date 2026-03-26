@@ -38,13 +38,15 @@ pub fn read_sector(self: *const @This(), fad: u32) []const u8 {
     return self.data[(fad - self.fad) * self.format ..][self.sector_data_offset()..user_bytes_per_sector];
 }
 
-pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
+pub fn load_sectors(self: *const @This(), fad: u32, requested_count: u32, dest: []u8) u32 {
     std.debug.assert(fad >= self.fad);
     var sector_start = (fad - self.fad) * self.format;
     if (sector_start >= self.data.len) {
         log.warn(termcolor.yellow("fad out of range (track offset: {d}, size: {d}, fad: {d})"), .{ self.fad, self.data.len, fad });
         return 0;
     }
+
+    const count = @min(requested_count, self.end_fad - fad);
 
     // Each sector only has raw data.
     if (self.track_type == .Audio or self.format == 2048) {
