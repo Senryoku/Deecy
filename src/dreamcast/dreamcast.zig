@@ -970,21 +970,18 @@ pub const Dreamcast = struct {
 
     pub fn raise_normal_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTNRM) void {
         self.hw_register(u32, .SB_ISTNRM).* |= @bitCast(int);
-
         self.check_sb_interrupts();
     }
 
     pub fn raise_external_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTEXT) void {
         self.hw_register(u32, .SB_ISTEXT).* |= @bitCast(int);
-        self.hw_register(u32, .SB_ISTNRM).* |= @bitCast(HardwareRegisters.SB_ISTNRM{ .ExtStatus = if (self.hw_register(u32, .SB_ISTEXT).* != 0) 1 else 0 });
-
+        self.hw_register(HardwareRegisters.SB_ISTNRM, .SB_ISTNRM).ExtStatus = if (self.hw_register(u32, .SB_ISTEXT).* != 0) 1 else 0;
         self.check_sb_interrupts();
     }
 
     pub fn clear_external_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTEXT) void {
         self.hw_register(u32, .SB_ISTEXT).* &= ~@as(u32, @bitCast(int));
-        self.hw_register(u32, .SB_ISTNRM).* |= @bitCast(HardwareRegisters.SB_ISTNRM{ .ExtStatus = if (self.hw_register(u32, .SB_ISTEXT).* != 0) 1 else 0 });
-
+        self.hw_register(HardwareRegisters.SB_ISTNRM, .SB_ISTNRM).ExtStatus = if (self.hw_register(u32, .SB_ISTEXT).* != 0) 1 else 0;
         self.check_sb_interrupts();
     }
 
