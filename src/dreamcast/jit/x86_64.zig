@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const termcolor = @import("termcolor");
 
-const x86_64_emitter_log = std.log.scoped(.x86_64_emitter);
+const log = std.log.scoped(.x86_64_emitter);
 
 pub fn runtime_check_cpu_feature(feature: std.Target.x86.Feature) !bool {
     const static = struct {
@@ -16,6 +16,30 @@ pub fn runtime_check_cpu_feature(feature: std.Target.x86.Feature) !bool {
         std.debug.assert(builtin.target.cpu.arch == .x86_64);
     }
     return std.Target.x86.featureSetHas(static.features.?, feature);
+}
+
+/// PDEP and PEXT are supported but microcoded on Zen 1 and 2 and thus very slow.
+/// This returns true if the host CPU supports BMI2 and is not a Zen 1 or 2 CPU.
+pub fn has_fast_pdep_pext() bool {
+    const static = struct {
+        var result: ?bool = null;
+    };
+    if (static.result) |r| return r;
+
+    const bmi2_support = runtime_check_cpu_feature(.bmi2) catch false;
+    if (!bmi2_support) {
+        static.result = false;
+    } else {
+        var query = std.Target.Query.fromTarget(&builtin.target);
+        query.cpu_model = .native;
+        if (std.zig.system.resolveTargetQuery(query)) |native_target| {
+            static.result = !std.mem.eql(u8, native_target.cpu.model.name, "znver1") and !std.mem.eql(u8, native_target.cpu.model.name, "znver2");
+        } else |_| {
+            static.result = false;
+        }
+    }
+    log.info("{s} PDEP/PEXT emit (BMI2 support: {})", .{ if (static.result.?) "Enabled" else "Disabled", bmi2_support });
+    return static.result.?;
 }
 
 pub const ReturnRegister = Register.rax;
@@ -392,6 +416,7 @@ pub const Instruction = union(enum) {
     // FIXME: This only exists because I haven't added a way to specify the size the GPRs.
     Div64_32: struct { dividend_high: Register, dividend_low: Register, divisor: Register, result: Register },
     Lea: struct { dst: Operand, mem: MemOperand },
+    Pext: struct { dst: Operand, src: Operand, mask: Operand },
 
     SaveFPRegisters: struct { count: u8 },
     RestoreFPRegisters: struct { count: u8 },
@@ -449,6 +474,7 @@ pub const Instruction = union(enum) {
             .Lea => |lea| writer.print("lea {f}, {f}", .{ lea.dst, lea.mem }),
             .SaveFPRegisters => |instr| writer.print("SaveFPRegisters {d}", .{instr.count}),
             .RestoreFPRegisters => |instr| writer.print("RestoreFPRegisters {d}", .{instr.count}),
+            .Pext => |pext| writer.print("pext {f}, {f}, {f}", .{ pext.dst, pext.src, pext.mask }),
 
             .Padding => |p| writer.print("Padding {d}", .{p}),
         };
@@ -523,25 +549,50 @@ pub const REX = packed struct(u8) {
     _: u4 = 0b0100,
 };
 
+const VEXPrefix = enum(u2) {
+    no = 0x0,
+    x66 = 0x1,
+    xF3 = 0x2,
+    xF2 = 0x3,
+};
+
+const VEXOpcodeMap = enum(u5) {
+    x0F = 0x1,
+    x0F38 = 0x2,
+    x0F3A = 0x3,
+    _,
+};
+
+const VEX2 = packed struct(u16) {
+    prefix: u8 = 0xC5,
+    p: VEXPrefix,
+    l: u1, // Vector length, 0: 128bit SSE (XMM), 1: 256bit AVX (YMM)
+    not_v: u4, // Inversion of additional source register index
+    not_r: bool, // Inversion of REX r bit.
+
+    pub fn from_vex3(vex3: VEX3) VEX2 {
+        std.debug.assert(!vex3.w);
+        std.debug.assert(vex3.not_b);
+        std.debug.assert(vex3.not_x);
+        std.debug.assert(vex3.m == .x0F);
+        return .{
+            .p = vex3.p,
+            .l = vex3.l,
+            .not_v = vex3.not_v,
+            .not_r = vex3.not_r,
+        };
+    }
+};
+
 const VEX3 = packed struct(u24) {
     prefix: u8 = 0xC4,
     // Byte 1
-    m: enum(u5) {
-        x0F = 0x1,
-        x0F38 = 0x2,
-        x0F3A = 0x3,
-        _,
-    }, // Opcode map.
+    m: VEXOpcodeMap, // Opcode map.
     not_b: bool,
     not_x: bool,
     not_r: bool, // Inversion of REX r, x and b bits.
     // Byte 2
-    p: enum(u2) {
-        no = 0x0,
-        x66 = 0x1,
-        xF3 = 0x2,
-        xF2 = 0x3,
-    }, // Additional prefix bytes. The values 0, 1, 2, and 3 correspond to implied no, 0x66, 0xF3, and 0xF2 prefixes.
+    p: VEXPrefix, // Additional prefix bytes. The values 0, 1, 2, and 3 correspond to implied no, 0x66, 0xF3, and 0xF2 prefixes.
     l: u1, // Vector length, 0: 128bit SSE (XMM), 1: 256bit AVX (YMM)
     not_v: u4, // Inversion of additional source register index
     w: bool, // 64-bit operand?
@@ -691,7 +742,7 @@ pub const Emitter = struct {
             switch (instr) {
                 .Nop => {},
                 .Break => {
-                    if (builtin.mode != .Debug) x86_64_emitter_log.warn("Emitting a break instruction outside of Debug Build.", .{});
+                    if (builtin.mode != .Debug) log.warn("Emitting a break instruction outside of Debug Build.", .{});
                     try self.emit_byte(0xCC);
                 },
                 .FunctionCall => |function| try self.native_call(function),
@@ -734,6 +785,7 @@ pub const Emitter = struct {
                 .Convert => |r| try self.convert(r.dst, r.src),
                 .Div64_32 => |d| try self.div64_32(d.dividend_high, d.dividend_low, d.divisor, d.result),
                 .Lea => |l| try self.lea(l.dst, l.mem),
+                .Pext => |p| try self.emit_vex_instruction(.xF3, .x0F38, 0xF5, p.dst, p.src, p.mask),
 
                 .SaveFPRegisters => |s| try self.save_fp_registers(s.count),
                 .RestoreFPRegisters => |s| try self.restore_fp_registers(s.count),
@@ -785,14 +837,23 @@ pub const Emitter = struct {
             try self.emit(T, v);
     }
 
+    fn emit_vex(self: *@This(), v: VEX3) !void {
+        if (!v.w and v.not_b and v.not_x and v.m == .x0F) {
+            // VEX2, 2 bytes abbreviation
+            try self.emit(VEX2, VEX2.from_vex3(v));
+        } else {
+            try self.emit(VEX3, v);
+        }
+    }
+
     pub fn emit(self: *@This(), comptime T: type, value: T) !void {
         if (T == MODRM) {
             // See Intel Manual Vol. 2A 2-11.
             if (value.mod == .indirect and value.r_m == 0b101)
                 return error.UnhandledSpecialCase;
         }
-        if (T == VEX3) { // Could be extended to other packed structs.
-            const slice = @as([@bitSizeOf(VEX3) / 8]u8, @bitCast(value));
+        if (T == VEX2 or T == VEX3) { // Could be extended to other packed structs.
+            const slice = @as([@bitSizeOf(T) / 8]u8, @bitCast(value));
             for (slice) |b| {
                 try self.emit_byte(b);
             }
@@ -940,7 +1001,7 @@ pub const Emitter = struct {
         switch (src) {
             .freg32, .freg64 => |src_reg| try self.binary_freg_freg(size, &[_]u8{ 0x0F, @intFromEnum(opcode) }, dst_reg, src_reg),
             .mem => |src_mem| {
-                x86_64_emitter_log.warn(termcolor.yellow("Untested <{t}>ss xmm1, xmm2/m32 with a memory operand. Be careful :)"), .{opcode});
+                log.warn(termcolor.yellow("Untested <{t}>ss xmm1, xmm2/m32 with a memory operand. Be careful :)"), .{opcode});
 
                 try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst_reg), .b = need_rex(src_mem.base) });
                 try self.emit(u8, 0x0F);
@@ -1555,7 +1616,7 @@ pub const Emitter = struct {
             // NOTE: SARX/SHLX/SHRX are not currently emitted when the CPU does not supports BMI2 (the JIT checks for this).
             //       Still provide a fallback for future proofing. Because this requires some register shuffling, print warnings to avoid future confusion :)
             //       This assumes 32bit registers.
-            x86_64_emitter_log.warn(termcolor.yellow("BMI2 fallback: {f} = {f} {t} {f}"), .{ dst, src, reg_opcode, amount });
+            log.warn(termcolor.yellow("BMI2 fallback: {f} = {f} {t} {f}"), .{ dst, src, reg_opcode, amount });
             try self.mov(.{ .reg = dst }, src, false);
             if (amount != .rcx)
                 try self.mov(.{ .reg = .rcx }, .{ .reg = amount }, false);
@@ -1845,6 +1906,22 @@ pub const Emitter = struct {
                 }
             },
         }
+    }
+
+    fn emit_vex_instruction(self: *@This(), prefix: VEXPrefix, opcode_map: VEXOpcodeMap, opcode: u8, op1: Operand, op2: Operand, op3: Operand) !void {
+        if (op1 != .reg or op2 != .reg or op3 != .reg) return error.UnsupportedVEX;
+        try self.emit_vex(.{
+            .w = false,
+            .not_r = !need_rex(op1.reg),
+            .not_x = true,
+            .not_b = !need_rex(op3.reg),
+            .not_v = ~@intFromEnum(op2.reg),
+            .l = 0,
+            .p = prefix,
+            .m = opcode_map,
+        });
+        try self.emit(u8, opcode);
+        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(op1.reg), .r_m = encode(op3.reg) });
     }
 
     fn call_prologue(self: *@This()) !void {
