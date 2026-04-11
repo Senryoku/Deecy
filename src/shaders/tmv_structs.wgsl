@@ -42,11 +42,11 @@ struct VolumesInterfaces {
 
 fn slice_coords_to_pixel_index(info: OITTMVUniforms, slice_coords: vec2<u32>) -> u32 {
 	// Here we assume that the slice is wider than tall.
-    let hozizontal_square : u32 = slice_coords.x / info.square_size;
+    let horizontal_square : u32 = slice_coords.x / info.square_size;
     let pixels_per_square : u32 = info.square_size * info.square_size;
 
     let square_local_coords = vec2<u32>(slice_coords.x % info.square_size, slice_coords.y);
-    let pixel_index = pixels_per_square * hozizontal_square + morton2(square_local_coords);
+    let pixel_index = pixels_per_square * horizontal_square + morton2(square_local_coords);
 
 	return pixel_index;
 }

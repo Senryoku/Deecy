@@ -18,8 +18,10 @@ struct VolumeLinkedListElementData {
     depth: f32,
 };
 
+var<workgroup> fragments: array<array<VolumeLinkedListElementData, MaxVolumeFragments>, 8 * 8>;
+
 @compute @workgroup_size(8, 8, 1)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(local_invocation_index) local_idx: u32) {
     let pixel_index = slice_coords_to_pixel_index(oit_tmv_uniforms, global_id.xy);
 
     let frag_count = min(MaxVolumeFragments, modvol_fragment_counts[pixel_index]);
@@ -29,7 +31,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     if frag_count > 0u {
         // Group the Modifier Volume fragments by volume and sort by depth.
-        var fragments: array<VolumeLinkedListElementData, MaxVolumeFragments>;
         for(var i = 0u; i < frag_count; i++) {
             let index =  tmv_fragment_index(oit_tmv_uniforms, pixel_index, i);
 
@@ -39,48 +40,48 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             var j = i;
 
             // Look back into the sorted array until we find where we should insert the new fragment, moving up previous fragment as needed.
-            while j > 0u && (to_insert.volume_index < fragments[j - 1u].volume_index || (to_insert.volume_index == fragments[j - 1u].volume_index && to_insert.depth < fragments[j - 1u].depth)) {
-                fragments[j] = fragments[j - 1u];
+            while j > 0u && (to_insert.volume_index < fragments[local_idx][j - 1u].volume_index || (to_insert.volume_index == fragments[local_idx][j - 1u].volume_index && to_insert.depth < fragments[local_idx][j - 1u].depth)) {
+                fragments[local_idx][j] = fragments[local_idx][j - 1u];
                 j--;
             }
 
-            fragments[j] = to_insert;
+            fragments[local_idx][j] = to_insert;
         }
 
         var curr_fragment = 0u;
 
         // Insert first interval now to avoid having to deal with the empty case later.
         var first_volume_frag_count = 1u;
-        var first_volume_index = fragments[0].volume_index;
-        while first_volume_frag_count < frag_count && fragments[first_volume_frag_count].volume_index == first_volume_index { first_volume_frag_count++; }
+        var first_volume_index = fragments[local_idx][0].volume_index;
+        while first_volume_frag_count < frag_count && fragments[local_idx][first_volume_frag_count].volume_index == first_volume_index { first_volume_frag_count++; }
 
         volumes.count = 1u;
         if (first_volume_frag_count & 1u) == 1 {
-            volumes.intervals[0] = vec2<f32>(0.0, fragments[0].depth);
+            volumes.intervals[0] = vec2<f32>(0.0, fragments[local_idx][0].depth);
             curr_fragment = 1u;
         } else {
-            volumes.intervals[0] = vec2<f32>(fragments[0].depth, fragments[1].depth);
+            volumes.intervals[0] = vec2<f32>(fragments[local_idx][0].depth, fragments[local_idx][1].depth);
             curr_fragment = 2u;
         }
 
         for (var i = curr_fragment; i < first_volume_frag_count; i += 2) {
-            volumes = insert_interval(volumes, vec2<f32>(fragments[i].depth, fragments[i + 1].depth));
+            volumes = insert_interval(volumes, vec2<f32>(fragments[local_idx][i].depth, fragments[local_idx][i + 1].depth));
         }
         curr_fragment = first_volume_frag_count;
 
         while curr_fragment < frag_count {
             let start_fragment = curr_fragment;
-            let curr_volume = fragments[start_fragment].volume_index;
+            let curr_volume = fragments[local_idx][start_fragment].volume_index;
             curr_fragment++;
-            while curr_fragment < frag_count && fragments[curr_fragment].volume_index == curr_volume { curr_fragment++; }
+            while curr_fragment < frag_count && fragments[local_idx][curr_fragment].volume_index == curr_volume { curr_fragment++; }
             let fragment_count = curr_fragment - start_fragment;
 
             // Convert the sorted list of depth values into a list of intervals and merge them into our current volumes.
             if (fragment_count & 1u) == 1 { // Last volume is open (backside behind the depth plane)
-                volumes = insert_interval(volumes, vec2<f32>(0.0, fragments[start_fragment].depth));
+                volumes = insert_interval(volumes, vec2<f32>(0.0, fragments[local_idx][start_fragment].depth));
             }
             for (var i = (fragment_count & 1u); i < fragment_count; i += 2) {
-                volumes = insert_interval(volumes, vec2<f32>(fragments[start_fragment + i].depth, fragments[start_fragment + i + 1].depth));
+                volumes = insert_interval(volumes, vec2<f32>(fragments[local_idx][start_fragment + i].depth, fragments[local_idx][start_fragment + i + 1].depth));
             }
         }
     }

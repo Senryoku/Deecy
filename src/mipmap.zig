@@ -1,8 +1,7 @@
 const std = @import("std");
 const zgpu = @import("zgpu");
 
-const ShaderSource = "const BinaryAlpha = false;\n" ++ @embedFile("shaders/generate_mipmaps.wgsl");
-const ShaderSourceBinaryAlpha = "const BinaryAlpha = true;\n" ++ @embedFile("shaders/generate_mipmaps.wgsl");
+const shader = @import("shader.zig");
 
 var initialized = false;
 var pipeline_handle: zgpu.ComputePipelineHandle = .{};
@@ -22,9 +21,9 @@ pub fn init(gctx: *zgpu.GraphicsContext) void {
         const pipeline_layout = gctx.createPipelineLayout(&.{bind_group_layout_handle});
         defer gctx.releaseResource(pipeline_layout);
 
-        const cs_module = zgpu.createWgslShaderModule(gctx.device, ShaderSource, "generate_mipmaps");
+        const cs_module = zgpu.createWgslShaderModule(gctx.device, shader.load("const BinaryAlpha = false;", .{"generate_mipmaps"}), "generate_mipmaps");
         defer cs_module.release();
-        const binary_alpha_cs_module = zgpu.createWgslShaderModule(gctx.device, ShaderSourceBinaryAlpha, "generate_mipmaps");
+        const binary_alpha_cs_module = zgpu.createWgslShaderModule(gctx.device, shader.load("const BinaryAlpha = true;", .{"generate_mipmaps"}), "generate_mipmaps");
         defer binary_alpha_cs_module.release();
 
         pipeline_handle = gctx.createComputePipeline(pipeline_layout, .{

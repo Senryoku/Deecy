@@ -331,19 +331,48 @@ const StripMetadata = packed struct(u128) {
     area1_instructions: VertexTextureInfo = .invalid,
 };
 
-const wgsl_vs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/position_clip.wgsl") ++ @embedFile("./shaders/vs.wgsl");
-const wgsl_fs = "const Opaque = true;\n" ++ @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/fragment_color.wgsl") ++ @embedFile("./shaders/fs.wgsl");
-const wgsl_presort_fs = "const Opaque = false;\n" ++ @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/fragment_color.wgsl") ++ @embedFile("./shaders/fs.wgsl");
-const wgsl_translucent_fs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/oit_structs.wgsl") ++ @embedFile("./shaders/fragment_color.wgsl") ++ @embedFile("./shaders/oit_draw_fs.wgsl");
-const wgsl_modvol_translucent_fs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/morton.wgsl") ++ @embedFile("./shaders/tmv_structs.wgsl") ++ @embedFile("./shaders/modifier_volume_translucent_fs.wgsl");
-const wgsl_modvol_merge_cs = @embedFile("./shaders/morton.wgsl") ++ @embedFile("./shaders/tmv_structs.wgsl") ++ @embedFile("./shaders/modifier_volume_translucent_merge.wgsl");
-const wgsl_blend_cs = @embedFile("./shaders/oit_structs.wgsl") ++ @embedFile("./shaders/morton.wgsl") ++ @embedFile("./shaders/tmv_structs.wgsl") ++ @embedFile("./shaders/oit_blend_cs.wgsl");
-const wgsl_modifier_volume_vs = @embedFile("./shaders/position_clip.wgsl") ++ @embedFile("./shaders/modifier_volume_vs.wgsl");
-const wgsl_modifier_volume_fs = @embedFile("./shaders/modifier_volume_fs.wgsl");
-const wgsl_modifier_volume_apply_fs = @embedFile("./shaders/modifier_volume_apply_fs.wgsl");
-const blit_vs = @embedFile("./shaders/blit_vs.wgsl");
-const blit_fs = @embedFile("./shaders/blit_fs.wgsl");
-const blit_opaque_fs = @embedFile("./shaders/blit_opaque_fs.wgsl");
+const shader = @import("shader.zig");
+const wgsl = struct {
+    fn vs() []const u8 {
+        return shader.load("", .{ "uniforms", "position_clip", "vs" });
+    }
+    fn fs() []const u8 {
+        return shader.load("const Opaque = true;", .{ "uniforms", "fragment_color", "fs" });
+    }
+    fn presort_fs() []const u8 {
+        return shader.load("const Opaque = false;", .{ "uniforms", "fragment_color", "fs" });
+    }
+    fn translucent_fs() []const u8 {
+        return shader.load("", .{ "uniforms", "morton", "tmv_structs", "oit_structs", "fragment_color", "oit_draw_fs" });
+    }
+    fn modvol_translucent_fs() []const u8 {
+        return shader.load("", .{ "uniforms", "morton", "tmv_structs", "modifier_volume_translucent_fs" });
+    }
+    fn modvol_merge_cs() []const u8 {
+        return shader.load("", .{ "morton", "tmv_structs", "modifier_volume_translucent_merge" });
+    }
+    fn blend_cs() []const u8 {
+        return shader.load("", .{ "oit_structs", "morton", "tmv_structs", "oit_blend_cs" });
+    }
+    fn modifier_volume_vs() []const u8 {
+        return shader.load("", .{ "position_clip", "modifier_volume_vs" });
+    }
+    fn modifier_volume_fs() []const u8 {
+        return shader.load("", .{"modifier_volume_fs"});
+    }
+    fn modifier_volume_apply_fs() []const u8 {
+        return shader.load("", .{"modifier_volume_apply_fs"});
+    }
+    fn blit_vs() []const u8 {
+        return shader.load("", .{"blit_vs"});
+    }
+    fn blit_fs() []const u8 {
+        return shader.load("", .{"blit_fs"});
+    }
+    fn blit_opaque_fs() []const u8 {
+        return shader.load("", .{"blit_opaque_fs"});
+    }
+};
 
 const TextureStatus = enum {
     Invalid, // Has never been written to.
@@ -789,8 +818,7 @@ pub const Renderer = struct {
         delay_render: bool = false,
     };
 
-    const MaxFragmentsPerPixel = 24;
-    const OITLinkedListNodeSize = 5 * 4;
+    const OITLinkedListNodeSize = 4 * 4;
     const MaxVolumeFragmentsPerPixel = 16;
     const VolumeFragmentSize = 2 * @sizeOf(u32);
     const MaxVolumesPerPixel = 8;
@@ -1048,7 +1076,7 @@ pub const Renderer = struct {
         const blit_bind_group_layout = gctx.createBindGroupLayout(&BlitBindGroupLayout, .{ .label = "Blit Bind Group Layout" });
         defer gctx.releaseResource(blit_bind_group_layout);
 
-        const blit_vs_module = zgpu.createWgslShaderModule(gctx.device, blit_vs, "blit_vs");
+        const blit_vs_module = zgpu.createWgslShaderModule(gctx.device, wgsl.blit_vs(), "blit_vs");
         defer blit_vs_module.release();
 
         const blit_vertex_attributes = [_]wgpu.VertexAttribute{
@@ -1142,11 +1170,11 @@ pub const Renderer = struct {
             .size = 64 * 4096 * @sizeOf([4]f32), // FIXME: Arbitrary size for testing
         });
 
-        const opaque_vertex_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_vs, "vs");
+        const opaque_vertex_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl.vs(), "vs");
 
         // Translucent pipeline
 
-        const translucent_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_translucent_fs, "fs");
+        const translucent_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl.translucent_fs(), "fs");
         defer translucent_fragment_shader_module.release();
 
         const translucent_bind_group_layout = gctx.createBindGroupLayout(&.{
@@ -1154,6 +1182,7 @@ pub const Renderer = struct {
             zgpu.bufferEntry(1, .{ .fragment = true }, .storage, false, 0),
             zgpu.bufferEntry(2, .{ .fragment = true }, .storage, false, 0),
             zgpu.textureEntry(3, .{ .fragment = true }, .depth, .tvdim_2d, false),
+            zgpu.bufferEntry(4, .{ .fragment = true }, .storage, false, 0),
         }, .{ .label = "TranslucentBindGroupLayout" });
 
         const translucent_modvol_bind_group_layout = gctx.createBindGroupLayout(&.{
@@ -1164,7 +1193,7 @@ pub const Renderer = struct {
             zgpu.textureEntry(4, .{ .fragment = true }, .depth, .tvdim_2d, false),
         }, .{ .label = "TranslucentModVolBindGroupLayout" });
 
-        const modifier_volume_vertex_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_modifier_volume_vs, "modvol_vs");
+        const modifier_volume_vertex_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl.modifier_volume_vs(), "modvol_vs");
         defer modifier_volume_vertex_shader_module.release();
         const modifier_volume_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.bufferEntry(0, .{ .vertex = true }, .uniform, true, 0),
@@ -1217,7 +1246,7 @@ pub const Renderer = struct {
 
         // Translucent fragment blending pipeline
 
-        const blend_compute_module = zgpu.createWgslShaderModule(gctx.device, wgsl_blend_cs, null);
+        const blend_compute_module = zgpu.createWgslShaderModule(gctx.device, wgsl.blend_cs(), null);
         defer blend_compute_module.release();
 
         const blend_bind_group_layout = gctx.createBindGroupLayout(&.{
@@ -1226,7 +1255,6 @@ pub const Renderer = struct {
             zgpu.bufferEntry(2, .{ .compute = true }, .storage, false, 0),
             zgpu.textureEntry(3, .{ .compute = true }, .float, .tvdim_2d, false),
             zgpu.storageTextureEntry(4, .{ .compute = true }, .write_only, .bgra8_unorm, .tvdim_2d),
-            zgpu.bufferEntry(5, .{ .compute = true }, .storage, false, 0),
         }, .{ .label = "BlendBindGroupLayout" });
 
         const blend_pipeline_layout = gctx.createPipelineLayout(&.{blend_bind_group_layout});
@@ -1242,7 +1270,7 @@ pub const Renderer = struct {
         // Implemented using a stencil buffer and the shadow volume algorithm.
         // This first pipeline takes the previous depth buffer and the modifier volume to generate the stencil buffer.
 
-        const modifier_volume_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_modifier_volume_fs, "fs");
+        const modifier_volume_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl.modifier_volume_fs(), "fs");
         defer modifier_volume_fragment_shader_module.release();
 
         const modifier_volume_pipeline_layout = gctx.createPipelineLayout(&.{modifier_volume_group_layout});
@@ -1391,8 +1419,8 @@ pub const Renderer = struct {
 
             .opaque_pipeline_layout = gctx.createPipelineLayout(&.{ textures_bind_group_layout, sampler_bind_group_layout }),
             .opaque_vertex_shader_module = opaque_vertex_shader_module,
-            .opaque_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_fs, "fs"),
-            .pre_sort_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_presort_fs, "fs"),
+            .opaque_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl.fs(), "fs"),
+            .pre_sort_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl.presort_fs(), "fs"),
 
             .modifier_volume_bind_group = modifier_volume_bind_group,
             .vertex_buffer = vertex_buffer,
@@ -1429,7 +1457,7 @@ pub const Renderer = struct {
         MipMap.init(gctx);
         // Blit pipeline
         {
-            const blit_fs_module = zgpu.createWgslShaderModule(gctx.device, blit_fs, "blit_fs");
+            const blit_fs_module = zgpu.createWgslShaderModule(gctx.device, wgsl.blit_fs(), "blit_fs");
             defer blit_fs_module.release();
             const blit_pipeline_layout = gctx.createPipelineLayout(&.{blit_bind_group_layout});
             defer gctx.releaseResource(blit_pipeline_layout);
@@ -1461,7 +1489,7 @@ pub const Renderer = struct {
             };
             _ = try gctx.createRenderPipelineAsync(allocator, blit_pipeline_layout, pipeline_descriptor, &renderer.blit_pipeline);
 
-            const blit_opaque_fs_module = zgpu.createWgslShaderModule(gctx.device, blit_opaque_fs, "blit_opaque_fs");
+            const blit_opaque_fs_module = zgpu.createWgslShaderModule(gctx.device, wgsl.blit_opaque_fs(), "blit_opaque_fs");
             defer blit_opaque_fs_module.release();
             const opaque_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
                 .vertex = .{
@@ -1498,7 +1526,7 @@ pub const Renderer = struct {
 
         // Modifier Volume Apply pipeline - Use the stencil from the previous pass to apply modifier volume effects.
         {
-            const mv_apply_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_modifier_volume_apply_fs, "fs");
+            const mv_apply_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl.modifier_volume_apply_fs(), "fs");
             defer mv_apply_fragment_shader_module.release();
 
             const mv_apply_bind_group_layout = gctx.createBindGroupLayout(&ModifierVolumeApplyBindGroupLayout, .{ .label = "ModifierVolumeApplyBindGroupLayout" });
@@ -1550,7 +1578,7 @@ pub const Renderer = struct {
         }
         // Translucent modifier volume pipeline
         {
-            const translucent_modvol_fs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_modvol_translucent_fs, "translucent_modvol_fs");
+            const translucent_modvol_fs_module = zgpu.createWgslShaderModule(gctx.device, wgsl.modvol_translucent_fs(), "translucent_modvol_fs");
             defer translucent_modvol_fs_module.release();
 
             const translucent_modvol_pipeline_layout = gctx.createPipelineLayout(&.{
@@ -1601,7 +1629,7 @@ pub const Renderer = struct {
         // Translucent modifier volume merge pipeline
         {
             const translucent_modvol_merge_pipeline_layout = gctx.createPipelineLayout(&.{translucent_modvol_merge_bind_group_layout});
-            const translucent_modvol_merge_compute_module = zgpu.createWgslShaderModule(gctx.device, wgsl_modvol_merge_cs, null);
+            const translucent_modvol_merge_compute_module = zgpu.createWgslShaderModule(gctx.device, wgsl.modvol_merge_cs(), null);
             defer translucent_modvol_merge_compute_module.release();
             const translucent_modvol_merge_pipeline_descriptor = wgpu.ComputePipelineDescriptor{
                 .compute = .{
@@ -4431,6 +4459,7 @@ pub const Renderer = struct {
             .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = self.get_linked_list_heads_size() },
             .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_fragments_list_size() },
             .{ .binding = 3, .texture_view_handle = self.depth.depth_only_view },
+            .{ .binding = 4, .buffer_handle = self.translucent_modvol_volumes_buffer, .offset = 0, .size = self.translucent_modvol_dimensions().volumes_buffer_size },
         });
     }
 
@@ -4459,7 +4488,6 @@ pub const Renderer = struct {
             .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_fragments_list_size() },
             .{ .binding = 3, .texture_view_handle = self.resized_framebuffer_copy.view },
             .{ .binding = 4, .texture_view_handle = self.resized_framebuffer.view },
-            .{ .binding = 5, .buffer_handle = self.translucent_modvol_volumes_buffer, .offset = 0, .size = self.translucent_modvol_dimensions().volumes_buffer_size },
         });
         self.blend_bind_group_render_to_texture = self._gctx.createBindGroup(self.blend_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(OITUniforms) },
@@ -4467,7 +4495,6 @@ pub const Renderer = struct {
             .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_fragments_list_size() },
             .{ .binding = 3, .texture_view_handle = self.resized_framebuffer_copy.view },
             .{ .binding = 4, .texture_view_handle = self.resized_render_to_texture_target.view },
-            .{ .binding = 5, .buffer_handle = self.translucent_modvol_volumes_buffer, .offset = 0, .size = self.translucent_modvol_dimensions().volumes_buffer_size },
         });
     }
 

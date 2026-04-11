@@ -10,7 +10,6 @@ struct Heads {
 @group(0) @binding(2) var<storage, read_write> linked_list: LinkedList;
 @group(0) @binding(3) var opaque_texture: texture_2d<f32>; // FIXME: Should be the same as output_texture, but WGPU doesn't support reading from storage textures.
 @group(0) @binding(4) var output_texture: texture_storage_2d<bgra8unorm, write>;
-@group(0) @binding(5) var<storage, read_write> modvols: array<VolumesInterfaces>;
 
 fn get_blend_factor(factor: u32, src_a: f32, dst_a: f32) -> f32 {
 	switch(factor & 7) {
@@ -46,8 +45,7 @@ const MaxFragments = 24u;
 struct Fragment {
 	depth: f32,
 	index_and_blend_modes: u32,
-	color_area0: u32,
-	color_area1: u32,
+	color: u32,
 }
 
 var<workgroup> fragments: array<array<Fragment, MaxFragments>, 8 * 4>;
@@ -55,7 +53,7 @@ var<workgroup> fragments: array<array<Fragment, MaxFragments>, 8 * 4>;
 // Returns true if a should be blended before b (is farther away).
 fn order(a: Fragment, b: Fragment) -> bool {
 	//                           If the depths are equal, use the draw order (vertex index) as a tie breaker.
-	return (a.depth < b.depth || (a.depth == b.depth && (a.index_and_blend_modes >> 12) < (b.index_and_blend_modes >> 12)));
+	return (a.depth < b.depth || (a.depth == b.depth && (a.index_and_blend_modes >> 6) < (b.index_and_blend_modes >> 6)));
 }
 
 fn blend(src: vec4<f32>, dst: vec4<f32>, blend_modes: u32) -> vec4<f32> {
@@ -79,8 +77,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(local_invo
 		fragments[local_idx][0] = Fragment(
 			fragment.depth,
 			fragment.index_and_blend_modes,
-			fragment.color_area0,
-			fragment.color_area1,
+			fragment.color,
 		);
 		element_index = linked_list.data[element_index].next;
 
@@ -93,8 +90,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(local_invo
 			let to_insert = Fragment(
 				fragment.depth,
 				fragment.index_and_blend_modes,
-				fragment.color_area0,
-				fragment.color_area1,
+				fragment.color,
 			);
 
 			var i = layer_count;
@@ -117,16 +113,14 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(local_invo
 			let to_insert = Fragment(
 				fragment.depth,
 				fragment.index_and_blend_modes,
-				fragment.color_area0,
-				fragment.color_area1,
+				fragment.color,
 			);
 
 			// Blend the current furthest fragment immediately.
 			// We loose a tiny bit of accuracy, but this avoids completely discarding fragments, while keeping memory usage constrained, 
 			// and giving priority to the MaxFragments closest fragments to be properly blended.
 			let current_is_furthest = order(to_insert, fragments[local_idx][0]);
-			// NOTE: This doesn't respect areas for simplicity, using Area 0 values.
-			let src = unpack4x8unorm(select(fragments[local_idx][0].color_area0, to_insert.color_area0, current_is_furthest));
+			let src = unpack4x8unorm(select(fragments[local_idx][0].color, to_insert.color, current_is_furthest));
 			let blend_modes = extractBits(select(fragments[local_idx][0].index_and_blend_modes, to_insert.index_and_blend_modes, current_is_furthest), 0u, 6);
 			color = blend(src, color, blend_modes);
 
@@ -141,26 +135,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(local_invo
 			}
 		}
 
-		var depth_interfaces_count = 0u;
-		while(depth_interfaces_count < MaxVolumesInterfaces && modvols[heads_index].interfaces[depth_interfaces_count] >= 0.0) {
-			depth_interfaces_count++;
-		}
-
-		var curr_depth_interface = 0u;
-		var use_area1 = false; // Start in area0
-
 		// Blend the translucent fragments
 		for (var i = 0u; i < layer_count; i++) {
 			let fragment = fragments[local_idx][i];
-
-			while curr_depth_interface < depth_interfaces_count && modvols[heads_index].interfaces[curr_depth_interface] < fragment.depth {
-				// Crossed the interface between area0 and area1.
-				use_area1 = !use_area1;
-				curr_depth_interface++;
-			}
-
-			let src = unpack4x8unorm(select(fragment.color_area0, fragment.color_area1, use_area1));
-			let blend_modes = extractBits(fragment.index_and_blend_modes, select(0u, 6u, use_area1), 6);
+			let src = unpack4x8unorm(fragment.color);
+			let blend_modes = extractBits(fragment.index_and_blend_modes, 0u, 6);
 			color = blend(src, color, blend_modes);
 		}
 
@@ -169,8 +148,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(local_invo
 
 	// Reset the heads buffer for the next pass.
 	heads.data[heads_index] = 0xFFFFFFFFu;
-	// Reset modifier volumes for the next pass.
-	modvols[heads_index].interfaces[0] = -1.0;
 	if all(global_id == vec3<u32>(0, 0, 0)) {
 		heads.fragment_count = 0;
 	}
