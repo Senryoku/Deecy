@@ -185,7 +185,7 @@ packet_command_idx: u8 = 0,
 packet_command: [12]u8 = @splat(0),
 
 audio_state: struct {
-    mutex: std.Thread.Mutex = .{}, // NOTE: Should not be needed anymore.
+    mutex: std.Io.Mutex = .init, // NOTE: Should not be needed anymore.
 
     status: CDAudioStatus = .NoInfo,
 
@@ -220,8 +220,8 @@ audio_state: struct {
     }
 
     pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(std.Options.debug_io);
+        defer self.mutex.unlock(std.Options.debug_io);
 
         try reader.readSliceAll(std.mem.asBytes(&self.status));
         try reader.readSliceAll(std.mem.asBytes(&self.start_addr));
@@ -283,8 +283,8 @@ pub fn deinit(self: *@This()) void {
 }
 
 pub fn get_cdda_samples(self: *@This()) [2]i16 {
-    self.audio_state.mutex.lock();
-    defer self.audio_state.mutex.unlock();
+    self.audio_state.mutex.lockUncancelable(std.Options.debug_io);
+    defer self.audio_state.mutex.unlock(std.Options.debug_io);
 
     if (self.audio_state.status != .Playing) return .{ 0, 0 };
 
@@ -859,8 +859,8 @@ fn req_ses(self: *@This()) !void {
 fn cd_play(self: *@This()) !void {
     gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand CDPlay: {X}"), .{self.packet_command});
 
-    self.audio_state.mutex.lock();
-    defer self.audio_state.mutex.unlock();
+    self.audio_state.mutex.lockUncancelable(std.Options.debug_io);
+    defer self.audio_state.mutex.unlock(std.Options.debug_io);
 
     const parameter_type = self.packet_command[1] & 0x7;
 

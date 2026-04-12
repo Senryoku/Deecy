@@ -2,7 +2,7 @@ const std = @import("std");
 
 fn get_git_commit(b: *std.Build) []const u8 {
     var code: u8 = undefined;
-    const commit = b.runAllowFail(&.{ "git", "rev-parse", "--short", "HEAD" }, &code, .Inherit) catch {
+    const commit = b.runAllowFail(&.{ "git", "rev-parse", "--short", "HEAD" }, &code, .inherit) catch {
         return "Unknown Commit";
     };
     return std.mem.trimEnd(u8, commit, "\r\n");
@@ -92,7 +92,7 @@ pub fn build(b: *std.Build) !void {
         .root_module = deecy_module,
         .use_llvm = true, // NOTE: zgpu doesn't work correctly with the self-hosted backend (zig 0.15.1), leading to a crash in Linux in debug mode. Forcing LLVM use fixes the issue.
     });
-    exe.addWin32ResourceFile(.{ .file = b.path("src/assets/resource.rc") });
+    exe.root_module.addWin32ResourceFile(.{ .file = b.path("src/assets/resource.rc") });
     if (target.result.os.tag == .windows and no_console)
         exe.subsystem = .Windows;
     if (optimize == .ReleaseFast) {

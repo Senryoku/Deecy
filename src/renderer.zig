@@ -1029,8 +1029,8 @@ pub const Renderer = struct {
     }
 
     pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, gctx_queue_mutex: *std.Thread.Mutex, config: *const Configuration) !*Renderer {
-        const start = std.time.milliTimestamp();
-        defer log.info("Renderer initialized in {d}ms", .{std.time.milliTimestamp() - start});
+        const start = std.Io.Clock.real.now(std.Options.debug_io);
+        defer log.info("Renderer initialized in {f}", .{start.durationTo(std.Io.Clock.real.now(std.Options.debug_io))});
 
         // Writes to texture all rely on that.
         std.debug.assert(zgpu.GraphicsContext.surface_texture_format == .bgra8_unorm);
@@ -4015,7 +4015,7 @@ pub const Renderer = struct {
             return pl;
 
         log.info("Creating Pipeline: {f}", .{key});
-        const start = std.time.milliTimestamp();
+        const start = std.Io.Clock.real.now(std.Options.debug_io);
 
         const color_targets = [_]wgpu.ColorTargetState{
             .{
@@ -4074,7 +4074,7 @@ pub const Renderer = struct {
                 return ptr.*;
             },
             else => {
-                defer log.info("Pipeline created in {d}ms", .{std.time.milliTimestamp() - start});
+                defer log.info("Pipeline created in {f}", .{start.durationTo(std.Io.Clock.real.now(std.Options.debug_io))});
                 const pl = self._gctx.createRenderPipeline(self.opaque_pipeline_layout, pipeline_descriptor);
 
                 if (!self._gctx.isResourceValid(pl)) {

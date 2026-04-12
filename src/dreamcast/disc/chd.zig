@@ -591,10 +591,8 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
 
     switch (compression) {
         .CD_LZMA => {
-            // FIXME: LZMA decompression has not been updated to use the new Reader API
-            var fixed_stream = std.io.fixedBufferStream(self._file_view[self.map[hunk].offset + header_bytes ..][0..compressed_length]);
-            const file_reader = fixed_stream.reader();
-            var decompressor = try std.compress.lzma.Decompress(@TypeOf(file_reader)).init(self._allocator, file_reader, .{
+            var compressed = std.Io.Reader.fixed(self._file_view[self.map[hunk].offset + header_bytes ..][0..compressed_length]);
+            var decompressor = try std.compress.lzma.Decompress.initParams(&compressed, self._allocator, &.{}, .{
                 // There is no LZMA headers and these parameters are implicit...
                 // FIXME: They also depend on hunk_size, these are the parameters for hunk_size = 0x4C80.
                 .properties = .{
@@ -604,17 +602,17 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
                 },
                 .dict_size = 0x6000,
                 .unpacked_size = sectors_per_hunk * CDMaxSectorBytes,
-            }, null);
+            }, std.math.maxInt(u32));
             defer decompressor.deinit();
-            const bytes = try decompressor.read(dest[0 .. sectors_per_hunk * CDMaxSectorBytes]);
+            try decompressor.reader.readSliceAll(dest[0 .. sectors_per_hunk * CDMaxSectorBytes]);
             // This probably won't work without subcodes/raw sector data
             // if (self.map[hunk].crc != crc16(dest[0..bytes]))
             //     return error.InvalidCRC;
-            return bytes;
+            return sectors_per_hunk * CDMaxSectorBytes;
         },
         .CD_Zlib => {
-            var file_reader = std.io.Reader.fixed(self._file_view[self.map[hunk].offset + header_bytes ..][0..compressed_length]);
-            var writer = std.io.Writer.fixed(dest[0 .. sectors_per_hunk * CDMaxSectorBytes]);
+            var file_reader = std.Io.Reader.fixed(self._file_view[self.map[hunk].offset + header_bytes ..][0..compressed_length]);
+            var writer = std.Io.Writer.fixed(dest[0 .. sectors_per_hunk * CDMaxSectorBytes]);
             var decompress: std.compress.flate.Decompress = .init(&file_reader, .raw, &.{});
             const bytes = try decompress.reader.streamRemaining(&writer);
             // This probably won't work without subcodes/raw sector data
@@ -623,8 +621,8 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
             return bytes;
         },
         .CD_Zstd => {
-            var reader = std.io.Reader.fixed(self._file_view[self.map[hunk].offset + header_bytes ..][0..compressed_length]);
-            var writer = std.io.Writer.fixed(dest[0 .. sectors_per_hunk * CDMaxSectorBytes]);
+            var reader = std.Io.Reader.fixed(self._file_view[self.map[hunk].offset + header_bytes ..][0..compressed_length]);
+            var writer = std.Io.Writer.fixed(dest[0 .. sectors_per_hunk * CDMaxSectorBytes]);
             var decompress = std.compress.zstd.Decompress.init(&reader, &.{}, .{});
             const bytes = try decompress.reader.streamRemaining(&writer);
             return bytes;
@@ -632,7 +630,7 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
         .CD_Flac => {
             const bytes = sectors_per_hunk * CDMaxSectorBytes;
             const num_samples = bytes / @sizeOf(i16);
-            var flac_reader = std.io.Reader.fixed(self._file_view[self.map[hunk].offset..]);
+            var flac_reader = std.Io.Reader.fixed(self._file_view[self.map[hunk].offset..]);
             try chd_flac.decode_frames(i16, self._allocator, &flac_reader, @as([*]i16, @ptrCast(@alignCast(dest.ptr)))[0 .. sectors_per_hunk * CDMaxSectorBytes / 2], num_samples, CDMaxSectorBytes, 2, 16);
             return bytes;
         },

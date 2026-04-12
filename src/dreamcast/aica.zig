@@ -1011,7 +1011,7 @@ pub const AICA = struct {
     }
 
     pub fn timestamp() u32 {
-        const utc = std.time.timestamp();
+        const utc = std.Io.Clock.real.now(std.Options.debug_io).toMilliseconds();
         // TODO: Handle timezone?
         return @intCast(utc + (20 * 365 + 5) * 24 * 60 * 60); // Dreamcast epoch is January 1, 1950 00:00
     }

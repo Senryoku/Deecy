@@ -1514,7 +1514,7 @@ fn draw_strip(draw_list: zgui.DrawList, min: [2]f32, scale: [2]f32, display_list
         const parameters = display_list.vertex_parameters.items;
         const strip = &display_list.vertex_strips.items[index];
         switch (strip.global_parameters.polygon) {
-            .Sprite => |_| {
+            .Sprite => {
                 for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count) |i| {
                     const pos = parameters[i].sprite_positions();
                     draw_list.addTriangle(.{

@@ -18,7 +18,9 @@ pub fn Partial(comptime T: type) type {
     const info = @typeInfo(T);
     switch (info) {
         .@"struct" => |s| {
-            comptime var fields: []const std.builtin.Type.StructField = &[_]std.builtin.Type.StructField{};
+            comptime var field_names: []const []const u8 = &[_][]const u8{};
+            comptime var field_types: []const type = &[_]type{};
+            comptime var field_attrs: []const std.builtin.Type.StructField.Attributes = &[_]std.builtin.Type.StructField.Attributes{};
             for (s.fields) |field| {
                 if (field.is_comptime) @compileError("Partial type cannot contain comptime members");
                 const field_type = switch (@typeInfo(field.type)) {
@@ -26,22 +28,21 @@ pub fn Partial(comptime T: type) type {
                     else => ?field.type,
                 };
                 const default_value: field_type = null;
-                const optional_field = [_]std.builtin.Type.StructField{.{
-                    .alignment = field.alignment,
-                    .default_value_ptr = @ptrCast(@alignCast(&default_value)),
-                    .is_comptime = false,
-                    .name = field.name,
-                    .type = field_type,
+                field_names = field_names ++ &[1][]const u8{field.name};
+                field_types = field_types ++ &[1]type{field_type};
+                field_attrs = field_attrs ++ &[1]std.builtin.Type.StructField.Attributes{.{
+                    .@"comptime" = field.is_comptime,
+                    .@"align" = field.alignment,
+                    .default_value_ptr = &default_value,
                 }};
-                fields = fields ++ optional_field;
             }
-            return @Type(.{ .@"struct" = .{
-                .backing_integer = s.backing_integer,
-                .decls = &[_]std.builtin.Type.Declaration{},
-                .fields = fields,
-                .is_tuple = s.is_tuple,
-                .layout = s.layout,
-            } });
+            return @Struct(
+                s.layout,
+                s.backing_integer,
+                field_names,
+                field_types[0..field_names.len],
+                field_attrs[0..field_names.len],
+            );
         },
         else => @compileError("Partial type must be a struct"),
     }

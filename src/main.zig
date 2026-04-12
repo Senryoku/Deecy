@@ -56,9 +56,10 @@ pub extern "kernel32" fn AttachConsole(dwProcessId: std.os.windows.DWORD) callco
 const ATTACH_PARENT_PROCESS = ~@as(std.os.windows.DWORD, 0);
 
 pub fn main() !void {
+    const io = std.Options.debug_io; // FIXME
     defer custom_log.deinit();
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     var allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
@@ -72,7 +73,7 @@ pub fn main() !void {
             _ = AttachConsole(ATTACH_PARENT_PROCESS);
     }
 
-    var d = try Deecy.create(allocator);
+    var d = try Deecy.create(allocator, io);
     defer d.destroy();
     var dc = d.dc;
 

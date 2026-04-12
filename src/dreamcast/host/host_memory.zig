@@ -3,7 +3,11 @@ const builtin = @import("builtin");
 
 pub fn allocate_executable(allocator: std.mem.Allocator, size: usize) ![]align(std.heap.page_size_min) u8 {
     const r = try allocator.alignedAlloc(u8, .fromByteUnits(std.heap.page_size_min), size);
-    try std.posix.mprotect(r, std.posix.PROT.READ | std.posix.PROT.WRITE | std.posix.PROT.EXEC);
+    switch (std.posix.errno(std.posix.system.mprotect(r.ptr, size, .{ .READ = true, .WRITE = true, .EXEC = true }))) {
+        .SUCCESS => {},
+        .NOMEM => return error.OutOfMemory,
+        else => |err| return std.posix.unexpectedErrno(err),
+    }
     return r;
 }
 

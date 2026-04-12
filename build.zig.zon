@@ -2,40 +2,40 @@
     .name = .Deecy,
     .fingerprint = 0x4ebcf6922b758411,
     .version = "0.6.1",
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.16.0",
     .paths = .{""},
     .dependencies = .{
         .zgpu = .{
-            .url = "git+https://github.com/Senryoku/zgpu.git#e1baa7a15315a8de055f56c041781f74ab08a133",
-            .hash = "zgpu-0.14.0-dev-nqFT5AIe0wX8HtMZuMpBSluTyXjjGdXnbWpN9t7FmkV_",
+            .url = "git+https://github.com/Senryoku/zgpu.git#083473666cd1f42ffd704a8ee1d52ab83385487d",
+            .hash = "zgpu-0.14.0-dev-nqFT5I0f0wW08IktuMBNzmcLMKBrX6rt-vkiAVd9daDm",
         },
         .zgui = .{
-            .url = "git+https://github.com/Senryoku/zgui.git#b90342aaf5075f93e7de816f88b59c10220af5f3",
-            .hash = "zgui-0.6.0-dev--L6sZH1PbQA8JywlxlV_B7I-2kSjUslmPbi4mWFEKUzf",
+            .url = "git+https://github.com/Senryoku/zgui.git#01a0ade04d5f8ebd7bd8ffb92367708b4605800e",
+            .hash = "zgui-0.6.0-dev--L6sZCxTbQBJv9RBnqBjuL6m-wl6GfL_LI-Z1jHCcbzL",
         },
         .zaudio = .{
-            .url = "git+https://github.com/Senryoku/zaudio.git#bc37245a1a0b8a361f7c29c43d140744eb875b31",
-            .hash = "zaudio-0.11.0-dev-_M-91pBlPwDkibUGXKZxd_I_kEIUMJp6CfhwlX4sBEp-",
+            .url = "git+https://github.com/Senryoku/zaudio.git#170f2188a7a7893f87bcd4811e911cffe2b3d30f",
+            .hash = "zaudio-0.11.0-dev-_M-91uVnPwAMzQAqxamwkJSzBdaqsV1LylxcivFV8__Y",
         },
         .system_sdk = .{
             .url = "git+https://github.com/zig-gamedev/system_sdk#c0dbf11cdc17da5904ea8a17eadc54dee26567ec",
             .hash = "system_sdk-0.3.0-dev-alwUNnYaaAJAtIdE2fg4NQfDqEKs7QCXy_qYukAOBfmF",
         },
         .zpool = .{
-            .url = "git+https://github.com/zig-gamedev/zpool#7829cf02f78e8c39e19b802ccb47ed44037299c2",
-            .hash = "zpool-0.11.0-dev-bG692QtEAQCyqBnzSBJbJlY0-a_3v1YcjFTGmg0VBjOc",
+            .url = "git+https://github.com/kcbanner/zpool#6bb259eaea37c0fdbb1e7da46ba5d40da3b46837",
+            .hash = "zpool-0.11.0-dev-bG692X9GAQC9w34IGA1ftrB1zgzRKAdrJWyphqBI72Li",
         },
         .arm7 = .{
             .url = "git+https://github.com/Senryoku/arm7.git#e77a037da71fe03df25fe4a3fbfe5266a234c4f2",
             .hash = "arm7-0.1.0-al93rENuAQArXkXNJ3iQe1rEXXrg6eIYtwQxXHsQl8pb",
         },
         .ziglz4 = .{
-            .url = "git+https://github.com/Senryoku/zig-lz4#75df19f05ead46824c92f1cb81241b82ef8769b4",
-            .hash = "ziglz4-0.1.1-HIQ645RdAAAId9ddADLegH1cVrHNG13Dl-C6GrWVbqOU",
+            .url = "git+https://github.com/Senryoku/zig-lz4#fa8dca81f459be76fdaf6b99f98d2005101856fc",
+            .hash = "ziglz4-0.1.1-HIQ649pdAAAM6nU1fTGRWz-cdyoIcT-o8lDH9p78Ed0b",
         },
         .nfdzig = .{
-            .url = "git+https://github.com/Senryoku/nfd-zig.git#c276c2ef9b18fab5ac686f8ebf95a6fc558b972e",
-            .hash = "nfdzig-0.1.0-11fxvN6IBgD5rvvfjrw1wPqibMsbUJ-h2ZcGR6FOEvrm",
+            .url = "git+https://github.com/Senryoku/nfd-zig.git#fa0f5cceab3908fee36d230a05663723cf4b477c",
+            .hash = "nfdzig-0.1.0-11fxvOqIBgBAU_8eTMyrVkaSPZYIk_ViZPwWjGa0vIZN",
         },
         .zglfw = .{
             .url = "git+https://github.com/Senryoku/zglfw.git#f30d5e926d7bb4449cca926092d3851f52edf937",

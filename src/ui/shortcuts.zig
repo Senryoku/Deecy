@@ -78,16 +78,16 @@ pub const Action = struct {
 
 shortcuts: std.AutoHashMap(Key, Action),
 
-pub fn init(allocator: std.mem.Allocator) !@This() {
+pub fn init(allocator: std.mem.Allocator, io: std.Io) !@This() {
     var self = @This(){
         .shortcuts = .init(allocator),
     };
-    try self.deserialize(allocator);
+    try self.deserialize(allocator, io);
     return self;
 }
 
-pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-    self.serialize(allocator) catch |err| log.err("Failed to serialize shortcuts: {t}", .{err});
+pub fn deinit(self: *@This(), allocator: std.mem.Allocator, io: std.Io) void {
+    self.serialize(allocator, io) catch |err| log.err("Failed to serialize shortcuts: {t}", .{err});
     self.shortcuts.deinit();
 }
 
@@ -135,7 +135,7 @@ const SerializedShortcut = struct {
     key: Key,
 };
 
-fn serialize(self: @This(), allocator: std.mem.Allocator) !void {
+fn serialize(self: @This(), allocator: std.mem.Allocator, io: std.Io) !void {
     if (self.shortcuts.count() == 0) return;
 
     var list: std.ArrayList(SerializedShortcut) = .empty;
@@ -148,21 +148,21 @@ fn serialize(self: @This(), allocator: std.mem.Allocator) !void {
     const config_path = try get_config_path(allocator);
     defer allocator.free(config_path);
 
-    var config_file = try std.fs.cwd().createFile(config_path, .{});
+    var config_file = try std.Io.Dir.cwd().createFile(io, config_path, .{});
     defer config_file.close();
 
     const buffer = try allocator.alloc(u8, 8192);
     defer allocator.free(buffer);
-    var writer = config_file.writer(buffer);
+    var writer = config_file.writer(io, buffer);
     try std.zon.stringify.serialize(list.items, .{}, &writer.interface);
     try writer.end();
 }
 
-fn deserialize(self: *@This(), allocator: std.mem.Allocator) !void {
+fn deserialize(self: *@This(), allocator: std.mem.Allocator, io: std.Io) !void {
     const config_path = try get_config_path(allocator);
     defer allocator.free(config_path);
 
-    var file = std.fs.cwd().openFile(config_path, .{}) catch |err| {
+    var file = std.Io.Dir.cwd().openFile(io, config_path, .{}) catch |err| {
         log.warn("Failed to open shortcuts file: {t}. Loading default configuration.", .{err});
         return self.load_default_shortcuts();
     };

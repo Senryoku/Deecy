@@ -1127,7 +1127,7 @@ pub const Emitter = struct {
                     else => return error.InvalidMovSourceFromMem,
                 }
             },
-            .reg8 => |_| {
+            .reg8 => {
                 switch (src) {
                     .mem => |src_m| try self.mov_reg_mem(.MemToReg, dst, src_m),
                     else => return error.InvalidMovSourceFromReg8,

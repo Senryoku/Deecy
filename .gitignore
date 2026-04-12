@@ -5,7 +5,7 @@
 
 zig-cache
 zig-out
-
+zig-pkg
 
 /bin/
 src/bin

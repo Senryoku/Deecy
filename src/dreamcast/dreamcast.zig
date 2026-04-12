@@ -254,7 +254,7 @@ pub const Dreamcast = struct {
     }
 
     pub fn reset(self: *@This()) !void {
-        while (self.scheduled_events.removeOrNull() != null) {}
+        self.scheduled_events.clearRetainingCapacity();
         self._global_cycles = 0;
 
         self.cpu.reset();
@@ -888,7 +888,7 @@ pub const Dreamcast = struct {
     // TODO: Add helpers for external interrupts and errors.
 
     pub fn schedule_event(self: *@This(), event: ScheduledEvent.Event, cycles: usize) void {
-        self.scheduled_events.add(.{
+        self.scheduled_events.push(self._allocator, .{
             .trigger_cycle = self._global_cycles +% cycles,
             .event = event,
             .interrupt = null,
@@ -898,7 +898,7 @@ pub const Dreamcast = struct {
     }
 
     pub fn schedule_int_event(self: *@This(), int: HardwareRegisters.SB_ISTNRM, event: ScheduledEvent.Event, cycles: u32) void {
-        self.scheduled_events.add(.{
+        self.scheduled_events.push(self._allocator, .{
             .trigger_cycle = self._global_cycles +% cycles,
             .interrupt = .{ .Normal = int },
             .event = event,
@@ -908,7 +908,7 @@ pub const Dreamcast = struct {
     }
 
     pub fn schedule_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTNRM, cycles: u32) void {
-        self.scheduled_events.add(.{
+        self.scheduled_events.push(self._allocator, .{
             .trigger_cycle = self._global_cycles +% cycles,
             .interrupt = .{ .Normal = int },
         }) catch |err| {
@@ -917,7 +917,7 @@ pub const Dreamcast = struct {
     }
 
     pub fn schedule_external_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTEXT, cycles: u32) void {
-        self.scheduled_events.add(.{
+        self.scheduled_events.push(self._allocator, .{
             .trigger_cycle = self._global_cycles +% cycles,
             .interrupt = .{ .External = int },
             .event = .None,
@@ -934,7 +934,7 @@ pub const Dreamcast = struct {
             var idx: u32 = 0;
             while (it.next()) |entry| {
                 if (entry.event == std.meta.activeTag(event) and std.meta.eql(entry.event, event)) {
-                    _ = self.scheduled_events.removeIndex(idx);
+                    _ = self.scheduled_events.popIndex(idx);
                     not_done = true;
                     break;
                 }
@@ -963,7 +963,7 @@ pub const Dreamcast = struct {
                     .VBlankIn => self.gpu.on_vblank_in(),
                     .VBlankOut => self.gpu.on_vblank_out(),
                 }
-                _ = self.scheduled_events.remove();
+                _ = self.scheduled_events.pop();
             } else break;
         }
     }

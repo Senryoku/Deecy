@@ -67,7 +67,7 @@ vmu_displays: [4]struct {
 
 binary_loaded: bool = false, // Indicates if we're running a raw binary loaded directly in RAM (not from a disc) (FIXME: Used to avoid drawing the game library when pausing without a disc. Clunky.)
 disc_files: std.ArrayList(GameFile) = .empty,
-disc_files_mutex: std.Thread.Mutex = .{}, // Used during disc_files population (then assumed to be constant outside of refresh_games)
+disc_files_mutex: std.Io.Mutex = .init, // Used during disc_files population (then assumed to be constant outside of refresh_games)
 
 game_settings: @import("./ui/game_settings.zig") = .{},
 
@@ -211,8 +211,8 @@ pub fn draw_vmus(self: *@This(), editable: bool) void {
 }
 
 fn update_game_info(self: *@This(), path: []const u8, product_name: []const u8, product_id: []const u8) void {
-    self.disc_files_mutex.lock();
-    defer self.disc_files_mutex.unlock();
+    self.disc_files_mutex.lockUncancelable(self.deecy.io);
+    defer self.disc_files_mutex.unlock(self.deecy.io);
     for (self.disc_files.items) |*entry| {
         if (std.mem.eql(u8, entry.path, path)) {
             entry.product_name = self.allocator.dupe(u8, product_name) catch null;
@@ -243,11 +243,11 @@ fn update_game_texture(self: *@This(), path: []const u8, image_width: u32, image
         u8,
         image,
     );
-    self.deecy.gctx_queue_mutex.unlock();
+    self.deecy.gctx_queue_mutex.unlock(self.deecy.io);
 
     {
-        self.disc_files_mutex.lock();
-        defer self.disc_files_mutex.unlock();
+        self.disc_files_mutex.lockUncancelable(self.deecy.io);
+        defer self.disc_files_mutex.unlock(self.deecy.io);
         for (self.disc_files.items) |*entry| {
             if (std.mem.eql(u8, entry.path, path)) {
                 entry.texture = texture;
@@ -258,8 +258,8 @@ fn update_game_texture(self: *@This(), path: []const u8, image_width: u32, image
     }
 
     ui_log.err("Failed to find disc entry for '{s}'", .{path});
-    self.deecy.gctx_queue_mutex.lock();
-    defer self.deecy.gctx_queue_mutex.unlock();
+    self.deecy.gctx_queue_mutex.lockUncancelable(self.deecy.io);
+    defer self.deecy.gctx_queue_mutex.unlock(self.deecy.io);
     self.deecy.gctx.releaseResource(view);
     self.deecy.gctx.releaseResource(texture);
 }
@@ -476,8 +476,8 @@ const GameInfoCache = struct {
 /// Locks gctx_queue_mutex.
 pub fn refresh_games(self: *@This()) !void {
     if (self.deecy.config.game_directory) |dir_path| {
-        const start = std.time.milliTimestamp();
-        defer ui_log.info("Checked {d} disc files in {d}ms", .{ self.disc_files.items.len, std.time.milliTimestamp() - start });
+        const start_time = std.Io.Clock.real.now(std.Options.debug_io);
+        defer ui_log.info("Checked {d} disc files in {f}", .{ self.disc_files.items.len, start_time.durationTo(std.Io.Clock.real.now(std.Options.debug_io)) });
 
         var cache = try GameInfoCache.create(self.allocator);
         defer cache.destroy(self.allocator);
@@ -515,10 +515,10 @@ pub fn refresh_games(self: *@This()) !void {
 
             std.mem.sort(GameFile, tmp_disc_files.items, {}, GameFile.sort);
 
-            self.deecy.gctx_queue_mutex.lock();
-            defer self.deecy.gctx_queue_mutex.unlock();
-            self.disc_files_mutex.lock();
-            defer self.disc_files_mutex.unlock();
+            self.deecy.gctx_queue_mutex.lockUncancelable(self.deecy.io);
+            defer self.deecy.gctx_queue_mutex.unlock(self.deecy.io);
+            self.disc_files_mutex.lockUncancelable(self.deecy.io);
+            defer self.disc_files_mutex.unlock(self.deecy.io);
             for (self.disc_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
             self.disc_files.deinit(self.allocator);
             self.disc_files = tmp_disc_files;
@@ -1397,8 +1397,8 @@ pub fn draw_game_library(self: *@This()) !void {
         const draw_list = zgui.getWindowDrawList();
 
         {
-            self.disc_files_mutex.lock();
-            defer self.disc_files_mutex.unlock();
+            self.disc_files_mutex.lockUncancelable(self.deecy.io);
+            defer self.disc_files_mutex.unlock(self.deecy.io);
 
             _ = zgui.beginChild("Games", .{});
             defer zgui.endChild();

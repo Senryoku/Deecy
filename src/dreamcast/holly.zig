@@ -920,7 +920,7 @@ pub const Polygon = union(enum) {
 
     pub fn size(format: std.meta.Tag(@This())) u32 {
         return switch (format) {
-            inline else => |f| @sizeOf(std.meta.TagPayload(@This(), f)) / 4,
+            inline else => |f| @sizeOf(@FieldType(@This(), @tagName(f))) / 4,
         };
     }
 
@@ -1345,7 +1345,7 @@ pub const VertexParameter = union(enum) {
     // Returns the size in words (4 bytes) of the vertex parameter
     pub fn size(format: std.meta.Tag(@This())) u32 {
         return switch (format) {
-            inline else => |f| @sizeOf(std.meta.TagPayload(@This(), f)) / 4,
+            inline else => |f| @sizeOf(@FieldType(@This(), @tagName(f))) / 4,
         };
     }
     pub fn position(self: *const @This()) [3]f32 {
@@ -1963,7 +1963,7 @@ pub const Holly = struct {
         switch (access_type) {
             .b64 => @as(*@Vector(8, u32), @ptrCast(@alignCast(&self.vram[addr & VRAMMask]))).* = v,
             .b32 => {
-                for (0..8) |idx|
+                inline for (0..8) |idx|
                     self.write_vram(u32, @intCast(addr + 4 * idx), v[idx]);
             },
         }
@@ -2212,7 +2212,7 @@ pub const Holly = struct {
 
                         self._ta_current_polygon = switch (polygon_type) {
                             .Sprite => std.debug.panic("Invalid polygon format: {t}", .{polygon_type}),
-                            inline else => |pt| @unionInit(Polygon, @tagName(pt), @as(*std.meta.TagPayload(Polygon, pt), @ptrCast(&self._ta_command_buffer)).*),
+                            inline else => |pt| @unionInit(Polygon, @tagName(pt), @as(*@FieldType(Polygon, @tagName(pt)), @ptrCast(&self._ta_command_buffer)).*),
                         };
 
                         switch (self._ta_current_polygon.?) {
@@ -2283,7 +2283,7 @@ pub const Holly = struct {
 
                                         display_list.vertex_parameters.append(self._allocator, switch (format) {
                                             .SpriteType0, .SpriteType1 => unreachable,
-                                            inline else => |t| @unionInit(VertexParameter, @tagName(t), @as(*std.meta.TagPayload(VertexParameter, t), @ptrCast(&self._ta_command_buffer)).*),
+                                            inline else => |t| @unionInit(VertexParameter, @tagName(t), @as(*@FieldType(VertexParameter, @tagName(t)), @ptrCast(&self._ta_command_buffer)).*),
                                         }) catch |err|
                                             holly_log.err(termcolor.red("Failed to append VertexParameter: {t}"), .{err});
                                     },
