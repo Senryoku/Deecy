@@ -135,8 +135,8 @@ fn glfw_drop_callback(window: *zglfw.Window, count: i32, paths: [*][*:0]const u8
 fn glfw_resize_callback(window: *zglfw.Window, width: i32, height: i32) callconv(.c) void {
     const maybe_app = window.getUserPointer(@This());
     if (maybe_app) |app| {
-        app.gctx_queue_mutex.lock();
-        defer app.gctx_queue_mutex.unlock();
+        app.gctx_queue_mutex.lockUncancelable(std.Options.debug_io);
+        defer app.gctx_queue_mutex.unlock(std.Options.debug_io);
         if (width > 0 and height > 0) {
             app.gctx.surface.configure(.{
                 .device = app.gctx.device,
@@ -156,11 +156,10 @@ const DefaultFont = @embedFile(assets_dir ++ "fonts/Hack-Regular.ttf");
 const IconFont = @embedFile(assets_dir ++ "fonts/Font Awesome 7 Free-Solid-900.otf");
 
 fn file_exists(path: []const u8) !bool {
-    const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
+    std.Io.Dir.cwd().access(std.Options.debug_io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return false,
         else => return err,
     };
-    file.close();
     return true;
 }
 
@@ -587,7 +586,7 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io) !*@This() {
     // FIXME: See sh4_virtual_address_space_windows.zig
     {
         const dc_init_time = std.Io.Clock.real.now(self.io);
-        defer deecy_log.info("Dreamcast initialized in {d} ms", .{dc_init_time.durationTo(std.Io.Clock.real.now(self.io))});
+        defer deecy_log.info("Dreamcast initialized in {f}", .{dc_init_time.durationTo(std.Io.Clock.real.now(self.io))});
         self.dc = while (true) {
             if (Dreamcast.create(allocator)) |dc| break dc else |err| {
                 switch (err) {
@@ -603,7 +602,7 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io) !*@This() {
             }
         };
         while (true) {
-            self.dc.load_flash(config.region.to_dreamcast(), config.bios_config) catch |err| {
+            self.dc.load_flash(self.io, config.region.to_dreamcast(), config.bios_config) catch |err| {
                 if (try self.display_missing_file_error(
                     \\Missing Flash.
                     \\Please copy your flash file as 'dc_flash.bin' to '{s}'.
@@ -684,7 +683,7 @@ fn deinit_enabled_cheats(self: *@This()) void {
 
 fn auto_populate_joysticks(self: *@This()) !void {
     const start_time = std.Io.Clock.real.now(self.io);
-    defer deecy_log.info("Joysticks initialized in {d}ms", .{start_time.durationTo(std.Io.Clock.real.now(self.io))});
+    defer deecy_log.info("Joysticks initialized in {f}", .{start_time.durationTo(std.Io.Clock.real.now(self.io))});
     var curr_pad: usize = 0;
     for (0..zglfw.Joystick.maximum_supported) |idx| {
         const joystick: zglfw.Joystick = @enumFromInt(idx);
@@ -701,7 +700,7 @@ fn auto_populate_joysticks(self: *@This()) !void {
 
 fn audio_init(self: *@This()) !void {
     const zaudio_init_time = std.Io.Clock.real.now(self.io);
-    defer deecy_log.info("Zaudio initialized in {d} ms", .{zaudio_init_time.durationTo(std.Io.Clock.real.now(self.io))});
+    defer deecy_log.info("Zaudio initialized in {f}", .{zaudio_init_time.durationTo(std.Io.Clock.real.now(self.io))});
     zaudio.init(self._allocator, self.io);
 
     var audio_device_config = zaudio.Device.Config.init(.playback);
@@ -717,7 +716,7 @@ fn audio_init(self: *@This()) !void {
 }
 
 fn ui_init(self: *@This()) !void {
-    zgui.init(self._allocator);
+    zgui.init(self._allocator, self.io);
     zgui.io.setConfigFlags(.{ .dock_enable = true });
 
     _ = zgui.io.addFontFromMemory(DefaultFont, std.math.floor(16.0 * self.scale_factor));
@@ -1266,11 +1265,11 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
         }
         return error.Unimplemented;
     } else {
-        self.dc.gdrom.disc = try .init(self._allocator, path);
+        self.dc.gdrom.disc = try .init(self._allocator, self.io, path);
     }
 
     if (self.config.region == .Auto) {
-        self.dc.load_flash(self.dc.gdrom.disc.?.get_region(), self.config.bios_config) catch |err| {
+        self.dc.load_flash(self.io, self.dc.gdrom.disc.?.get_region(), self.config.bios_config) catch |err| {
             switch (err) {
                 error.FileNotFound => return error.MissingFlash,
                 else => return err,
@@ -1511,8 +1510,8 @@ pub fn draw_ui(self: *@This()) !void {
     {
         // FIXME: Not sure if this is needed, but omitting it can cause a crash on the first frame when submitting the UI commands.
         //        Either newFrame creates some GPU resources on startup, or this just hides another issue by pure luck.
-        self.gctx_queue_mutex.lock();
-        defer self.gctx_queue_mutex.unlock();
+        self.gctx_queue_mutex.lockUncancelable(self.io);
+        defer self.gctx_queue_mutex.unlock(self.io);
         const fb_size = self.window.getFramebufferSize();
         zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
     }
@@ -1638,8 +1637,8 @@ pub fn draw_ui(self: *@This()) !void {
 
 /// Locks gctx_queue_mutex.
 pub fn submit_ui(self: *@This()) void {
-    self.gctx_queue_mutex.lock();
-    defer self.gctx_queue_mutex.unlock();
+    self.gctx_queue_mutex.lockUncancelable(self.io);
+    defer self.gctx_queue_mutex.unlock(self.io);
 
     var surface: zgpu.wgpu.SurfaceTexture = undefined;
     self.gctx.surface.getCurrentTexture(&surface);
@@ -1703,15 +1702,20 @@ fn display_missing_file_error(self: *@This(), comptime fmt: []const u8, args: an
         if (zgui.beginPopupModal("Error##Modal", .{ .flags = .{ .always_auto_resize = true } })) {
             zgui.text(fmt, args);
             if (zgui.button(UI.Icons.Folder ++ " Open folder", .{})) {
-                const absolute_path = try std.fs.cwd().realpathAlloc(self._allocator, HostPaths.get_data_path());
+                const absolute_path = try std.Io.Dir.cwd().realPathFileAlloc(self.io, HostPaths.get_data_path(), self._allocator);
                 defer self._allocator.free(absolute_path);
-                var file_explorer = std.process.Child.init(&[_][]const u8{ switch (builtin.os.tag) {
-                    .windows => "explorer",
-                    .linux => "xdg-open",
-                    .macos => "open",
-                    else => @compileError("Unsupported OS"),
-                }, absolute_path }, self._allocator);
-                _ = try file_explorer.spawnAndWait();
+                var file_explorer = try std.process.spawn(
+                    self.io,
+                    .{
+                        .argv = &[_][]const u8{ switch (builtin.os.tag) {
+                            .windows => "explorer",
+                            .linux => "xdg-open",
+                            .macos => "open",
+                            else => @compileError("Unsupported OS"),
+                        }, absolute_path },
+                    },
+                );
+                _ = try file_explorer.wait(self.io);
             }
             zgui.sameLine(.{});
             retry = zgui.button(UI.Icons.Repeat ++ " Retry", .{});
@@ -1825,7 +1829,7 @@ fn save_screenshot_impl(self: *const @This()) !void {
     const screen = try self.renderer.capture(self._allocator);
     defer screen.deinit(self._allocator);
 
-    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(std.time.timestamp()) };
+    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(std.Io.Clock.real.now(std.Options.debug_io).toSeconds()) };
     const day_seconds = epoch_seconds.getDaySeconds();
     const year_day = epoch_seconds.getEpochDay().calculateYearDay();
     const month_day = year_day.calculateMonthDay();
@@ -1843,12 +1847,12 @@ fn save_screenshot_impl(self: *const @This()) !void {
 
     // Make sure the directory exists.
     if (std.fs.path.dirname(filepath)) |dir|
-        try std.fs.cwd().makePath(dir);
-    var file = try std.fs.cwd().createFile(filepath, .{});
-    defer file.close();
+        try std.Io.Dir.cwd().createDirPath(self.io, dir);
+    var file = try std.Io.Dir.cwd().createFile(self.io, filepath, .{});
+    defer file.close(self.io);
 
     var buffer: [1024]u8 = undefined;
-    var file_writer = file.writer(&buffer);
+    var file_writer = file.writer(self.io, &buffer);
     try screen.write_bmp(&file_writer.interface);
 
     deecy_log.info(termcolor.green("Screenshot saved as '{s}'"), .{filepath});
@@ -1870,9 +1874,9 @@ fn audio_callback(
         std.mem.doNotOptimizeAway(void);
         if (!self.running or self._stop_request) return;
         // FIXME: Not elegant at all, but avoids hammering the audio thread for no reason, and I haven't heard any problems so far.
-        //        1_000_000ns (1ms) seems to be the lowest value that avoids simply spinning on Windows.
+        //        1ms seems to be the lowest value that avoids simply spinning on Windows.
         // FIXME: Untested on Linux.
-        std.Thread.sleep(1_000_000);
+        std.Io.sleep(std.Options.debug_io, .fromMilliseconds(1), .real) catch {};
     }
 
     var out: [*]i32 = @ptrCast(@alignCast(output));
@@ -1933,7 +1937,7 @@ pub fn save_state(self: *@This(), index: usize) !void {
 }
 
 fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array: []const u8) !void {
-    const start_time = std.Io.Clock.real.now(std.Options.debug_io);
+    const start_time = std.Io.Clock.real.now(self.io);
     defer self._allocator.free(uncompressed_array);
 
     const compressed = try lz4.Standard.compress(self._allocator, uncompressed_array);
@@ -2004,11 +2008,11 @@ pub fn load_state(self: *@This(), index: usize) !void {
 fn save_config(self: *@This()) !void {
     const config_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), ConfigFile });
     defer self._allocator.free(config_path);
-    var config_file = try std.fs.cwd().createFile(config_path, .{});
-    defer config_file.close();
+    var config_file = try std.Io.Dir.cwd().createFile(self.io, config_path, .{});
+    defer config_file.close(self.io);
     const buffer = try self._allocator.alloc(u8, 8192);
     defer self._allocator.free(buffer);
-    var writer = config_file.writer(buffer);
+    var writer = config_file.writer(self.io, buffer);
     try std.zon.stringify.serialize(self.config, .{}, &writer.interface);
     try writer.end();
 }

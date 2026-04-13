@@ -16,18 +16,18 @@ tracks: std.ArrayList(Track) = .empty,
 sessions: std.ArrayList(Session) = .empty,
 _file: MemoryMappedFile,
 
-pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
+pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@This() {
     var self: @This() = .{
-        ._file = try .init(allocator, filepath),
+        ._file = try .init(allocator, io, filepath),
     };
     errdefer self.deinit(allocator);
 
-    const file = try std.fs.cwd().openFile(filepath, .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().openFile(io, filepath, .{});
+    defer file.close(io);
 
     const buffer = try allocator.alloc(u8, 8192);
     defer allocator.free(buffer);
-    var file_reader = file.reader(buffer);
+    var file_reader = file.reader(io, buffer);
 
     const size = try file_reader.getSize();
     if (size < 8) return error.InvalidCDI;
@@ -202,7 +202,7 @@ pub fn get_area_boundaries(self: *const @This(), area: Session.Area) [2]u32 {
     return .{ 0, @intCast(self.tracks.items.len - 1) };
 }
 
-fn track_header(reader: *std.io.Reader) !void {
+fn track_header(reader: *std.Io.Reader) !void {
     const null_or_extra = try reader.takeInt(u32, .little);
     if (null_or_extra != 0)
         std.debug.assert(try reader.discardShort(8) == 8);

@@ -36,10 +36,10 @@ fn load_pipeline_cache_impl(allocator: std.mem.Allocator, key: []const u8, value
     const path = try std.fs.path.join(allocator, &.{ userdata_path, CacheDir, hex_name });
     defer allocator.free(path);
 
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{});
+    defer file.close(std.Options.debug_io);
 
-    const size = try file.getEndPos();
+    const size = (try file.stat(std.Options.debug_io)).size;
 
     // Only requesting the size.
     if (value_ptr == null or value_size == 0) return @intCast(size);
@@ -47,7 +47,7 @@ fn load_pipeline_cache_impl(allocator: std.mem.Allocator, key: []const u8, value
     if (size > value_size) return error.ValueBufferTooSmall;
 
     const buffer: []u8 = @ptrCast(value_ptr.?[0..value_size]);
-    return try file.readAll(buffer);
+    return try file.readPositionalAll(std.Options.debug_io, buffer, 0);
 }
 
 pub fn store_pipeline_cache(key_ptr: [*]const u8, key_size: usize, value_ptr: [*]const u8, value_size: usize, userdata: ?*anyopaque) callconv(.c) void {
@@ -67,24 +67,23 @@ fn store_pipeline_cache_impl(allocator: std.mem.Allocator, key: []const u8, valu
     var name_buf: [64]u8 = undefined;
     const hex_name = try cache_file_name(key, &name_buf);
 
-    const userdata_path = HostPaths.get_userdata_path();
-    const dir = try std.fs.path.join(allocator, &.{ userdata_path, CacheDir });
-    defer allocator.free(dir);
-    try std.fs.cwd().makePath(dir);
-
-    const path = try std.fs.path.join(allocator, &.{ dir, hex_name });
+    const path = try std.fs.path.join(allocator, &.{ HostPaths.get_userdata_path(), CacheDir, hex_name });
     defer allocator.free(path);
 
-    const file = try std.fs.cwd().createFile(path, .{});
-    defer file.close();
-    try file.writeAll(value);
+    if (std.fs.path.dirname(path)) |dir| try std.Io.Dir.cwd().createDirPath(std.Options.debug_io, dir);
+
+    try std.Io.Dir.cwd().writeFile(std.Options.debug_io, .{
+        .sub_path = path,
+        .data = value,
+        .flags = .{ .truncate = true },
+    });
 }
 
 pub fn clear(allocator: std.mem.Allocator) !void {
     const userdata_path = HostPaths.get_userdata_path();
     const dir = try std.fs.path.join(allocator, &.{ userdata_path, CacheDir });
     defer allocator.free(dir);
-    log.warn("Deleting {s}", .{dir});
-    try std.fs.cwd().deleteTree(dir);
-    try std.fs.cwd().makePath(dir);
+    log.warn("Deleting '{s}'", .{dir});
+    try std.Io.Dir.cwd().deleteTree(std.Options.debug_io, dir);
+    try std.Io.Dir.cwd().createDirPath(std.Options.debug_io, dir);
 }

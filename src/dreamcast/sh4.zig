@@ -108,7 +108,7 @@ pub const StoreQueueAddr = packed struct(u32) {
     spec: u6 = 0b111000,
 };
 
-pub const Instr = packed union {
+pub const Instr = packed union(u16) {
     value: u16,
     // Reminder: We're in little endian.
     nmd: packed struct { d: u4 = undefined, m: u4 = undefined, n: u4 = undefined, _: u4 = undefined },
@@ -1627,7 +1627,7 @@ pub const SH4 = struct {
                             check_type(&[_]type{u8}, T, "Invalid P4 Write({}) to SCFTDR2\n", .{T});
 
                             var stdout_buffer: [128]u8 = undefined;
-                            var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                            var stdout_writer = std.Io.File.stdout().writer(std.Options.debug_io, &stdout_buffer);
                             const stdout = &stdout_writer.interface;
 
                             stdout.print("\u{001b}[44m\u{001b}[97m{c}\u{001b}[0m", .{value}) catch |err| {

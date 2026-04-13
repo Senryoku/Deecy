@@ -985,7 +985,7 @@ pub const Renderer = struct {
     _scratch_pad: []u8 align(4), // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
 
     _gctx: *zgpu.GraphicsContext,
-    _gctx_queue_mutex: *std.Thread.Mutex,
+    _gctx_queue_mutex: *std.Io.Mutex,
     _allocator: std.mem.Allocator,
 
     fn create_textures_bind_group_layout(gctx: *zgpu.GraphicsContext) zgpu.BindGroupLayoutHandle {
@@ -1028,7 +1028,7 @@ pub const Renderer = struct {
         });
     }
 
-    pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, gctx_queue_mutex: *std.Thread.Mutex, config: *const Configuration) !*Renderer {
+    pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, gctx_queue_mutex: *std.Io.Mutex, config: *const Configuration) !*Renderer {
         const start = std.Io.Clock.real.now(std.Options.debug_io);
         defer log.info("Renderer initialized in {f}", .{start.durationTo(std.Io.Clock.real.now(std.Options.debug_io))});
 
@@ -1438,7 +1438,7 @@ pub const Renderer = struct {
             .strips_metadata = try .initCapacity(allocator, 4096),
             .modifier_volume_vertices = try .initCapacity(allocator, 4096),
 
-            .last_frame_timestamp = std.time.microTimestamp(),
+            .last_frame_timestamp = std.Io.Clock.real.now(std.Options.debug_io).toMicroseconds(),
 
             .render_passes = .empty,
             .ta_lists = .empty,
@@ -1748,7 +1748,7 @@ pub const Renderer = struct {
     pub fn reset(self: *@This()) void {
         self.render_pending = false;
         self.render_request = false;
-        self.last_frame_timestamp = std.time.microTimestamp();
+        self.last_frame_timestamp = std.Io.Clock.real.now(std.Options.debug_io).toMicroseconds();
         self.last_n_frametimes = .{};
         for (self.texture_metadata) |arr| {
             for (arr) |*tex| tex.* = .{};
@@ -1767,8 +1767,8 @@ pub const Renderer = struct {
         const render_to_texture = dc.gpu.render_to_texture();
 
         // NOTE: Here we also rely on this lock to protect access to `ta_lists` and `render_passes`.
-        self._gctx_queue_mutex.lock();
-        defer self._gctx_queue_mutex.unlock();
+        self._gctx_queue_mutex.lockUncancelable(std.Options.debug_io);
+        defer self._gctx_queue_mutex.unlock(std.Options.debug_io);
 
         if (self.render_pending) {
             if (Once(@src())) log.warn("Missed a pending render. Consider enabling 'Synchronous Rendering'.", .{});
@@ -1871,8 +1871,8 @@ pub const Renderer = struct {
         if (new_value == self.write_back_parameters.fb_w_sof1) {
             // Let the main thread process the list asynchronously unless explicitly disabled.
             if (self.config.synchronous_render) {
-                self._gctx_queue_mutex.lock();
-                defer self._gctx_queue_mutex.unlock();
+                self._gctx_queue_mutex.lockUncancelable(std.Options.debug_io);
+                defer self._gctx_queue_mutex.unlock(std.Options.debug_io);
                 self.render(&dc.gpu, false) catch |err| return log.err("Failed to render: {t}", .{err});
             } else {
                 self.render_request = true;
@@ -2184,8 +2184,8 @@ pub const Renderer = struct {
             }
         }
 
-        self._gctx_queue_mutex.lock();
-        defer self._gctx_queue_mutex.unlock();
+        self._gctx_queue_mutex.lockUncancelable(std.Options.debug_io);
+        defer self._gctx_queue_mutex.unlock(std.Options.debug_io);
         self._gctx.queue.writeTexture(
             .{
                 .texture = self._gctx.lookupResource(self.framebuffer.texture).?,
@@ -3121,8 +3121,8 @@ pub const Renderer = struct {
     /// Locks _gctx_queue_mutex.
     pub fn blit_framebuffer(self: *const @This()) void {
         const gctx = self._gctx;
-        self._gctx_queue_mutex.lock();
-        defer self._gctx_queue_mutex.unlock();
+        self._gctx_queue_mutex.lockUncancelable(std.Options.debug_io);
+        defer self._gctx_queue_mutex.unlock(std.Options.debug_io);
 
         if (gctx.lookupResource(self.blit_pipeline)) |pipeline| {
             const commands = commands: {
@@ -3931,7 +3931,7 @@ pub const Renderer = struct {
         }
 
         if (!render_to_texture) {
-            const now = std.time.microTimestamp();
+            const now = std.Io.Clock.real.now(std.Options.debug_io).toMicroseconds();
             self.last_n_frametimes.push(now - self.last_frame_timestamp);
             self.last_frame_timestamp = now;
         }
@@ -3940,8 +3940,8 @@ pub const Renderer = struct {
     /// Blit the last rendered frame to the window surface.
     /// Locks _gctx_queue_mutex.
     pub fn draw(self: *const @This(), window_width: u32, window_height: u32, aspect_ratio: Configuration.AspectRatio) void {
-        self._gctx_queue_mutex.lock();
-        defer self._gctx_queue_mutex.unlock();
+        self._gctx_queue_mutex.lockUncancelable(std.Options.debug_io);
+        defer self._gctx_queue_mutex.unlock(std.Options.debug_io);
 
         self.update_blit_to_screen_vertex_buffer(window_width, window_height, aspect_ratio);
 
@@ -4163,8 +4163,8 @@ pub const Renderer = struct {
     /// Locks self._gctx_queue_mutex.
     /// Caller owns the returned memory and should call `deinit` on the returned Image.
     pub fn capture(self: *const @This(), allocator: std.mem.Allocator) !@import("image.zig") {
-        self._gctx_queue_mutex.lock();
-        defer self._gctx_queue_mutex.unlock();
+        self._gctx_queue_mutex.lockUncancelable(std.Options.debug_io);
+        defer self._gctx_queue_mutex.unlock(std.Options.debug_io);
 
         const static = struct {
             var result: zgpu.wgpu.MapAsyncStatus = .@"error";

@@ -26,15 +26,15 @@ pub const Disc = union(enum) {
     CHD: CHD,
     CUE: CUE,
 
-    pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !Disc {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !Disc {
         if (std.mem.endsWith(u8, filepath, ".gdi")) {
-            return .{ .GDI = try .init(allocator, filepath) };
+            return .{ .GDI = try .init(allocator, io, filepath) };
         } else if (std.mem.endsWith(u8, filepath, ".cdi")) {
-            return .{ .CDI = try .init(allocator, filepath) };
+            return .{ .CDI = try .init(allocator, io, filepath) };
         } else if (std.mem.endsWith(u8, filepath, ".chd")) {
-            return .{ .CHD = try .init(allocator, filepath) };
+            return .{ .CHD = try .init(allocator, io, filepath) };
         } else if (std.mem.endsWith(u8, filepath, "cue")) {
-            return .{ .CUE = try .init(allocator, filepath) };
+            return .{ .CUE = try .init(allocator, io, filepath) };
         } else return error.UnknownDiscFormat;
     }
 

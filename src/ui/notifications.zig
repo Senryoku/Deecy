@@ -25,7 +25,7 @@ const Notification = struct {
 };
 
 notifications: std.ArrayList(Notification) = .empty,
-_mutex: std.Thread.Mutex = .{},
+_mutex: std.Io.Mutex = .init,
 _allocator: std.mem.Allocator,
 
 pub fn init(allocator: std.mem.Allocator) @This() {
@@ -33,8 +33,8 @@ pub fn init(allocator: std.mem.Allocator) @This() {
 }
 
 pub fn deinit(self: *@This()) void {
-    self._mutex.lock();
-    defer self._mutex.unlock();
+    self._mutex.lockUncancelable(std.Options.debug_io);
+    defer self._mutex.unlock(std.Options.debug_io);
 
     for (self.notifications.items) |*notification| notification.deinit(self._allocator);
     self.notifications.deinit(self._allocator);
@@ -47,8 +47,8 @@ pub fn push(self: *@This(), comptime title_fmt: []const u8, title_args: anytype,
 }
 
 fn push_impl(self: *@This(), comptime title_fmt: []const u8, title_args: anytype, comptime text_fmt: []const u8, text_args: anytype) !void {
-    self._mutex.lock();
-    defer self._mutex.unlock();
+    self._mutex.lockUncancelable(std.Options.debug_io);
+    defer self._mutex.unlock(std.Options.debug_io);
 
     while (self.notifications.items.len >= MaxNotifications)
         self.notifications.pop().?.deinit(self._allocator);
@@ -67,8 +67,8 @@ const ImguiWidgetIDs = arr: {
 };
 
 pub fn draw(self: *@This()) void {
-    self._mutex.lock();
-    defer self._mutex.unlock();
+    self._mutex.lockUncancelable(std.Options.debug_io);
+    defer self._mutex.unlock(std.Options.debug_io);
 
     const time = std.Io.Clock.real.now(std.Options.debug_io).toMilliseconds();
     const window_size = zgui.io.getDisplaySize();

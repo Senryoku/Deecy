@@ -13,17 +13,13 @@ tracks: std.ArrayList(Track) = .empty,
 
 _files: std.ArrayList(MemoryMappedFile) = .empty,
 
-pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
+pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@This() {
     var self: @This() = .{};
 
-    const file = std.fs.cwd().openFile(filepath, .{}) catch |err| {
-        log.err("Error opening '{s}': {t}", .{ filepath, err });
-        return err;
-    };
-    defer file.close();
     const folder = std.fs.path.dirname(filepath) orelse ".";
-    const data = try file.readToEndAlloc(allocator, 1024 * 1024);
+    const data = try std.Io.Dir.cwd().readFileAlloc(io, filepath, allocator, .limited(1024 * 1024));
     defer allocator.free(data);
+
     const end_line = if (std.mem.containsAtLeast(u8, data, 1, "\r\n")) "\r\n" else "\n";
     var line_it = std.mem.splitSequence(u8, data, end_line);
     var lines_list: std.ArrayList([]const u8) = .empty;
@@ -67,7 +63,7 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
 
                 const track_file_path = try std.fs.path.join(allocator, &[_][]const u8{ folder, filename });
                 defer allocator.free(track_file_path);
-                try self._files.append(allocator, try MemoryMappedFile.init(allocator, track_file_path));
+                try self._files.append(allocator, try MemoryMappedFile.init(allocator, io, track_file_path));
 
                 const track_type: Track.TrackType = if (std.mem.startsWith(u8, track_type_str, "MODE")) .Data else if (std.mem.startsWith(u8, track_type_str, "AUDIO")) .Audio else return error.UnsupportedTrackFormat;
                 const format = try sector_size(track_type_str);

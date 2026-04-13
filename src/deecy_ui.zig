@@ -158,8 +158,8 @@ pub fn upload_vmu_texture(self: *@This(), controller: u8) void {
             }
         }
     }
-    self.deecy.gctx_queue_mutex.lock();
-    defer self.deecy.gctx_queue_mutex.unlock();
+    self.deecy.gctx_queue_mutex.lockUncancelable(self.deecy.io);
+    defer self.deecy.gctx_queue_mutex.unlock(self.deecy.io);
     self.deecy.gctx.queue.writeTexture(
         .{ .texture = self.deecy.gctx.lookupResource(tex.texture).? },
         .{ .bytes_per_row = 4 * 48, .rows_per_image = 32 },
@@ -224,7 +224,7 @@ fn update_game_info(self: *@This(), path: []const u8, product_name: []const u8, 
 
 // Locks gctx_queue_mutex.
 fn update_game_texture(self: *@This(), path: []const u8, image_width: u32, image_height: u32, image: []const u8) void {
-    self.deecy.gctx_queue_mutex.lock();
+    self.deecy.gctx_queue_mutex.lockUncancelable(self.deecy.io);
     const texture = self.deecy.gctx.createTexture(.{
         .usage = .{ .texture_binding = true, .copy_dst = true },
         .size = .{
@@ -269,7 +269,7 @@ fn get_game_image(self: *@This(), path: []const u8, cache: ?*GameInfoCache) void
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var disc = Disc.init(allocator, path) catch |err| {
+    var disc = Disc.init(allocator, self.deecy.io, path) catch |err| {
         ui_log.err("Failed to load disc '{s}': {t}", .{ path, err });
         if (cache) |c| c.add(path, "NoName", "NoID", .{ .width = 0, .height = 0 }, null) catch {};
         return;
@@ -319,7 +319,7 @@ const GameInfoCache = struct {
     map: std.StringHashMap(Entry),
 
     _path: []const u8,
-    _mutex: std.Thread.Mutex = .{},
+    _mutex: std.Io.Mutex = .init,
     _arena: std.heap.ArenaAllocator,
 
     pub fn create(allocator: std.mem.Allocator) !*@This() {
@@ -344,25 +344,22 @@ const GameInfoCache = struct {
     }
 
     pub fn load(self: *@This()) !void {
-        var file = try std.fs.cwd().openFile(self._path, .{});
-        defer file.close();
-        const file_size = try file.getEndPos();
-        const data = try file.readToEndAllocOptions(self._arena.allocator(), file_size, file_size, .@"8", null);
+        const data = try std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, self._path, self._arena.allocator(), .unlimited);
         defer self._arena.allocator().free(data);
         try self.deserialize(data);
     }
 
     /// Thread safe
     pub fn get(self: *@This(), path: []const u8) ?Entry {
-        self._mutex.lock();
-        defer self._mutex.unlock();
+        self._mutex.lockUncancelable(std.Options.debug_io);
+        defer self._mutex.unlock(std.Options.debug_io);
         return self.map.get(path);
     }
 
     /// Thread safe
     pub fn add(self: *@This(), path: []const u8, product_name: []const u8, product_id: []const u8, image_size: struct { width: u32, height: u32 }, image: ?[]const u8) !void {
-        self._mutex.lock();
-        defer self._mutex.unlock();
+        self._mutex.lockUncancelable(std.Options.debug_io);
+        defer self._mutex.unlock(std.Options.debug_io);
         const arena_alloc = self._arena.allocator();
         const duped_path = try arena_alloc.dupe(u8, path);
         try self.map.put(duped_path, .{
@@ -376,8 +373,8 @@ const GameInfoCache = struct {
     }
 
     pub fn save_to_disk(self: *@This()) !void {
-        var file = try std.fs.cwd().createFile(self._path, .{});
-        defer file.close();
+        var file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, self._path, .{});
+        defer file.close(std.Options.debug_io);
 
         var allocating_writer = std.Io.Writer.Allocating.init(self._arena.allocator());
         defer allocating_writer.deinit();
@@ -405,7 +402,7 @@ const GameInfoCache = struct {
 
         const buffer = try self._arena.allocator().alloc(u8, 4 * 1024);
         defer self._arena.allocator().free(buffer);
-        var file_writer = file.writer(buffer);
+        var file_writer = file.writer(std.Options.debug_io, buffer);
         var writer = &file_writer.interface;
 
         try writer.writeInt(u32, Signature, .little);
@@ -476,8 +473,8 @@ const GameInfoCache = struct {
 /// Locks gctx_queue_mutex.
 pub fn refresh_games(self: *@This()) !void {
     if (self.deecy.config.game_directory) |dir_path| {
-        const start_time = std.Io.Clock.real.now(std.Options.debug_io);
-        defer ui_log.info("Checked {d} disc files in {f}", .{ self.disc_files.items.len, start_time.durationTo(std.Io.Clock.real.now(std.Options.debug_io)) });
+        const start_time = std.Io.Clock.real.now(self.deecy.io);
+        defer ui_log.info("Checked {d} disc files in {f}", .{ self.disc_files.items.len, start_time.durationTo(std.Io.Clock.real.now(self.deecy.io)) });
 
         var cache = try GameInfoCache.create(self.allocator);
         defer cache.destroy(self.allocator);
@@ -488,15 +485,15 @@ pub fn refresh_games(self: *@This()) !void {
             var tmp_disc_files: std.ArrayList(GameFile) = .empty;
             errdefer tmp_disc_files.deinit(self.allocator);
 
-            var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| {
+            var dir = std.Io.Dir.cwd().openDir(self.deecy.io, dir_path, .{ .iterate = true }) catch |err| {
                 ui_log.err(termcolor.red("Failed to open game directory: {t}"), .{err});
                 return;
             };
-            defer dir.close();
+            defer dir.close(self.deecy.io);
             var walker = try dir.walk(self.allocator);
             defer walker.deinit();
 
-            while (try walker.next()) |entry| {
+            while (try walker.next(self.deecy.io)) |entry| {
                 if (entry.kind == .file and (std.mem.endsWith(u8, entry.path, ".gdi") or std.mem.endsWith(u8, entry.path, ".cdi") or std.mem.endsWith(u8, entry.path, ".chd") or std.mem.endsWith(u8, entry.path, ".cue"))) {
                     const path = try std.fs.path.joinZ(self.allocator, &[_][]const u8{ dir_path, entry.path });
                     errdefer self.allocator.free(path);
@@ -524,11 +521,7 @@ pub fn refresh_games(self: *@This()) !void {
             self.disc_files = tmp_disc_files;
         }
 
-        var pool: std.Thread.Pool = undefined;
-        try pool.init(.{ .allocator = self.allocator });
-        defer pool.deinit();
-
-        var wait_group = std.Thread.WaitGroup{};
+        var group: std.Io.Group = .init;
 
         for (0..self.disc_files.items.len) |file_idx| { // NOTE: I want to prioritize the first items on the list, and spawning jobs in the reverse order seem to do the trick for some reason ¯\_(ツ)_/¯
             const idx = self.disc_files.items.len - 1 - file_idx;
@@ -537,11 +530,11 @@ pub fn refresh_games(self: *@This()) !void {
                 if (entry.image) |image|
                     self.update_game_texture(entry.path, entry.image_size.width, entry.image_size.height, image);
             } else {
-                pool.spawnWg(&wait_group, get_game_image, .{ self, self.disc_files.items[idx].path, cache });
+                group.async(self.deecy.io, get_game_image, .{ self, self.disc_files.items[idx].path, cache });
             }
         }
 
-        wait_group.wait();
+        try group.await(self.deecy.io);
 
         try cache.save_to_disk();
     }
@@ -644,7 +637,7 @@ pub fn draw(self: *@This()) !void {
             zgui.separator();
 
             if (menu_from_enum("Region", &d.config.region, .{ .enabled = !d.running })) {
-                try d.dc.load_flash(d.config.region.to_dreamcast(), d.config.bios_config);
+                try d.dc.load_flash(d.io, d.config.region.to_dreamcast(), d.config.bios_config);
             }
             zgui.separator();
 
@@ -653,11 +646,11 @@ pub fn draw(self: *@This()) !void {
             }
             if (zgui.beginMenu("Bios Config", !d.running)) {
                 if (menu_from_enum("Language", &d.config.bios_config.language, .{}))
-                    try d.dc.load_flash(d.config.region.to_dreamcast(), d.config.bios_config);
+                    try d.dc.load_flash(d.io, d.config.region.to_dreamcast(), d.config.bios_config);
                 if (menu_from_enum("Sound Mode", &d.config.bios_config.sound_mode, .{}))
-                    try d.dc.load_flash(d.config.region.to_dreamcast(), d.config.bios_config);
+                    try d.dc.load_flash(d.io, d.config.region.to_dreamcast(), d.config.bios_config);
                 if (menu_from_enum("Auto Start", &d.config.bios_config.auto_start, .{}))
-                    try d.dc.load_flash(d.config.region.to_dreamcast(), d.config.bios_config);
+                    try d.dc.load_flash(d.io, d.config.region.to_dreamcast(), d.config.bios_config);
                 zgui.endMenu();
             }
             zgui.separator();
@@ -832,8 +825,8 @@ pub fn draw(self: *@This()) !void {
                         \\   16:9            Rendered at an increased horizontal resolution. More expensive and might be less compatible.
                     , .{});
                     if (resolution_update) {
-                        d.gctx_queue_mutex.lock();
-                        defer d.gctx_queue_mutex.unlock();
+                        d.gctx_queue_mutex.lockUncancelable(d.io);
+                        defer d.gctx_queue_mutex.unlock(d.io);
                         d.renderer.resolution = .{
                             .width = d.config.renderer.aspect_ratio.width() * d.config.renderer.internal_resolution_factor,
                             .height = Deecy.Renderer.NativeResolution.height * d.config.renderer.internal_resolution_factor,

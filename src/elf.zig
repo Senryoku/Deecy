@@ -139,7 +139,7 @@ program_headers: []ProgramHeader(u64),
 section_headers: []SectionHeader(u64),
 allocator: std.mem.Allocator,
 
-pub fn init(allocator: std.mem.Allocator, file_reader: *std.fs.File.Reader) !@This() {
+pub fn init(allocator: std.mem.Allocator, file_reader: *std.Io.File.Reader) !@This() {
     const reader = &file_reader.interface;
     const signature = try reader.takeInt(u32, .little);
     if (signature != 0x464C457F) return error.InvalidELF;
@@ -176,7 +176,7 @@ pub fn string(self: *@This(), index: u64) []const u8 {
     return self.strings[index..][0 .. std.mem.indexOf(u8, self.strings[index..], &[_]u8{0}) orelse 0];
 }
 
-fn _init(comptime endianness: std.builtin.Endian, comptime word_type: type, allocator: std.mem.Allocator, file_reader: *std.fs.File.Reader) !@This() {
+fn _init(comptime endianness: std.builtin.Endian, comptime word_type: type, allocator: std.mem.Allocator, file_reader: *std.Io.File.Reader) !@This() {
     const reader = &file_reader.interface;
     const elf_type: ELFType = @enumFromInt(try reader.takeInt(u16, endianness));
     const instruction_set: InstructionSet = @enumFromInt(try reader.takeInt(u16, endianness));

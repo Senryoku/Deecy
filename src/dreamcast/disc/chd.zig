@@ -104,9 +104,9 @@ const MetadataEntry = struct {
     flags: u8,
 };
 
-pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
+pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@This() {
     var self: @This() = .{
-        ._file = try .init(allocator, filepath),
+        ._file = try .init(allocator, io, filepath),
         ._allocator = allocator,
     };
     errdefer self.deinit(allocator);

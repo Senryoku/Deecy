@@ -578,7 +578,7 @@ pub const RegionArrayDataConfiguration = packed struct(u192) {
         return self.opaque_list_pointer.empty and self.opaque_modifier_volume_pointer.empty and self.translucent_list_pointer.empty and self.translucent_modifier_volume_pointer.empty and self.punch_through_list_pointer.empty;
     }
 
-    pub fn format(self: @This(), writer: *std.io.Writer) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         try writer.print("{f}", .{self.settings});
         try writer.print(" | Opaque: {f}", .{self.opaque_list_pointer});
         try writer.print(" | Opaque MV: {f}", .{self.opaque_modifier_volume_pointer});
@@ -587,7 +587,7 @@ pub const RegionArrayDataConfiguration = packed struct(u192) {
         try writer.print(" | PunchThrough: {f}", .{self.punch_through_list_pointer});
     }
 
-    pub fn formatType1(self: @This(), writer: *std.io.Writer) !void {
+    pub fn formatType1(self: @This(), writer: *std.Io.Writer) !void {
         try writer.print("{f}", .{self.settings});
         try writer.print(" | Opaque: {f}", .{self.opaque_list_pointer});
         try writer.print(" | Opaque MV: {f}", .{self.opaque_modifier_volume_pointer});

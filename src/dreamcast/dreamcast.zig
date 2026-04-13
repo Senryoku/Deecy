@@ -146,7 +146,7 @@ pub const Dreamcast = struct {
     aram: []align(64) u8 = undefined,
     hardware_registers: []align(4) u8,
 
-    scheduled_events: std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare),
+    scheduled_events: std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare) = .empty,
     _global_cycles: u64 = 0, // Cycles since the start of emulation.
 
     on_render_start: Callback = .{},
@@ -171,7 +171,6 @@ pub const Dreamcast = struct {
             .maple = try .init(allocator),
             .flash = try .init(allocator),
             .hardware_registers = try allocator.allocWithOptions(u8, 0x20_0000, .@"4", null), // FIXME: Huge waste of memory.
-            .scheduled_events = .init(allocator, {}),
             ._allocator = allocator,
         };
 
@@ -197,7 +196,7 @@ pub const Dreamcast = struct {
         errdefer dc.destroy();
 
         // Create 'userdata' folder if it doesn't exist
-        try std.fs.cwd().makePath(HostPaths.get_userdata_path());
+        try std.Io.Dir.cwd().createDirPath(std.Options.debug_io, HostPaths.get_userdata_path());
 
         const bios_path = try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_data_path(), "dc_boot.bin" });
         defer allocator.free(bios_path);
@@ -235,7 +234,7 @@ pub const Dreamcast = struct {
         //     }
         // }
 
-        self.scheduled_events.deinit();
+        self.scheduled_events.deinit(self._allocator);
         self.sh4_jit.deinit();
         self.gdrom.deinit();
         self.maple.deinit();
@@ -306,25 +305,16 @@ pub const Dreamcast = struct {
     }
 
     pub fn load_bios(self: *@This(), boot_path: []const u8) !void {
-        var boot_file = std.fs.cwd().openFile(boot_path, .{}) catch |err| {
-            dc_log.err(termcolor.red("Failed to open boot ROM at '{s}', error: {t}."), .{ boot_path, err });
-            return err;
-        };
-        defer boot_file.close();
-        const bytes_read = try boot_file.readAll(self.boot);
-        std.debug.assert(bytes_read == 0x200000);
+        if ((try std.Io.Dir.cwd().readFile(std.Options.debug_io, boot_path, self.boot)).len != 0x200000)
+            return error.InvalidBootROMSize;
     }
 
     pub const BiosConfig = struct { language: Language = .English, sound_mode: Flash.SystemConfigPayload.SoundMode = .Stereo, auto_start: Flash.SystemConfigPayload.AutoStart = .On };
 
-    pub fn load_flash(self: *@This(), region: Region, bios_config: BiosConfig) !void {
+    pub fn load_flash(self: *@This(), io: std.Io, region: Region, bios_config: BiosConfig) !void {
         // FIXME: User flash is sometimes corrupted. Always load default until I understand what's going on.
         const default_flash_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_data_path(), "dc_flash.bin" });
         defer self._allocator.free(default_flash_path);
-        var flash_file = std.fs.cwd().openFile(default_flash_path, .{}) catch |e| {
-            dc_log.err(termcolor.red("Failed to open default flash file at '{s}', error: {t}."), .{ default_flash_path, e });
-            return e;
-        };
 
         // var flash_file = std.fs.cwd().openFile(get_user_flash_path(), .{}) catch |err| f: {
         //     if (err == error.FileNotFound) {
@@ -339,9 +329,7 @@ pub const Dreamcast = struct {
         //     }
         // };
 
-        defer flash_file.close();
-        const flash_bytes_read = try flash_file.readAll(self.flash.data);
-        if (flash_bytes_read != 0x20000) return error.InvalidFlashSize;
+        if ((try std.Io.Dir.cwd().readFile(io, default_flash_path, self.flash.data)).len != 0x20000) return error.InvalidFlashSize;
 
         // Some flash dumps floating around are missing some partition headers (not fully formatted, I guess).
         const PartitionHeader: []const u8 = "KATANA_FLASH____";
@@ -1263,14 +1251,13 @@ pub const Dreamcast = struct {
         try reader.readSliceAll(std.mem.sliceAsBytes(self.aram));
         try reader.readSliceAll(std.mem.sliceAsBytes(self.hardware_registers));
 
-        while (self.scheduled_events.count() > 0)
-            _ = self.scheduled_events.remove();
+        self.scheduled_events.clearRetainingCapacity();
         var event_count: usize = 0;
         try reader.readSliceAll(std.mem.asBytes(&event_count));
         for (0..event_count) |_| {
             var event: ScheduledEvent = undefined;
             try reader.readSliceAll(std.mem.asBytes(&event));
-            try self.scheduled_events.add(event);
+            try self.scheduled_events.push(self._allocator, event);
         }
 
         try reader.readSliceAll(std.mem.asBytes(&self._global_cycles));

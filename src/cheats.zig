@@ -96,13 +96,13 @@ pub fn save(allocator: std.mem.Allocator, product_name: []const u8, product_id: 
     const cheat_path = try path(allocator, product_name, product_id);
     defer allocator.free(cheat_path);
 
-    if (std.fs.path.dirname(cheat_path)) |dir| try std.fs.cwd().makePath(dir);
+    if (std.fs.path.dirname(cheat_path)) |dir| try std.Io.Dir.cwd().createDirPath(std.Options.debug_io, dir);
 
-    const file = try std.fs.cwd().createFile(cheat_path, .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, cheat_path, .{});
+    defer file.close(std.Options.debug_io);
     const buffer = try allocator.alloc(u8, 8192);
     defer allocator.free(buffer);
-    var writer = file.writer(buffer);
+    var writer = file.writer(std.Options.debug_io, buffer);
     try std.zon.stringify.serialize(cheats, .{}, &writer.interface);
     try writer.end();
 }
@@ -112,7 +112,7 @@ pub fn load(allocator: std.mem.Allocator, product_name: []const u8, product_id: 
     const cheat_path = try path(allocator, product_name, product_id);
     defer allocator.free(cheat_path);
 
-    const file = std.fs.cwd().openFile(cheat_path, .{}) catch |err| {
+    const cheats_str = std.Io.Dir.cwd().readFileAllocOptions(std.Options.debug_io, cheat_path, allocator, .limited(8 * 1024 * 1024), .@"8", 0) catch |err| {
         switch (err) {
             error.FileNotFound => {
                 // Load default cheats.
@@ -135,12 +135,9 @@ pub fn load(allocator: std.mem.Allocator, product_name: []const u8, product_id: 
             else => return err,
         }
     };
-    defer file.close();
-
-    const cheats_str = try file.readToEndAllocOptions(allocator, 1024 * 1024, null, .@"8", 0);
     defer allocator.free(cheats_str);
 
-    const zon = std.zon.parse.fromSlice([]Cheat, allocator, cheats_str, null, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
+    const zon = std.zon.parse.fromSliceAlloc([]Cheat, allocator, cheats_str, null, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
         log.err("Failed to parse cheats file '{s}': {t}.", .{ cheat_path, err });
         return &.{};
     };

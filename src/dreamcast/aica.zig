@@ -1011,7 +1011,7 @@ pub const AICA = struct {
     }
 
     pub fn timestamp() u32 {
-        const utc = std.Io.Clock.real.now(std.Options.debug_io).toMilliseconds();
+        const utc = std.Io.Clock.real.now(std.Options.debug_io).toSeconds();
         // TODO: Handle timezone?
         return @intCast(utc + (20 * 365 + 5) * 24 * 60 * 60); // Dreamcast epoch is January 1, 1950 00:00
     }
@@ -1062,28 +1062,22 @@ pub const AICA = struct {
 
     pub fn dump_wave_memory(self: *const @This()) void {
         const path = "logs/wave_memory_dump.bin";
-        const file = std.fs.cwd().createFile(path, .{}) catch |err| {
-            aica_log.err("Failed to create file '{s}': {}", .{ path, err });
-            return;
-        };
-        defer file.close();
-        _ = file.write(self.wave_memory) catch |err| {
-            aica_log.err("Failed to write to file '{s}': {}", .{ path, err });
-            return;
-        };
+        std.Io.Dir.cwd().writeFile(std.Options.debug_io, .{
+            .sub_path = path,
+            .data = self.wave_memory,
+            .flags = .{},
+        }) catch |err|
+            return aica_log.err("Failed to write to file '{s}': {}", .{ path, err });
         aica_log.info("[+] Wrote wave memory dump to '{s}'.", .{path});
     }
     pub fn dump_registers(self: *const @This()) void {
         const path = "logs/aica_registers_dump.bin";
-        const file = std.fs.cwd().createFile(path, .{}) catch |err| {
-            aica_log.err("Failed to create file '{s}': {}", .{ path, err });
-            return;
-        };
-        defer file.close();
-        _ = file.write(std.mem.sliceAsBytes(self.regs)) catch |err| {
-            aica_log.err("Failed to write to file '{s}': {}", .{ path, err });
-            return;
-        };
+        std.Io.Dir.cwd().writeFile(std.Options.debug_io, .{
+            .sub_path = path,
+            .data = std.mem.sliceAsBytes(self.regs),
+            .flags = .{},
+        }) catch |err|
+            return aica_log.err("Failed to write to file '{s}': {}", .{ path, err });
         aica_log.info("[+] Wrote registers dump to '{s}'.", .{path});
     }
 

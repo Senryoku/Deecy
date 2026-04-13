@@ -14,13 +14,17 @@ pub fn allocate_executable(allocator: std.mem.Allocator, size: usize) ![]align(s
 pub fn virtual_alloc(comptime element_type: type, count: usize) ![]element_type {
     switch (builtin.os.tag) {
         .windows => {
-            const memory = try std.os.windows.VirtualAlloc(
-                null,
-                @sizeOf(element_type) * count,
-                std.os.windows.MEM_RESERVE | std.os.windows.MEM_COMMIT,
-                std.os.windows.PAGE_READWRITE,
-            );
-            return @as([*]element_type, @ptrCast(@alignCast(memory)))[0..count];
+            var size: std.os.windows.SIZE_T = @sizeOf(element_type) * count;
+            var base_addr: ?*anyopaque = null;
+            if (std.os.windows.ntdll.NtAllocateVirtualMemory(
+                std.os.windows.GetCurrentProcess(),
+                @ptrCast(&base_addr),
+                0,
+                &size,
+                .{ .RESERVE = true, .COMMIT = true },
+                .{ .READWRITE = true },
+            ) != .SUCCESS) return error.NtAllocateVirtualMemoryError;
+            return @as([*]element_type, @ptrCast(@alignCast(base_addr)))[0..count];
         },
         .linux => {
             const memory = try std.posix.mmap(
@@ -41,7 +45,12 @@ pub fn virtual_dealloc(memory: anytype) void {
     if (@typeInfo(@TypeOf(memory)) != .pointer or @typeInfo(@TypeOf(memory)).pointer.size != .slice) @compileError("virtual_dealloc expects a slice.");
 
     switch (builtin.os.tag) {
-        .windows => std.os.windows.VirtualFree(memory.ptr, 0, std.os.windows.MEM_RELEASE),
+        .windows => {
+            var base_addr: ?*anyopaque = memory.ptr;
+            var size: std.os.windows.SIZE_T = 0;
+            const status = std.os.windows.ntdll.NtFreeVirtualMemory(std.os.windows.GetCurrentProcess(), @ptrCast(&base_addr), &size, .{ .RELEASE = true });
+            if (status != .SUCCESS) std.log.err("Failed to free virtual memory: {t}", .{status});
+        },
         .linux => std.posix.munmap(@as([*]align(std.heap.page_size_min) const u8, @ptrCast(@alignCast(memory.ptr)))[0 .. memory.len * @sizeOf(std.meta.Elem(@TypeOf(memory)))]),
         else => @compileError("Unsupported OS."),
     }
@@ -50,16 +59,21 @@ pub fn virtual_dealloc(memory: anytype) void {
 // Zero-out a virtual allocation
 pub fn reset_virtual_alloc(memory: anytype) !void {
     if (@typeInfo(@TypeOf(memory)) != .pointer or @typeInfo(@TypeOf(memory)).pointer.size != .slice) @compileError("reset_virtual_alloc expects a slice.");
-    const byte_size = memory.len * @sizeOf(std.meta.Elem(@TypeOf(memory)));
+    var byte_size = memory.len * @sizeOf(std.meta.Elem(@TypeOf(memory)));
     switch (builtin.os.tag) {
         .windows => {
-            std.os.windows.VirtualFree(memory.ptr, byte_size, std.os.windows.MEM_DECOMMIT);
-            std.debug.assert(try std.os.windows.VirtualAlloc(
-                memory.ptr,
-                byte_size,
-                std.os.windows.MEM_COMMIT,
-                std.os.windows.PAGE_READWRITE,
-            ) == @as(*anyopaque, @ptrCast(memory.ptr)));
+            var base_addr: ?*anyopaque = memory.ptr;
+            if (std.os.windows.ntdll.NtFreeVirtualMemory(std.os.windows.GetCurrentProcess(), @ptrCast(&base_addr), &byte_size, .{ .DECOMMIT = true }) != .SUCCESS)
+                return error.NtFreeVirtualMemoryError;
+            if (std.os.windows.ntdll.NtAllocateVirtualMemory(
+                std.os.windows.GetCurrentProcess(),
+                @ptrCast(&base_addr),
+                0,
+                &byte_size,
+                .{ .COMMIT = true },
+                .{ .READWRITE = true },
+            ) != .SUCCESS)
+                return error.NtAllocateVirtualMemoryError;
         },
         else => {
             // NOTE: madvise 'dontneed' could be faster and should reliably zero out the memory on private anonymous mappings on Linux, if I believe what I read here and there online.

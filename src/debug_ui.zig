@@ -352,8 +352,8 @@ fn display_packed_color(comptime label: [:0]const u8, packed_color: Colors.Packe
 /// Locks gctx_queue_mutex.
 /// Accesses renderer.ta_lists. Might write a texture.
 pub fn draw(self: *@This(), d: *Deecy) !void {
-    d.gctx_queue_mutex.lock();
-    defer d.gctx_queue_mutex.unlock();
+    d.gctx_queue_mutex.lockUncancelable(d.io);
+    defer d.gctx_queue_mutex.unlock(d.io);
 
     var dc = d.dc;
 
@@ -421,10 +421,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             const was_running = d.running;
             if (was_running)
                 d.pause();
-            var file = try std.fs.cwd().createFile("logs/dc_dump.bin", .{});
-            defer file.close();
+            var file = try std.Io.Dir.cwd().createFile(d.io, "logs/dc_dump.bin", .{});
+            defer file.close(d.io);
             const buff = try self._allocator.alloc(u8, 8192);
-            var file_writer = file.writer(buff);
+            var file_writer = file.writer(d.io, buff);
             var writer = &file_writer.interface;
             _ = try dc.serialize(writer);
             try writer.flush();
