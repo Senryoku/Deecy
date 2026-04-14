@@ -12,6 +12,7 @@ pub const sh4_log = std.log.scoped(.sh4);
 pub const mmu_log = std.log.scoped(.mmu);
 
 const DreamcastModule = @import("dreamcast.zig");
+const Context = DreamcastModule.Context;
 const Dreamcast = DreamcastModule.Dreamcast;
 const HardwareRegisters = DreamcastModule.HardwareRegisters;
 const HardwareRegister = HardwareRegisters.HardwareRegister;
@@ -1627,7 +1628,7 @@ pub const SH4 = struct {
                             check_type(&[_]type{u8}, T, "Invalid P4 Write({}) to SCFTDR2\n", .{T});
 
                             var stdout_buffer: [128]u8 = undefined;
-                            var stdout_writer = std.Io.File.stdout().writer(std.Options.debug_io, &stdout_buffer);
+                            var stdout_writer = std.Io.File.stdout().writer(Context.io, &stdout_buffer);
                             const stdout = &stdout_writer.interface;
 
                             stdout.print("\u{001b}[44m\u{001b}[97m{c}\u{001b}[0m", .{value}) catch |err| {

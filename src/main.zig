@@ -57,11 +57,10 @@ const ATTACH_PARENT_PROCESS = ~@as(std.os.windows.DWORD, 0);
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
-    defer custom_log.deinit();
+    const allocator = init.gpa;
 
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    var allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+    custom_log.init(allocator, io);
+    defer custom_log.deinit();
 
     if (builtin.os.tag == .windows and config.no_console) {
         // When built with the GUI subsystem on Windows, try to attach to the console if we received any arguments.
@@ -254,7 +253,7 @@ pub fn main(init: std.process.Init) !void {
         if (builtin.os.tag == .windows) _ = timeEndPeriod(1);
     }
 
-    var precise_sleep: PreciseSleep = .init();
+    var precise_sleep: PreciseSleep = .init(io);
     defer precise_sleep.deinit();
     var then = zglfw.getTime();
     while (!d.window.shouldClose()) {
@@ -317,7 +316,7 @@ pub fn main(init: std.process.Init) !void {
                 .@"50Hz" => 20_000_000,
                 .Off => unreachable,
             };
-            precise_sleep.wait_for_interval(ns_per_frame);
+            precise_sleep.wait_for_interval(io, ns_per_frame);
         }
     }
 }

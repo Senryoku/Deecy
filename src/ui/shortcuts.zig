@@ -145,7 +145,7 @@ fn serialize(self: @This(), allocator: std.mem.Allocator, io: std.Io) !void {
         try list.append(allocator, .{ .key = entry.key_ptr.*, .action = entry.value_ptr.name });
     }
 
-    const config_path = try get_config_path(allocator);
+    const config_path = try get_config_path(allocator, io);
     defer allocator.free(config_path);
 
     var config_file = try std.Io.Dir.cwd().createFile(io, config_path, .{});
@@ -159,7 +159,7 @@ fn serialize(self: @This(), allocator: std.mem.Allocator, io: std.Io) !void {
 }
 
 fn deserialize(self: *@This(), allocator: std.mem.Allocator, io: std.Io) !void {
-    const config_path = try get_config_path(allocator);
+    const config_path = try get_config_path(allocator, io);
     defer allocator.free(config_path);
 
     const data = try std.Io.Dir.cwd().readFileAllocOptions(io, config_path, allocator, .limited(32 * 1024 * 1024), .@"8", 0);
@@ -179,8 +179,8 @@ fn deserialize(self: *@This(), allocator: std.mem.Allocator, io: std.Io) !void {
     // FIXME: If new default shortcuts are added by an update, they won't appear if the user already have a config file...
 }
 
-fn get_config_path(allocator: std.mem.Allocator) ![]const u8 {
-    return try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_userdata_path(), "shortcuts.zon" });
+fn get_config_path(allocator: std.mem.Allocator, io: std.Io) ![]const u8 {
+    return try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_userdata_path(io), "shortcuts.zon" });
 }
 
 fn get_action(name: Action.Name) Action {

@@ -2,13 +2,39 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 pub fn allocate_executable(allocator: std.mem.Allocator, size: usize) ![]align(std.heap.page_size_min) u8 {
-    const r = try allocator.alignedAlloc(u8, .fromByteUnits(std.heap.page_size_min), size);
-    switch (std.posix.errno(std.posix.system.mprotect(r.ptr, size, .{ .READ = true, .WRITE = true, .EXEC = true }))) {
-        .SUCCESS => {},
-        .NOMEM => return error.OutOfMemory,
-        else => |err| return std.posix.unexpectedErrno(err),
+    switch (builtin.os.tag) {
+        .windows => {
+            var local_size: std.os.windows.SIZE_T = size;
+            var base_addr: ?*anyopaque = null;
+            if (std.os.windows.ntdll.NtAllocateVirtualMemory(
+                std.os.windows.GetCurrentProcess(),
+                @ptrCast(&base_addr),
+                0,
+                &local_size,
+                .{ .RESERVE = true, .COMMIT = true },
+                .{ .EXECUTE_READWRITE = true },
+            ) != .SUCCESS) return error.NtAllocateVirtualMemoryError;
+            return @as([*]align(std.heap.page_size_min) u8, @ptrCast(@alignCast(base_addr)))[0..size];
+        },
+        .linux => {
+            const r = try allocator.alignedAlloc(u8, .fromByteUnits(std.heap.page_size_min), size);
+            switch (std.posix.errno(std.posix.system.mprotect(r.ptr, size, .{ .READ = true, .WRITE = true, .EXEC = true }))) {
+                .SUCCESS => {},
+                .NOMEM => return error.OutOfMemory,
+                else => |err| return std.posix.unexpectedErrno(err),
+            }
+            return r;
+        },
+        else => @compileError("Unsupported OS."),
     }
-    return r;
+}
+
+pub fn deallocate_executable(allocator: std.mem.Allocator, memory: []align(std.heap.page_size_min) u8) void {
+    switch (builtin.os.tag) {
+        .windows => virtual_dealloc(memory),
+        .linux => allocator.free(memory),
+        else => @compileError("Unsupported OS."),
+    }
 }
 
 pub fn virtual_alloc(comptime element_type: type, count: usize) ![]element_type {

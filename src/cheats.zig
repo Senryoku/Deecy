@@ -86,33 +86,33 @@ pub fn get_builtin_cheats(product_name: []const u8, product_id: []const u8) ?[]c
 }
 
 /// Caller owns the returned memory
-pub fn path(allocator: std.mem.Allocator, product_name: []const u8, product_id: []const u8) ![]const u8 {
-    const game_dir = try HostPaths.userdata_game_directory(allocator, product_name, product_id);
+pub fn path(allocator: std.mem.Allocator, io: std.Io, product_name: []const u8, product_id: []const u8) ![]const u8 {
+    const game_dir = try HostPaths.userdata_game_directory(allocator, io, product_name, product_id);
     defer allocator.free(game_dir);
     return try std.fs.path.join(allocator, &[_][]const u8{ game_dir, "cheats.zon" });
 }
 
-pub fn save(allocator: std.mem.Allocator, product_name: []const u8, product_id: []const u8, cheats: []const Cheat) !void {
-    const cheat_path = try path(allocator, product_name, product_id);
+pub fn save(allocator: std.mem.Allocator, io: std.Io, product_name: []const u8, product_id: []const u8, cheats: []const Cheat) !void {
+    const cheat_path = try path(allocator, io, product_name, product_id);
     defer allocator.free(cheat_path);
 
-    if (std.fs.path.dirname(cheat_path)) |dir| try std.Io.Dir.cwd().createDirPath(std.Options.debug_io, dir);
+    if (std.fs.path.dirname(cheat_path)) |dir| try std.Io.Dir.cwd().createDirPath(io, dir);
 
-    const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, cheat_path, .{});
-    defer file.close(std.Options.debug_io);
+    const file = try std.Io.Dir.cwd().createFile(io, cheat_path, .{});
+    defer file.close(io);
     const buffer = try allocator.alloc(u8, 8192);
     defer allocator.free(buffer);
-    var writer = file.writer(std.Options.debug_io, buffer);
+    var writer = file.writer(io, buffer);
     try std.zon.stringify.serialize(cheats, .{}, &writer.interface);
     try writer.end();
 }
 
 /// Caller owns the returned memory
-pub fn load(allocator: std.mem.Allocator, product_name: []const u8, product_id: []const u8) !?[]Cheat {
-    const cheat_path = try path(allocator, product_name, product_id);
+pub fn load(allocator: std.mem.Allocator, io: std.Io, product_name: []const u8, product_id: []const u8) !?[]Cheat {
+    const cheat_path = try path(allocator, io, product_name, product_id);
     defer allocator.free(cheat_path);
 
-    const cheats_str = std.Io.Dir.cwd().readFileAllocOptions(std.Options.debug_io, cheat_path, allocator, .limited(8 * 1024 * 1024), .@"8", 0) catch |err| {
+    const cheats_str = std.Io.Dir.cwd().readFileAllocOptions(io, cheat_path, allocator, .limited(8 * 1024 * 1024), .@"8", 0) catch |err| {
         switch (err) {
             error.FileNotFound => {
                 // Load default cheats.
@@ -126,7 +126,7 @@ pub fn load(allocator: std.mem.Allocator, product_name: []const u8, product_id: 
                         try cheat_list.append(allocator, try cheat.dupe(allocator));
                     const slice = try cheat_list.toOwnedSlice(allocator);
 
-                    try save(allocator, product_name, product_id, slice);
+                    try save(allocator, io, product_name, product_id, slice);
 
                     return slice;
                 }

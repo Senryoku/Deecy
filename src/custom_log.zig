@@ -13,6 +13,14 @@ var last_message: struct {
 var count: u32 = 0;
 var buffer: [128]u8 = undefined;
 
+var allocator: std.mem.Allocator = undefined;
+var io: std.Io = undefined;
+
+pub fn init(_allocator: std.mem.Allocator, _io: std.Io) void {
+    allocator = _allocator;
+    io = _io;
+}
+
 pub fn deinit() void {
     file.close();
 }
@@ -24,7 +32,7 @@ pub fn set_output(out: Output) void {
     file.close();
     output = out;
     if (output == .File or output == .Both) {
-        file.open(std.heap.page_allocator) catch {
+        file.open(allocator, io) catch {
             output = .Console;
             std.log.err("Failed to open log file. That's akward...", .{});
         };
@@ -39,7 +47,6 @@ pub fn log(
 ) void {
     if (output == .None) return;
 
-    const io = std.Options.debug_io;
     const prev = io.swapCancelProtection(.blocked);
     defer _ = io.swapCancelProtection(prev);
 

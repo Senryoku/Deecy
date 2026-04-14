@@ -9,13 +9,16 @@ var buffer: [128]u8 = undefined;
 var mutex: std.Io.Mutex = .init;
 var _opened: bool = false;
 
+var _io: std.Io = undefined;
+
 /// Noop if already open
-pub fn open(allocator: std.mem.Allocator) !void {
+pub fn open(allocator: std.mem.Allocator, io: std.Io) !void {
     if (!opened()) {
-        const io = std.Options.debug_io;
+        _io = io;
+
         mutex.lockUncancelable(io);
         defer mutex.unlock(io);
-        const path = try get_path(allocator);
+        const path = try get_path(allocator, io);
         defer allocator.free(path);
         file = try std.Io.Dir.cwd().createFile(io, path, .{});
         file_writer = file.writer(io, &buffer);
@@ -27,12 +30,11 @@ pub fn open(allocator: std.mem.Allocator) !void {
 /// Noop if not open
 pub fn close() void {
     if (opened()) {
-        const io = std.Options.debug_io;
-        mutex.lockUncancelable(io);
-        defer mutex.unlock(io);
+        mutex.lockUncancelable(_io);
+        defer mutex.unlock(_io);
         _opened = false;
         writer.flush() catch {};
-        file.close(io);
+        file.close(_io);
     }
 }
 
@@ -42,16 +44,14 @@ pub fn opened() bool {
 
 /// Noop if disabled
 pub fn lock() void {
-    const io = std.Options.debug_io;
-    if (opened()) mutex.lockUncancelable(io);
+    if (opened()) mutex.lockUncancelable(_io);
 }
 
 /// Noop if disabled
 pub fn unlock() void {
-    const io = std.Options.debug_io;
-    if (opened()) mutex.unlock(io);
+    if (opened()) mutex.unlock(_io);
 }
 
-pub fn get_path(allocator: std.mem.Allocator) ![]const u8 {
-    return std.fs.path.join(allocator, &.{ HostPaths.get_userdata_path(), "deecy.log" });
+pub fn get_path(allocator: std.mem.Allocator, io: std.Io) ![]const u8 {
+    return std.fs.path.join(allocator, &.{ HostPaths.get_userdata_path(io), "deecy.log" });
 }

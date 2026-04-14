@@ -79,8 +79,7 @@ const BlockCache = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        self._allocator.free(self.buffer);
-
+        host_memory.deallocate_executable(self._allocator, self.buffer);
         self.deallocate_blocks();
     }
 

@@ -13,6 +13,7 @@ fn generate_appdata_path(buf: []u8, path: []const u8) []const u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+    // FIXME: https://github.com/ziglibs/known-folders ?
     const app_data_dir = std.fs.getAppDataDir(allocator, "Deecy") catch |err|
         std.debug.panic("Failed to get appdata dir: {t}\n", .{err});
     const p = std.fs.path.resolve(allocator, &[_][]const u8{ app_data_dir, path }) catch |err|
@@ -31,10 +32,10 @@ pub fn safe_path(path: []u8) void {
     }
 }
 
-pub fn get_data_path() []const u8 {
+pub fn get_data_path(io: std.Io) []const u8 {
     if (path_config.use_appdata_dir) {
-        _mutex.lockUncancelable(std.Options.debug_io);
-        defer _mutex.unlock(std.Options.debug_io);
+        _mutex.lockUncancelable(io);
+        defer _mutex.unlock(io);
         if (data_path.len == 0)
             data_path = generate_appdata_path(&data_path_buffer, path_config.data_path);
         return data_path;
@@ -42,10 +43,10 @@ pub fn get_data_path() []const u8 {
     return path_config.data_path;
 }
 
-pub fn get_userdata_path() []const u8 {
+pub fn get_userdata_path(io: std.Io) []const u8 {
     if (path_config.use_appdata_dir) {
-        _mutex.lockUncancelable(std.Options.debug_io);
-        defer _mutex.unlock(std.Options.debug_io);
+        _mutex.lockUncancelable(io);
+        defer _mutex.unlock(io);
         if (userdata_path.len == 0)
             userdata_path = generate_appdata_path(&userdata_path_buffer, path_config.userdata_path);
         return userdata_path;
@@ -53,10 +54,10 @@ pub fn get_userdata_path() []const u8 {
     return path_config.userdata_path;
 }
 
-pub fn userdata_game_directory(allocator: std.mem.Allocator, product_name: []const u8, product_id: []const u8) ![]const u8 {
+pub fn userdata_game_directory(allocator: std.mem.Allocator, io: std.Io, product_name: []const u8, product_id: []const u8) ![]const u8 {
     const folder_name = try std.fmt.allocPrint(allocator, "{s}[{s}]", .{ product_name, product_id });
     safe_path(folder_name);
     defer allocator.free(folder_name);
-    const path = try std.fs.path.join(allocator, &[_][]const u8{ get_userdata_path(), folder_name });
+    const path = try std.fs.path.join(allocator, &[_][]const u8{ get_userdata_path(io), folder_name });
     return path;
 }

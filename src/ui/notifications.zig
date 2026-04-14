@@ -27,14 +27,15 @@ const Notification = struct {
 notifications: std.ArrayList(Notification) = .empty,
 _mutex: std.Io.Mutex = .init,
 _allocator: std.mem.Allocator,
+io: std.Io,
 
-pub fn init(allocator: std.mem.Allocator) @This() {
-    return .{ ._allocator = allocator };
+pub fn init(allocator: std.mem.Allocator, io: std.Io) @This() {
+    return .{ ._allocator = allocator, .io = io };
 }
 
 pub fn deinit(self: *@This()) void {
-    self._mutex.lockUncancelable(std.Options.debug_io);
-    defer self._mutex.unlock(std.Options.debug_io);
+    self._mutex.lockUncancelable(self.io);
+    defer self._mutex.unlock(self.io);
 
     for (self.notifications.items) |*notification| notification.deinit(self._allocator);
     self.notifications.deinit(self._allocator);
@@ -47,8 +48,8 @@ pub fn push(self: *@This(), comptime title_fmt: []const u8, title_args: anytype,
 }
 
 fn push_impl(self: *@This(), comptime title_fmt: []const u8, title_args: anytype, comptime text_fmt: []const u8, text_args: anytype) !void {
-    self._mutex.lockUncancelable(std.Options.debug_io);
-    defer self._mutex.unlock(std.Options.debug_io);
+    self._mutex.lockUncancelable(self.io);
+    defer self._mutex.unlock(self.io);
 
     while (self.notifications.items.len >= MaxNotifications)
         self.notifications.pop().?.deinit(self._allocator);
@@ -57,7 +58,7 @@ fn push_impl(self: *@This(), comptime title_fmt: []const u8, title_args: anytype
     errdefer self._allocator.free(title);
     const text = try std.fmt.allocPrint(self._allocator, text_fmt, text_args);
     errdefer self._allocator.free(text);
-    try self.notifications.insert(self._allocator, 0, .{ .title = title, .text = text, .time = std.Io.Clock.real.now(std.Options.debug_io).toMilliseconds() });
+    try self.notifications.insert(self._allocator, 0, .{ .title = title, .text = text, .time = std.Io.Clock.real.now(self.io).toMilliseconds() });
 }
 
 const ImguiWidgetIDs = arr: {
@@ -67,10 +68,10 @@ const ImguiWidgetIDs = arr: {
 };
 
 pub fn draw(self: *@This()) void {
-    self._mutex.lockUncancelable(std.Options.debug_io);
-    defer self._mutex.unlock(std.Options.debug_io);
+    self._mutex.lockUncancelable(self.io);
+    defer self._mutex.unlock(self.io);
 
-    const time = std.Io.Clock.real.now(std.Options.debug_io).toMilliseconds();
+    const time = std.Io.Clock.real.now(self.io).toMilliseconds();
     const window_size = zgui.io.getDisplaySize();
     while (self.notifications.items.len > 0 and time - self.notifications.getLast().time > ExpireTime)
         self.notifications.pop().?.deinit(self._allocator);

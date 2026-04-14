@@ -79,7 +79,7 @@ allocator: std.mem.Allocator,
 pub fn create(allocator: std.mem.Allocator, d: *Deecy) !*@This() {
     var r = try allocator.create(@This());
     r.* = .{
-        .notifications = .init(allocator),
+        .notifications = .init(allocator, d.io),
         .deecy = d,
         .allocator = allocator,
     };
@@ -271,7 +271,7 @@ fn get_game_image(self: *@This(), path: []const u8, cache: ?*GameInfoCache) void
 
     var disc = Disc.init(allocator, self.deecy.io, path) catch |err| {
         ui_log.err("Failed to load disc '{s}': {t}", .{ path, err });
-        if (cache) |c| c.add(path, "NoName", "NoID", .{ .width = 0, .height = 0 }, null) catch {};
+        if (cache) |c| c.add(self.deecy.io, path, "NoName", "NoID", .{ .width = 0, .height = 0 }, null) catch {};
         return;
     };
     defer disc.deinit(allocator);
@@ -290,14 +290,14 @@ fn get_game_image(self: *@This(), path: []const u8, cache: ?*GameInfoCache) void
         if (PVRFile.decode(allocator, tex_buffer[0..len])) |result| {
             defer result.deinit(allocator);
             self.update_game_texture(path, result.width, result.height, result.bgra);
-            if (cache) |c| c.add(path, product_name, product_id, .{ .width = result.width, .height = result.height }, result.bgra) catch {};
+            if (cache) |c| c.add(self.deecy.io, path, product_name, product_id, .{ .width = result.width, .height = result.height }, result.bgra) catch {};
         } else |err| {
             ui_log.err(termcolor.red("Failed to decode 0GDTEX.PVR for '{s}': {t}"), .{ path, err });
-            if (cache) |c| c.add(path, product_name, product_id, .{ .width = 0, .height = 0 }, null) catch {};
+            if (cache) |c| c.add(self.deecy.io, path, product_name, product_id, .{ .width = 0, .height = 0 }, null) catch {};
         }
     } else |err| {
         ui_log.info("Failed to find 0GDTEX.PVR for '{s}': {t}", .{ path, err });
-        if (cache) |c| c.add(path, product_name, product_id, .{ .width = 0, .height = 0 }, null) catch {};
+        if (cache) |c| c.add(self.deecy.io, path, product_name, product_id, .{ .width = 0, .height = 0 }, null) catch {};
     }
 }
 
@@ -322,7 +322,7 @@ const GameInfoCache = struct {
     _mutex: std.Io.Mutex = .init,
     _arena: std.heap.ArenaAllocator,
 
-    pub fn create(allocator: std.mem.Allocator) !*@This() {
+    pub fn create(allocator: std.mem.Allocator, io: std.Io) !*@This() {
         var r = try allocator.create(@This());
         r.* = .{
             .map = undefined,
@@ -330,7 +330,7 @@ const GameInfoCache = struct {
             ._arena = std.heap.ArenaAllocator.init(allocator),
         };
         r.map = std.StringHashMap(Entry).init(r._arena.allocator());
-        r._path = try get_path(r._arena.allocator());
+        r._path = try get_path(r._arena.allocator(), io);
         return r;
     }
 
@@ -339,27 +339,27 @@ const GameInfoCache = struct {
         allocator.destroy(self);
     }
 
-    fn get_path(allocator: std.mem.Allocator) ![]const u8 {
-        return try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_userdata_path(), "game_info_cache" });
+    fn get_path(allocator: std.mem.Allocator, io: std.Io) ![]const u8 {
+        return try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_userdata_path(io), "game_info_cache" });
     }
 
-    pub fn load(self: *@This()) !void {
-        const data = try std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, self._path, self._arena.allocator(), .unlimited);
+    pub fn load(self: *@This(), io: std.Io) !void {
+        const data = try std.Io.Dir.cwd().readFileAlloc(io, self._path, self._arena.allocator(), .unlimited);
         defer self._arena.allocator().free(data);
         try self.deserialize(data);
     }
 
     /// Thread safe
-    pub fn get(self: *@This(), path: []const u8) ?Entry {
-        self._mutex.lockUncancelable(std.Options.debug_io);
-        defer self._mutex.unlock(std.Options.debug_io);
+    pub fn get(self: *@This(), io: std.Io, path: []const u8) ?Entry {
+        self._mutex.lockUncancelable(io);
+        defer self._mutex.unlock(io);
         return self.map.get(path);
     }
 
     /// Thread safe
-    pub fn add(self: *@This(), path: []const u8, product_name: []const u8, product_id: []const u8, image_size: struct { width: u32, height: u32 }, image: ?[]const u8) !void {
-        self._mutex.lockUncancelable(std.Options.debug_io);
-        defer self._mutex.unlock(std.Options.debug_io);
+    pub fn add(self: *@This(), io: std.Io, path: []const u8, product_name: []const u8, product_id: []const u8, image_size: struct { width: u32, height: u32 }, image: ?[]const u8) !void {
+        self._mutex.lockUncancelable(io);
+        defer self._mutex.unlock(io);
         const arena_alloc = self._arena.allocator();
         const duped_path = try arena_alloc.dupe(u8, path);
         try self.map.put(duped_path, .{
@@ -372,9 +372,9 @@ const GameInfoCache = struct {
         });
     }
 
-    pub fn save_to_disk(self: *@This()) !void {
-        var file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, self._path, .{});
-        defer file.close(std.Options.debug_io);
+    pub fn save_to_disk(self: *@This(), io: std.Io) !void {
+        var file = try std.Io.Dir.cwd().createFile(io, self._path, .{});
+        defer file.close(io);
 
         var allocating_writer = std.Io.Writer.Allocating.init(self._arena.allocator());
         defer allocating_writer.deinit();
@@ -402,7 +402,7 @@ const GameInfoCache = struct {
 
         const buffer = try self._arena.allocator().alloc(u8, 4 * 1024);
         defer self._arena.allocator().free(buffer);
-        var file_writer = file.writer(std.Options.debug_io, buffer);
+        var file_writer = file.writer(io, buffer);
         var writer = &file_writer.interface;
 
         try writer.writeInt(u32, Signature, .little);
@@ -476,9 +476,9 @@ pub fn refresh_games(self: *@This()) !void {
         const start_time = std.Io.Clock.real.now(self.deecy.io);
         defer ui_log.info("Checked {d} disc files in {f}", .{ self.disc_files.items.len, start_time.durationTo(std.Io.Clock.real.now(self.deecy.io)) });
 
-        var cache = try GameInfoCache.create(self.allocator);
+        var cache = try GameInfoCache.create(self.allocator, self.deecy.io);
         defer cache.destroy(self.allocator);
-        cache.load() catch |err|
+        cache.load(self.deecy.io) catch |err|
             ui_log.err(termcolor.red("Failed to load game info cache: {t}"), .{err});
 
         {
@@ -522,21 +522,21 @@ pub fn refresh_games(self: *@This()) !void {
         }
 
         var group: std.Io.Group = .init;
+        defer group.cancel(self.deecy.io);
 
-        for (0..self.disc_files.items.len) |file_idx| { // NOTE: I want to prioritize the first items on the list, and spawning jobs in the reverse order seem to do the trick for some reason ¯\_(ツ)_/¯
-            const idx = self.disc_files.items.len - 1 - file_idx;
-            if (cache.get(self.disc_files.items[idx].path)) |entry| {
+        for (0..self.disc_files.items.len) |file_idx| {
+            if (cache.get(self.deecy.io, self.disc_files.items[file_idx].path)) |entry| {
                 self.update_game_info(entry.path, entry.product_name, entry.product_id);
                 if (entry.image) |image|
                     self.update_game_texture(entry.path, entry.image_size.width, entry.image_size.height, image);
             } else {
-                group.async(self.deecy.io, get_game_image, .{ self, self.disc_files.items[idx].path, cache });
+                group.async(self.deecy.io, get_game_image, .{ self, self.disc_files.items[file_idx].path, cache });
             }
         }
 
         try group.await(self.deecy.io);
 
-        try cache.save_to_disk();
+        try cache.save_to_disk(self.deecy.io);
     }
 }
 
@@ -596,7 +596,7 @@ pub fn draw(self: *@This()) !void {
                 if (zgui.menuItem("File", .{ .selected = d.config.log_output == .File }))
                     d.config.log_output = .File;
                 if (zgui.isItemHovered(.{ .for_tooltip = true }) and zgui.beginTooltip()) {
-                    const path = try custom_log.get_path(d._allocator);
+                    const path = try custom_log.get_path(d._allocator, d.io);
                     defer d._allocator.free(path);
                     zgui.text("Logs will be saved in '{s}'", .{path});
                     zgui.endTooltip();
@@ -1495,7 +1495,7 @@ pub fn draw_game_library(self: *@This()) !void {
                                 defer zgui.popFont();
                                 zgui.setCursorScreenPos(.{ cursor_pos[0] + 228.0, cursor_pos[1] + 260.0 });
                                 if (zgui.button(Icons.Gear, .{})) {
-                                    try self.game_settings.setup(self.allocator, entry);
+                                    try self.game_settings.setup(self.allocator, self.deecy.io, entry);
                                     open_game_settings = true;
                                 }
                             }
@@ -1518,6 +1518,6 @@ pub fn draw_game_library(self: *@This()) !void {
             }
         }
         if (open_game_settings) self.game_settings.open();
-        try self.game_settings.draw(self.allocator);
+        try self.game_settings.draw(self.allocator, self.deecy.io);
     }
 }

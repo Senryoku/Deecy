@@ -90,7 +90,7 @@ pub fn build(b: *std.Build) !void {
     const exe = b.addExecutable(.{
         .name = "Deecy",
         .root_module = deecy_module,
-        .use_llvm = true, // NOTE: zgpu doesn't work correctly with the self-hosted backend (zig 0.15.1), leading to a crash in Linux in debug mode. Forcing LLVM use fixes the issue.
+        // .use_llvm = true, // NOTE: zgpu doesn't work correctly with the self-hosted backend (zig 0.15.1), leading to a crash in Linux in debug mode. Forcing LLVM use fixes the issue.
     });
     exe.root_module.addWin32ResourceFile(.{ .file = b.path("src/assets/resource.rc") });
     if (target.result.os.tag == .windows and no_console)
@@ -288,7 +288,7 @@ pub fn build(b: *std.Build) !void {
         }),
         // NOTE: The ftrv XMTRX,FVn test fails with the self-hosted backend, I guess there are differences in float handling.
         //       I don't know if the test is reliable in the first place, but llvm is used the releases anyway.
-        .use_llvm = true,
+        //.use_llvm = true,
     });
     sh4_tests.root_module.addImport("termcolor", termcolor_module);
     sh4_tests.root_module.addImport("dreamcast", dc_module);

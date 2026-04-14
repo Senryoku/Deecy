@@ -9,6 +9,7 @@ pub const Disc = @import("./disc/disc.zig").Disc;
 const Session = @import("./disc/disc.zig").Session;
 const DreamcastModule = @import("dreamcast.zig");
 const Dreamcast = DreamcastModule.Dreamcast;
+const Context = DreamcastModule.Context;
 const HardwareRegister = DreamcastModule.HardwareRegisters.HardwareRegister;
 
 const GDROMCommand71Reply = @import("gdrom_secu.zig").GDROMCommand71Reply;
@@ -220,8 +221,8 @@ audio_state: struct {
     }
 
     pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !void {
-        self.mutex.lockUncancelable(std.Options.debug_io);
-        defer self.mutex.unlock(std.Options.debug_io);
+        self.mutex.lockUncancelable(Context.io);
+        defer self.mutex.unlock(Context.io);
 
         try reader.readSliceAll(std.mem.asBytes(&self.status));
         try reader.readSliceAll(std.mem.asBytes(&self.start_addr));
@@ -283,8 +284,8 @@ pub fn deinit(self: *@This()) void {
 }
 
 pub fn get_cdda_samples(self: *@This()) [2]i16 {
-    self.audio_state.mutex.lockUncancelable(std.Options.debug_io);
-    defer self.audio_state.mutex.unlock(std.Options.debug_io);
+    self.audio_state.mutex.lockUncancelable(Context.io);
+    defer self.audio_state.mutex.unlock(Context.io);
 
     if (self.audio_state.status != .Playing) return .{ 0, 0 };
 
@@ -859,8 +860,8 @@ fn req_ses(self: *@This()) !void {
 fn cd_play(self: *@This()) !void {
     gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand CDPlay: {X}"), .{self.packet_command});
 
-    self.audio_state.mutex.lockUncancelable(std.Options.debug_io);
-    defer self.audio_state.mutex.unlock(std.Options.debug_io);
+    self.audio_state.mutex.lockUncancelable(Context.io);
+    defer self.audio_state.mutex.unlock(Context.io);
 
     const parameter_type = self.packet_command[1] & 0x7;
 

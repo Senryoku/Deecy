@@ -9,6 +9,7 @@ const ARM7JIT = @import("jit/arm_jit.zig").ARM7JIT;
 const DSP = @import("aica_dsp.zig");
 
 const DreamcastModule = @import("dreamcast.zig");
+const Context = DreamcastModule.Context;
 const Dreamcast = DreamcastModule.Dreamcast;
 const HardwareRegisters = DreamcastModule.HardwareRegisters;
 
@@ -1011,7 +1012,7 @@ pub const AICA = struct {
     }
 
     pub fn timestamp() u32 {
-        const utc = std.Io.Clock.real.now(std.Options.debug_io).toSeconds();
+        const utc = std.Io.Clock.real.now(Context.io).toSeconds();
         // TODO: Handle timezone?
         return @intCast(utc + (20 * 365 + 5) * 24 * 60 * 60); // Dreamcast epoch is January 1, 1950 00:00
     }
@@ -1062,7 +1063,7 @@ pub const AICA = struct {
 
     pub fn dump_wave_memory(self: *const @This()) void {
         const path = "logs/wave_memory_dump.bin";
-        std.Io.Dir.cwd().writeFile(std.Options.debug_io, .{
+        std.Io.Dir.cwd().writeFile(Context.io, .{
             .sub_path = path,
             .data = self.wave_memory,
             .flags = .{},
@@ -1072,7 +1073,7 @@ pub const AICA = struct {
     }
     pub fn dump_registers(self: *const @This()) void {
         const path = "logs/aica_registers_dump.bin";
-        std.Io.Dir.cwd().writeFile(std.Options.debug_io, .{
+        std.Io.Dir.cwd().writeFile(Context.io, .{
             .sub_path = path,
             .data = std.mem.sliceAsBytes(self.regs),
             .flags = .{},

@@ -6,6 +6,7 @@ const termcolor = @import("termcolor");
 
 const dc_log = std.log.scoped(.dc);
 pub const HostPaths = @import("host_paths.zig");
+pub const Context = @import("context.zig");
 
 pub const HardwareRegisters = @import("hardware_registers.zig");
 pub const SH4Module = @import("sh4.zig");
@@ -164,7 +165,9 @@ pub const Dreamcast = struct {
 
     _dummy: [4]u8 align(32) = @splat(0), // FIXME: Dummy space for non-implemented features
 
-    pub fn create(allocator: std.mem.Allocator) !*Dreamcast {
+    pub fn create(allocator: std.mem.Allocator, io: std.Io) !*Dreamcast {
+        Context.io = io;
+
         const dc = try allocator.create(Dreamcast);
         dc.* = Dreamcast{
             .cpu = try .init(allocator, dc),
@@ -196,9 +199,9 @@ pub const Dreamcast = struct {
         errdefer dc.destroy();
 
         // Create 'userdata' folder if it doesn't exist
-        try std.Io.Dir.cwd().createDirPath(std.Options.debug_io, HostPaths.get_userdata_path());
+        try std.Io.Dir.cwd().createDirPath(Context.io, HostPaths.get_userdata_path(Context.io));
 
-        const bios_path = try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_data_path(), "dc_boot.bin" });
+        const bios_path = try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_data_path(Context.io), "dc_boot.bin" });
         defer allocator.free(bios_path);
         dc.load_bios(bios_path) catch |err| {
             switch (err) {
@@ -305,7 +308,7 @@ pub const Dreamcast = struct {
     }
 
     pub fn load_bios(self: *@This(), boot_path: []const u8) !void {
-        if ((try std.Io.Dir.cwd().readFile(std.Options.debug_io, boot_path, self.boot)).len != 0x200000)
+        if ((try std.Io.Dir.cwd().readFile(Context.io, boot_path, self.boot)).len != 0x200000)
             return error.InvalidBootROMSize;
     }
 
@@ -313,7 +316,7 @@ pub const Dreamcast = struct {
 
     pub fn load_flash(self: *@This(), io: std.Io, region: Region, bios_config: BiosConfig) !void {
         // FIXME: User flash is sometimes corrupted. Always load default until I understand what's going on.
-        const default_flash_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_data_path(), "dc_flash.bin" });
+        const default_flash_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_data_path(Context.io), "dc_flash.bin" });
         defer self._allocator.free(default_flash_path);
 
         // var flash_file = std.fs.cwd().openFile(get_user_flash_path(), .{}) catch |err| f: {

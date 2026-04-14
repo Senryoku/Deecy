@@ -5,6 +5,7 @@ const log = std.log.scoped(.maple);
 
 const DreamcastModule = @import("dreamcast.zig");
 const Dreamcast = DreamcastModule.Dreamcast;
+const Context = DreamcastModule.Context;
 
 const PatternSelection = enum(u3) {
     Normal = 0b000,
@@ -404,7 +405,7 @@ pub const MapleHost = struct {
     // it also make backups useless (a backup with half an update is useless).
     // VMU will also flush themselves on exit if needed.
     pub fn flush_vmus(self: *@This()) void {
-        const now = std.Io.Clock.real.now(std.Options.debug_io).toSeconds();
+        const now = std.Io.Clock.real.now(Context.io).toSeconds();
         for (&self.ports) |*port| {
             switch (port.*) {
                 .emulated => |*e| {

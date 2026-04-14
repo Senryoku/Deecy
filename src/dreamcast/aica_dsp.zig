@@ -102,7 +102,7 @@ pub fn init(ring_buffer: *const AICAModule.RingBufferAddress, registers: []u32, 
 }
 
 pub fn deinit(self: *@This()) void {
-    if (self._jit_buffer) |buffer| self._allocator.free(buffer);
+    if (self._jit_buffer) |buffer| host_memory.deallocate_executable(self._allocator, buffer);
 }
 
 pub inline fn read_register(self: *const @This(), comptime T: type, local_addr: u32) T {

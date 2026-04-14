@@ -2,6 +2,7 @@ const std = @import("std");
 const log = std.log.scoped(.maple);
 const termcolor = @import("termcolor");
 
+const Context = @import("../dreamcast.zig").Context;
 const common = @import("../maple.zig");
 const FunctionCodesMask = common.FunctionCodesMask;
 const DeviceInfoPayload = common.DeviceInfoPayload;
@@ -118,10 +119,10 @@ pub fn init(allocator: std.mem.Allocator, backing_file_path: []const u8) !@This(
 
 fn load_or_init(self: *@This()) !void {
     if (std.fs.path.dirname(self.backing_file_path)) |dir|
-        try std.Io.Dir.cwd().createDirPath(std.Options.debug_io, dir);
+        try std.Io.Dir.cwd().createDirPath(Context.io, dir);
 
     log.info("Loading VMU from file '{s}'.", .{self.backing_file_path});
-    _ = std.Io.Dir.cwd().readFile(std.Options.debug_io, self.backing_file_path, @as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize]) catch {
+    _ = std.Io.Dir.cwd().readFile(Context.io, self.backing_file_path, @as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize]) catch {
         log.info("  Not found: Initializing new VMU at '{s}'.", .{self.backing_file_path});
         // FIXME: Something's wrong here. I'm not initiliazing it properly.
         //        Switching to a dumb copy of a freshly formatted VMU by the bios, until I understand it better.
@@ -171,7 +172,7 @@ fn load_or_init(self: *@This()) !void {
             fat_entries[FATBlock] = FATValue.DataEnd;
             fat_entries[SystemBlock] = FATValue.DataEnd; // Marks the system area block.
         }
-        self.last_unsaved_change = std.Io.Clock.real.now(std.Options.debug_io).toSeconds();
+        self.last_unsaved_change = std.Io.Clock.real.now(Context.io).toSeconds();
     };
 }
 
@@ -186,7 +187,7 @@ pub fn save(self: *@This()) void {
     self.save_backup();
 
     std.Io.Dir.cwd().writeFile(
-        std.Options.debug_io,
+        Context.io,
         .{
             .sub_path = self.backing_file_path,
             .data = @as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize],
@@ -207,7 +208,7 @@ pub fn save_backup(self: *const @This()) void {
         log.err("Failed to format backup filename: {t}", .{err});
         return;
     };
-    std.Io.Dir.cwd().copyFile(self.backing_file_path, std.Io.Dir.cwd(), backup_file_path, std.Options.debug_io, .{ .make_path = false, .replace = true }) catch |err| {
+    std.Io.Dir.cwd().copyFile(self.backing_file_path, std.Io.Dir.cwd(), backup_file_path, Context.io, .{ .make_path = false, .replace = true }) catch |err| {
         log.err("Failed to backup VMU file '{s}': {t}", .{ backup_file_path, err });
     };
 }
@@ -292,7 +293,7 @@ pub fn block_write(self: *@This(), function: u32, partition: u8, phase: u8, bloc
             const size = @min(BlockSize / WriteAccessPerBlock, data.len * 4);
             @memcpy(self.blocks[block_num][start .. start + size], std.mem.sliceAsBytes(data)[0..size]);
 
-            self.last_unsaved_change = std.Io.Clock.real.now(std.Options.debug_io).toSeconds();
+            self.last_unsaved_change = std.Io.Clock.real.now(Context.io).toSeconds();
             return @intCast(size / 4);
         },
         else => log.err("Unimplemented VMU.block_write for function: {f}", .{@as(FunctionCodesMask, @bitCast(function))}),
