@@ -60,6 +60,8 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
 
     std.debug.assert(session_count == 2);
 
+    const mapped = try self._file.create_full_view();
+
     for (0..session_count) |_| {
         var session = Session{
             .first_track = @intCast(self.tracks.items.len),
@@ -118,7 +120,7 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
                 },
             }
 
-            log.debug("     [+] Creating view: {X}, length: {X}", .{ track_offset + pregap * sector_size, length * sector_size });
+            log.debug("     [+] Track offset: {X}, length: {X}", .{ track_offset + pregap * sector_size, length * sector_size });
 
             try self.tracks.append(allocator, .{
                 .num = @truncate(self.tracks.items.len + 1),
@@ -127,7 +129,7 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
                 .track_type = @enumFromInt(sector_type),
                 .format = sector_size,
                 .pregap = pregap,
-                .data = try self._file.create_view(track_offset + pregap * sector_size, length * sector_size),
+                .data = mapped[track_offset + pregap * sector_size ..][0 .. length * sector_size],
             });
 
             log.debug("Loaded: {any}", .{self.tracks.items[self.tracks.items.len - 1].data[0..32]});
