@@ -6,12 +6,12 @@
     .paths = .{""},
     .dependencies = .{
         .zgpu = .{
-            .url = "git+https://github.com/Senryoku/zgpu.git#083473666cd1f42ffd704a8ee1d52ab83385487d",
-            .hash = "zgpu-0.14.0-dev-nqFT5I0f0wW08IktuMBNzmcLMKBrX6rt-vkiAVd9daDm",
+            .url = "git+https://github.com/Senryoku/zgpu.git#943141736bec63521669bffa8130852627fce991",
+            .hash = "zgpu-0.15.0-dev-nqFT5HcjzAUTfFv_SBBNhhYz5q9CUmrqYl7U1etN8EKV",
         },
         .zgui = .{
-            .url = "git+https://github.com/Senryoku/zgui.git#01a0ade04d5f8ebd7bd8ffb92367708b4605800e",
-            .hash = "zgui-0.6.0-dev--L6sZCxTbQBJv9RBnqBjuL6m-wl6GfL_LI-Z1jHCcbzL",
+            .url = "git+https://github.com/Senryoku/zgui.git#f41450b0b57571cc86a34a049a121c23cd4bd382",
+            .hash = "zgui-0.6.0-dev--L6sZHlTbQBi5fMeMzwiejv7Lh7OvEWKZnGyizJ_EGu1",
         },
         .zaudio = .{
             .url = "git+https://github.com/Senryoku/zaudio.git#170f2188a7a7893f87bcd4811e911cffe2b3d30f",
@@ -20,10 +20,6 @@
         .system_sdk = .{
             .url = "git+https://github.com/zig-gamedev/system_sdk#c0dbf11cdc17da5904ea8a17eadc54dee26567ec",
             .hash = "system_sdk-0.3.0-dev-alwUNnYaaAJAtIdE2fg4NQfDqEKs7QCXy_qYukAOBfmF",
-        },
-        .zpool = .{
-            .url = "git+https://github.com/kcbanner/zpool#6bb259eaea37c0fdbb1e7da46ba5d40da3b46837",
-            .hash = "zpool-0.11.0-dev-bG692X9GAQC9w34IGA1ftrB1zgzRKAdrJWyphqBI72Li",
         },
         .arm7 = .{
             .url = "git+https://github.com/Senryoku/arm7.git#e77a037da71fe03df25fe4a3fbfe5266a234c4f2",

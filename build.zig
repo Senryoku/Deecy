@@ -165,9 +165,6 @@ pub fn build(b: *std.Build) !void {
         deecy_module.addImport("zglfw", zglfw.module("root"));
         deecy_module.linkLibrary(zglfw.artifact("glfw"));
 
-        const zpool = b.dependency("zpool", .{ .target = target, .optimize = optimize });
-        deecy_module.addImport("zpool", zpool.module("root"));
-
         const zgpu = @import("zgpu");
         if (target.result.os.tag == .windows) {
             zgpu.installDxcFrom(exe, "zgpu");
