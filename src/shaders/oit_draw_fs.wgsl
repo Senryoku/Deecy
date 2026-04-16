@@ -65,12 +65,12 @@ fn main(
     let area1_gouraud = extractBits(area1_tex_idx_shading_instr[1], 23, 1) == 1;
 
     let base_color = select(
-            select(unpack4x8unorm(area0_flat_base_color), area0_base_color, area0_gouraud),
-            select(unpack4x8unorm(area1_flat_base_color), area1_base_color, area1_gouraud),
+            select(unpack4x8unorm(area0_flat_base_color).zyxw, area0_base_color, area0_gouraud),
+            select(unpack4x8unorm(area1_flat_base_color).zyxw, area1_base_color, area1_gouraud),
         area);
     let offset_color = select(
-            select(unpack4x8unorm(area0_flat_offset_color), area0_offset_color, area0_gouraud),
-            select(unpack4x8unorm(area1_flat_offset_color), area1_offset_color, area1_gouraud),
+            select(unpack4x8unorm(area0_flat_offset_color).zyxw, area0_offset_color, area0_gouraud),
+            select(unpack4x8unorm(area1_flat_offset_color).zyxw, area1_offset_color, area1_gouraud),
         area);
     let uv = select(area0_uv, area1_uv, area);
     let duvdx = dpdx(uv);
