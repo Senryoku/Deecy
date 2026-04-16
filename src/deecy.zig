@@ -1979,7 +1979,7 @@ pub fn load_state(self: *@This(), index: usize) !void {
 
     deecy_log.info("Loading State #{d} from '{s}'...", .{ index, save_slot_path });
 
-    const start_time = std.Io.Clock.real.now(self.io);
+    const start_time = std.Io.Timestamp.now(self.io, .real);
 
     const file = try std.Io.Dir.cwd().readFileAllocOptions(self.io, save_slot_path, self._allocator, .limited(32 * 1024 * 1024), .@"8", null);
     defer self._allocator.free(file);

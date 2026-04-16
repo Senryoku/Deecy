@@ -121,7 +121,7 @@ pub const PackedColor = packed struct(u32) {
     pub const one = @This(){ .a = 255, .r = 255, .g = 255, .b = 255 };
 
     pub fn with_alpha(self: @This(), use_alpha: bool) @This() {
-        return .{ .r = self.r, .g = self.g, .b = self.b, .a = if (use_alpha) self.a else 255 };
+        return .{ .b = self.b, .g = self.g, .r = self.r, .a = if (use_alpha) self.a else 255 };
     }
 
     pub fn format(self: @This(), writer: *std.Io.Writer) !void {

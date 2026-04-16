@@ -1,6 +1,6 @@
 const std = @import("std");
-const log = std.log.scoped(.memory_mapped_file);
 const builtin = @import("builtin");
+const log = std.log.scoped(.memory_mapped_file);
 
 file: std.Io.File,
 views: std.ArrayList(std.Io.File.MemoryMap) = .empty,
@@ -21,8 +21,8 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
 pub fn deinit(self: *@This()) void {
     for (self.views.items) |*view|
         view.destroy(self.io);
-    self.file.close(self.io);
     self.views.deinit(self.allocator);
+    self.file.close(self.io);
 }
 
 pub fn create_full_view(self: *@This()) ![]const u8 {

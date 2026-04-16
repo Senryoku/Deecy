@@ -1310,8 +1310,9 @@ pub const SH4 = struct {
             0xFC000000...0xFFFFFFFF => {
                 // Control register area
                 if (virtual_addr >= 0xFF000000) {
-                    switch (@as(P4Register, @enumFromInt(virtual_addr))) {
-                        P4Register.RFCR => {
+                    const p4_reg: P4Register = @enumFromInt(virtual_addr);
+                    switch (p4_reg) {
+                        .RFCR => {
                             check_type(&[_]type{u16}, T, "Invalid P4 Write({}) to RFCR\n", .{T});
                             // Hack: This is the Refresh Count Register, related to DRAM control.
                             //       If don't think its proper emulation is needed, but it's accessed by the bios,
@@ -1321,7 +1322,7 @@ pub const SH4 = struct {
                             return 0x0011;
                             // Otherwise, this is 10-bits register, respond with the 6 unused upper bits set to 0.
                         },
-                        P4Register.PDTRA => {
+                        .PDTRA => {
                             check_type(&[_]type{u16}, T, "Invalid P4 Read({}) to PDTRA\n", .{T});
                             // Port data register A (PDTRA) is a 16-bit readable/writable register used as a data latch for each
                             // bit in the 16-bit port. When a bit is set as an output, the value written to the PDTRA register is
@@ -1353,17 +1354,17 @@ pub const SH4 = struct {
                             return out;
                         },
                         // FIXME: Not emulated at all, these clash with my P4 access pattern :(
-                        P4Register.PMCR1, P4Register.PMCR2 => return 0,
-                        P4Register.TCNT0, P4Register.TCNT1, P4Register.TCNT2 => {
-                            @constCast(self).update_timer_registers(switch (@as(P4Register, @enumFromInt(virtual_addr))) {
-                                P4Register.TCNT0 => 0,
-                                P4Register.TCNT1 => 1,
-                                P4Register.TCNT2 => 2,
+                        .PMCR1, .PMCR2 => return 0,
+                        .TCNT0, .TCNT1, .TCNT2 => {
+                            @constCast(self).update_timer_registers(switch (p4_reg) {
+                                .TCNT0 => 0,
+                                .TCNT1 => 1,
+                                .TCNT2 => 2,
                                 else => unreachable,
                             });
                             return @constCast(self).p4_register_addr(T, virtual_addr).*;
                         },
-                        @as(P4Register, @enumFromInt(0xFFEB0000)) => {
+                        @enumFromInt(0xFFEB0000) => {
                             sh4_log.warn("Read to unknown P4 register: {X:0>8}.", .{virtual_addr});
                             return 0;
                         },

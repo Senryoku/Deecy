@@ -97,7 +97,9 @@ pub fn build(b: *std.Build) !void {
         exe.subsystem = .Windows;
     if (optimize == .ReleaseFast) {
         exe.root_module.strip = true;
-        exe.lto = .full;
+        // FIXME: As of zig 0.16.0, full LTO leads to a bunch of undefined symbols on Windows. Disabling for now.
+        if (target.result.os.tag != .windows)
+            exe.lto = .full;
         exe.link_gc_sections = true;
     }
 
@@ -219,7 +221,8 @@ pub fn build(b: *std.Build) !void {
             }),
         });
         interpreter_perf.root_module.strip = true;
-        interpreter_perf.lto = .full;
+        if (target.result.os.tag != .windows)
+            interpreter_perf.lto = .full;
         interpreter_perf.link_gc_sections = true;
         interpreter_perf.root_module.addImport("termcolor", termcolor_module);
         interpreter_perf.root_module.addImport("lz4", ziglz4.module("zig-lz4"));
@@ -246,7 +249,8 @@ pub fn build(b: *std.Build) !void {
             }),
         });
         // jit_perf.root_module.strip = true;
-        jit_perf.lto = .full;
+        if (target.result.os.tag != .windows)
+            jit_perf.lto = .full;
         jit_perf.link_gc_sections = true;
         jit_perf.root_module.addImport("termcolor", termcolor_module);
         jit_perf.root_module.addImport("lz4", ziglz4.module("zig-lz4"));

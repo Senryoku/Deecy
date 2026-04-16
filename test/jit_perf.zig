@@ -31,18 +31,15 @@ pub const SaveStateHeader = extern struct {
     }
 };
 
-pub fn load_state(dc: *Dreamcast, path: []const u8) !void {
-    var file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
+pub fn load_state(dc: *Dreamcast, io: std.Io, path: []const u8) !void {
+    const file = try std.Io.Dir.cwd().readFileAllocOptions(io, path, dc._allocator, .limited(32 * 1024 * 1024), .@"8", null);
+    defer dc._allocator.free(file);
 
-    var header: SaveStateHeader = undefined;
-    const header_size = try file.read(std.mem.asBytes(&header));
-    if (header_size != @sizeOf(SaveStateHeader)) return error.InvalidSaveState;
+    const header = std.mem.bytesToValue(SaveStateHeader, file[0..@sizeOf(SaveStateHeader)]);
+    try header.validate();
     try header.validate();
 
-    const compressed = try file.readToEndAllocOptions(dc._allocator, 32 * 1024 * 1024, header.compressed_size, .@"8", null);
-    defer dc._allocator.free(compressed);
-
+    const compressed = file[@sizeOf(SaveStateHeader)..];
     if (header.compressed_size != compressed.len) return error.UnexpectedSaveStateSize;
 
     const decompressed = try lz4.Standard.decompress(dc._allocator, compressed, header.uncompressed_size);
@@ -56,14 +53,14 @@ pub fn load_state(dc: *Dreamcast, path: []const u8) !void {
 }
 
 // Expects pairs of game path and save state path as arguments
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     var cycles_target: u64 = 10 * 200_000_000;
-    var total_time: u64 = 0;
+    var total_time: i64 = 0;
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    var allocator = gpa.allocator();
+    var allocator = init.gpa;
+    const io = init.io;
 
-    var args = try std.process.argsWithAllocator(allocator);
+    var args = try init.minimal.args.iterateAllocator(allocator);
     defer args.deinit();
 
     _ = args.skip();
@@ -71,16 +68,16 @@ pub fn main() !void {
     while (args.next()) |game| {
         if (std.mem.startsWith(u8, game, "-")) {
             if (std.mem.eql(u8, game, "--cycles")) {
-                cycles_target = try std.fmt.parseInt(u32, args.next().?, 10);
+                cycles_target = try std.fmt.parseInt(u64, args.next().?, 10);
             } else if (std.mem.eql(u8, game, "--seconds")) {
-                cycles_target = 200_000_000 * (try std.fmt.parseInt(u32, args.next().?, 10));
+                cycles_target = 200_000_000 * (try std.fmt.parseInt(u64, args.next().?, 10));
             } else {
                 std.debug.print("Unknown argument: '{s}'\n", .{game});
             }
             continue;
         }
 
-        var dc = try Dreamcast.create(allocator);
+        var dc = try Dreamcast.create(allocator, io);
         defer {
             dc.deinit();
             allocator.destroy(dc);
@@ -88,17 +85,16 @@ pub fn main() !void {
 
         const save_state_path = args.next().?;
 
-        dc.gdrom.disc = try .init(allocator, game);
-        try load_state(dc, save_state_path);
-        const start = try std.time.Instant.now();
-        var cycles: u32 = 0;
-        while (cycles < cycles_target) {
+        dc.gdrom.disc = try .init(allocator, io, game);
+        try load_state(dc, io, save_state_path);
+        const start = std.Io.Timestamp.now(io, .real);
+        var cycles: u64 = 0;
+        while (cycles < cycles_target)
             cycles += try dc.tick_jit(.@"1 ARM Cycle");
-        }
-        const elapsed = (try std.time.Instant.now()).since(start);
-        total_time += elapsed;
-        std.debug.print("[JIT] {s}: Ran {d} cycles in {} ms\n", .{ dc.gdrom.disc.?.get_product_name() orelse "Unknown", cycles, elapsed / std.time.ns_per_ms });
+        const elapsed = start.durationTo(std.Io.Timestamp.now(io, .real));
+        total_time += elapsed.toMilliseconds();
+        std.debug.print("[JIT] {s}: Ran {d} cycles in {} ms\n", .{ dc.gdrom.disc.?.get_product_name() orelse "Unknown", cycles, elapsed.toMilliseconds() });
     }
 
-    std.debug.print("[JIT] Total: {} ms\n", .{total_time / std.time.ns_per_ms});
+    std.debug.print("[JIT] Total: {} ms\n", .{total_time});
 }
