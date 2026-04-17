@@ -373,6 +373,7 @@ fn run_test(t: Test, cpu: *SH4Module.SH4, comptime log: bool) !void {
 }
 
 test {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
     defer SH4Module.disassembly.free_disassembly_cache(allocator);
 
@@ -386,8 +387,8 @@ test {
     SH4Module.DebugHooks.write64 = write64;
 
     const TestDir = "../SingleStepTests_sh4/";
-    var test_dir = try std.fs.cwd().openDir(TestDir, .{ .iterate = true });
-    defer test_dir.close();
+    var test_dir = try std.Io.Dir.cwd().openDir(io, TestDir, .{ .iterate = true });
+    defer test_dir.close(io);
 
     var walker = try test_dir.walk(allocator);
     defer walker.deinit();
@@ -402,7 +403,7 @@ test {
     }) = .empty;
     defer failed_tests.deinit(allocator);
     var file_num: u32 = 0;
-    tests_loop: while (try walker.next()) |entry| {
+    tests_loop: while (try walker.next(io)) |entry| {
         if (entry.kind == .file and std.mem.endsWith(u8, entry.basename, ".json")) {
             for ([_][]const u8{
                 // Others
@@ -425,13 +426,13 @@ test {
             }
             file_num += 1;
 
-            const fullpath = try std.fs.path.join(std.testing.allocator, &[_][]const u8{ TestDir, entry.basename });
+            const fullpath = try std.fs.path.join(allocator, &[_][]const u8{ TestDir, entry.basename });
             std.debug.print(termcolor.green("[{d: >3}/{d: >3}]") ++ " Opening {s}\n", .{ file_num, 233, entry.basename });
-            defer std.testing.allocator.free(fullpath);
-            const data = try std.fs.cwd().readFileAlloc(std.testing.allocator, fullpath, 512 * 1024 * 1024);
-            defer std.testing.allocator.free(data);
+            defer allocator.free(fullpath);
+            const data = try std.Io.Dir.cwd().readFileAlloc(io, fullpath, allocator, .limited(512 * 1024 * 1024));
+            defer allocator.free(data);
 
-            const test_data = try std.json.parseFromSlice([]Test, std.testing.allocator, data, .{});
+            const test_data = try std.json.parseFromSlice([]Test, allocator, data, .{});
             defer test_data.deinit();
 
             var failed_test_cases: u32 = 0;
