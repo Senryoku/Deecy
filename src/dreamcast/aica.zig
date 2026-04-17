@@ -678,6 +678,7 @@ pub const AICA = struct {
             .sample_buffer = try allocator.alloc(i32, 2048),
             ._allocator = allocator,
         };
+        @memset(r.channel_states, .{});
         r.arm7 = .init(r.wave_memory, 0x1FFFFF, 0x800000);
         r.arm_jit = try .init(allocator, r.arm7.memory_address_mask);
         r.dsp = .init(@ptrCast(&r.regs[0x2804 / 4]), r.regs[0x3000 / 4 ..], r.wave_memory, allocator);
