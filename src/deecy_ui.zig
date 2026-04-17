@@ -357,6 +357,7 @@ const GameInfoCache = struct {
     }
 
     /// Thread safe
+    /// Copies all inputs (including image) to owned memory.
     pub fn add(self: *@This(), io: std.Io, path: []const u8, product_name: []const u8, product_id: []const u8, image_size: struct { width: u32, height: u32 }, image: ?[]const u8) !void {
         self._mutex.lockUncancelable(io);
         defer self._mutex.unlock(io);

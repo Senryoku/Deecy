@@ -90,6 +90,31 @@ fn mirror(self: *@This(), allocator: std.mem.Allocator, fd: std.posix.fd_t, size
     try self.mirrors.append(allocator, result);
 }
 
+const ucontext_t = extern struct {
+    _flags: usize,
+    _link: ?*ucontext_t,
+    _stack: std.os.linux.stack_t,
+    mcontext: extern struct {
+        r8: u64,
+        r9: u64,
+        r10: u64,
+        r11: u64,
+        r12: u64,
+        r13: u64,
+        r14: u64,
+        r15: u64,
+        rdi: u64,
+        rsi: u64,
+        rbp: u64,
+        rbx: u64,
+        rdx: u64,
+        rax: u64,
+        rcx: u64,
+        rsp: u64,
+        rip: u64,
+    },
+};
+
 fn sigsegv_handler(sig: std.posix.SIG, info: *const std.posix.siginfo_t, context_ptr: ?*anyopaque) callconv(.c) void {
     switch (sig) {
         std.posix.SIG.SEGV => {
@@ -99,8 +124,8 @@ fn sigsegv_handler(sig: std.posix.SIG, info: *const std.posix.siginfo_t, context
             };
 
             if (GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE) |base| {
-                const context: *std.posix.ucontext_t = @ptrCast(@alignCast(context_ptr.?));
-                VAS.patch_access(fault_address, @intFromPtr(base.ptr), base.len, &context.mcontext.gregs[std.posix.REG.RIP]) catch |err| {
+                const context: *ucontext_t = @ptrCast(@alignCast(context_ptr.?));
+                VAS.patch_access(fault_address, @intFromPtr(base.ptr), base.len, &context.mcontext.rip) catch |err| {
                     std.log.scoped(.sh4_jit).err("Failed to patch FastMem access @{X}: {t}", .{ fault_address, err });
                     signal_not_handled();
                 };

@@ -90,7 +90,10 @@ pub fn build(b: *std.Build) !void {
     const exe = b.addExecutable(.{
         .name = "Deecy",
         .root_module = deecy_module,
-        // .use_llvm = true, // NOTE: zgpu doesn't work correctly with the self-hosted backend (zig 0.15.1), leading to a crash in Linux in debug mode. Forcing LLVM use fixes the issue.
+        // NOTE:
+        //  - zig 0.15.1: zgpu doesn't work correctly with the self-hosted backend, leading to a crash in Linux in debug mode. Forcing LLVM use fixes the issue.
+        //  - zig 0.16.0: I can't get some inline assembly to compile in Linux with the self-hosted backend.
+        .use_llvm = true,
     });
     exe.root_module.addWin32ResourceFile(.{ .file = b.path("src/assets/resource.rc") });
     if (target.result.os.tag == .windows and no_console)

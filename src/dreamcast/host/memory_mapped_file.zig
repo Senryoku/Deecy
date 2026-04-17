@@ -36,7 +36,13 @@ fn create_view(self: *@This(), offset: u64, size: u64) ![]const u8 {
     const aligned_offset = std.mem.alignBackward(u64, offset, alignment);
     const adjustment = offset - aligned_offset;
     const adjusted_size = size + adjustment;
-    const map = try std.Io.File.MemoryMap.create(self.io, self.file, .{ .len = adjusted_size, .protection = .{ .read = true, .write = false }, .offset = aligned_offset });
+    const map = try std.Io.File.MemoryMap.create(self.io, self.file, .{
+        .len = adjusted_size,
+        .protection = .{ .read = true, .write = false },
+        // NOTE : Don't read-ahead on Linux.
+        .populate = false,
+        .offset = aligned_offset,
+    });
     try self.views.append(self.allocator, map);
     return map.memory[adjustment..][0..size];
 }

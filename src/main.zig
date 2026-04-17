@@ -67,8 +67,15 @@ pub fn main(init: std.process.Init) !void {
         if (init.minimal.args.vector.len > 1)
             _ = AttachConsole(ATTACH_PARENT_PROCESS);
     }
+    const wayland = wl: {
+        if (builtin.os.tag == .windows) break :wl false;
+        if (init.minimal.environ.getPosix("XDG_SESSION_TYPE")) |session_type| {
+            break :wl std.mem.eql(u8, session_type, "wayland");
+        }
+        break :wl false;
+    };
 
-    var d = try Deecy.create(allocator, io);
+    var d = try Deecy.create(allocator, io, .{ .wayland = wayland });
     defer d.destroy();
     var dc = d.dc;
 

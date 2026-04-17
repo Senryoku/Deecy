@@ -350,6 +350,7 @@ pub const ConfigFile = "config.zon";
 pub const MaxSaveStates = 4;
 
 window: *zglfw.Window,
+wayland: bool,
 gctx: *zgpu.GraphicsContext = undefined,
 gctx_queue_mutex: std.Io.Mutex = .init, // GPU Memory access isn't thread safe. Use this to copy to textures from another thread for example.
 scale_factor: f32 = 1.0,
@@ -383,8 +384,8 @@ shortcuts: Shortcuts,
 running: bool = false,
 _cycles_to_run: i64 = 0,
 _stop_request: bool = false,
-realtime: bool = true, // By default, emulation is driven by the audio thread.
-_dc_thread: ?std.Thread = null, // Used for unlimited frame rate, i.e. when realtime == false
+realtime: bool = true, // Unlimited emulation speed when false.
+_dc_thread: ?std.Thread = null,
 
 enable_jit: bool = true,
 breakpoints: std.ArrayList(u32),
@@ -434,7 +435,7 @@ _allocator: std.mem.Allocator,
 
 _thread: ?std.Thread = null, // Thread for one-time, fire-and-forget, async jobs
 
-pub fn create(allocator: std.mem.Allocator, io: std.Io) !*@This() {
+pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { wayland: bool }) !*@This() {
     const start_time = std.Io.Clock.real.now(io);
     defer deecy_log.info("Deecy initialized in {f}", .{start_time.durationTo(std.Io.Clock.real.now(io))});
 
@@ -472,6 +473,7 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io) !*@This() {
     const self = try allocator.create(@This());
     self.* = .{
         .window = undefined,
+        .wayland = flags.wayland,
         .config = config,
         .breakpoints = .empty,
         .shortcuts = try .init(allocator, io),
@@ -495,7 +497,7 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io) !*@This() {
             // Hide window until the first frame is drawn to avoid a white flash. Don't forget to .show() it eventually!
             // NOTE: Crashes on Kubuntu 25.04. From what I could gather, Wayland forbid using a window before making it visible.
             //       Not sure if this is the correct fix, or the correct way to detect Wayland either.
-            if (!helpers.use_wayland(self._allocator))
+            if (!flags.wayland)
                 zglfw.windowHint(.visible, false);
 
             self.window = try zglfw.Window.create(@intCast(config.window_size.width), @intCast(config.window_size.height), "Deecy", null, null);
@@ -1375,7 +1377,7 @@ pub fn toggle_fullscreen(self: *@This()) void {
         const monitors = zglfw.Monitor.getAll();
         var monitor = zglfw.Monitor.getPrimary() orelse monitors[0];
         // FIXME: getPos always returns 0,0 on Wayland, by design. Just use the primary monitor for now.
-        if (!helpers.use_wayland(self._allocator)) {
+        if (!self.wayland) {
             var current_overlap: i32 = 0;
             for (monitors) |candidate| {
                 const mode = candidate.getVideoMode() catch continue;
