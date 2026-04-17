@@ -1536,7 +1536,7 @@ inline fn fast_call_prologue() void {
             \\ movaps  %xmm11, 80(%rsp)
             \\ movaps  %xmm12, 96(%rsp)
             \\ movaps  %xmm13, 112(%rsp)
-            ::: .{ .rsp = true });
+            ::: .{ .rsp = true, .memory = true });
     }
 }
 inline fn fast_call_epilogue() void {
@@ -1551,7 +1551,7 @@ inline fn fast_call_epilogue() void {
             \\ movaps  96(%rsp), %xmm12
             \\ movaps  112(%rsp), %xmm13
             \\ addq    $128, %rsp
-            ::: .{ .rsp = true });
+            ::: .{ .rsp = true, .xmm6 = true, .xmm7 = true, .xmm8 = true, .xmm9 = true, .xmm10 = true, .xmm11 = true, .xmm12 = true, .xmm13 = true });
     }
 }
 
