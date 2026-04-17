@@ -405,7 +405,7 @@ pub const MapleHost = struct {
     // it also make backups useless (a backup with half an update is useless).
     // VMU will also flush themselves on exit if needed.
     pub fn flush_vmus(self: *@This()) void {
-        const now = std.Io.Clock.real.now(Context.io).toSeconds();
+        const now = std.Io.Clock.awake.now(Context.io).toSeconds();
         for (&self.ports) |*port| {
             switch (port.*) {
                 .emulated => |*e| {

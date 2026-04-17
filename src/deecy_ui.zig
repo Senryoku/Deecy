@@ -474,8 +474,8 @@ const GameInfoCache = struct {
 /// Locks gctx_queue_mutex.
 pub fn refresh_games(self: *@This()) !void {
     if (self.deecy.config.game_directory) |dir_path| {
-        const start_time = std.Io.Clock.real.now(self.deecy.io);
-        defer ui_log.info("Checked {d} disc files in {f}", .{ self.disc_files.items.len, start_time.durationTo(std.Io.Clock.real.now(self.deecy.io)) });
+        const start_time = std.Io.Clock.awake.now(self.deecy.io);
+        defer ui_log.info("Checked {d} disc files in {f}", .{ self.disc_files.items.len, start_time.durationTo(std.Io.Clock.awake.now(self.deecy.io)) });
 
         var cache = try GameInfoCache.create(self.allocator, self.deecy.io);
         defer cache.destroy(self.allocator);

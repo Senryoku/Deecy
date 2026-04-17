@@ -27,7 +27,7 @@ pub fn wait_for_interval(self: *@This(), io: std.Io, ns: u64) void {
     if (now < self.next_deadline) {
         // Sleep until we're close to the deadline.
         if (self.next_deadline - now > 1_000_000)
-            std.Io.sleep(io, .fromNanoseconds(@intCast(self.next_deadline - now - 1_000_000)), .real) catch {};
+            std.Io.sleep(io, .fromNanoseconds(@intCast(self.next_deadline - now - 1_000_000)), .awake) catch {};
         // Spin for the last millisecond.
         while (nano_timestamp(io) < self.next_deadline) {}
     } else if (self.next_deadline < now - ns) {
@@ -37,5 +37,5 @@ pub fn wait_for_interval(self: *@This(), io: std.Io, ns: u64) void {
 }
 
 fn nano_timestamp(io: std.Io) i128 {
-    return std.Io.Timestamp.now(io, .real).toNanoseconds();
+    return std.Io.Timestamp.now(io, .awake).toNanoseconds();
 }

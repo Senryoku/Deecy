@@ -1028,8 +1028,8 @@ pub const Renderer = struct {
     }
 
     pub fn create(allocator: std.mem.Allocator, io: std.Io, gctx: *zgpu.GraphicsContext, gctx_queue_mutex: *std.Io.Mutex, config: *const Configuration) !*Renderer {
-        const start = std.Io.Clock.real.now(io);
-        defer log.info("Renderer initialized in {f}", .{start.durationTo(std.Io.Clock.real.now(io))});
+        const start = std.Io.Clock.awake.now(io);
+        defer log.info("Renderer initialized in {f}", .{start.durationTo(std.Io.Clock.awake.now(io))});
 
         // Writes to texture all rely on that.
         std.debug.assert(zgpu.GraphicsContext.surface_texture_format == .bgra8_unorm);
@@ -1437,7 +1437,7 @@ pub const Renderer = struct {
             .strips_metadata = try .initCapacity(allocator, 4096),
             .modifier_volume_vertices = try .initCapacity(allocator, 4096),
 
-            .last_frame_timestamp = std.Io.Clock.real.now(io).toMicroseconds(),
+            .last_frame_timestamp = std.Io.Clock.awake.now(io).toMicroseconds(),
 
             .render_passes = .empty,
             .ta_lists = .empty,
@@ -1748,7 +1748,7 @@ pub const Renderer = struct {
     pub fn reset(self: *@This()) void {
         self.render_pending = false;
         self.render_request = false;
-        self.last_frame_timestamp = std.Io.Clock.real.now(self.io).toMicroseconds();
+        self.last_frame_timestamp = std.Io.Clock.awake.now(self.io).toMicroseconds();
         self.last_n_frametimes = .{};
         for (self.texture_metadata) |arr| {
             for (arr) |*tex| tex.* = .{};
@@ -3931,7 +3931,7 @@ pub const Renderer = struct {
         }
 
         if (!render_to_texture) {
-            const now = std.Io.Clock.real.now(self.io).toMicroseconds();
+            const now = std.Io.Clock.awake.now(self.io).toMicroseconds();
             self.last_n_frametimes.push(now - self.last_frame_timestamp);
             self.last_frame_timestamp = now;
         }
@@ -4015,7 +4015,7 @@ pub const Renderer = struct {
             return pl;
 
         log.info("Creating Pipeline: {f}", .{key});
-        const start = std.Io.Clock.real.now(self.io);
+        const start = std.Io.Clock.awake.now(self.io);
 
         const color_targets = [_]wgpu.ColorTargetState{
             .{

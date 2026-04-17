@@ -87,11 +87,11 @@ pub fn main(init: std.process.Init) !void {
 
         dc.gdrom.disc = try .init(allocator, io, game);
         try load_state(dc, io, save_state_path);
-        const start = std.Io.Timestamp.now(io, .real);
+        const start = std.Io.Timestamp.now(io, .awake);
         var cycles: u64 = 0;
         while (cycles < cycles_target)
             cycles += try dc.tick_jit(.@"1 ARM Cycle");
-        const elapsed = start.durationTo(std.Io.Timestamp.now(io, .real));
+        const elapsed = start.durationTo(std.Io.Timestamp.now(io, .awake));
         total_time += elapsed.toMilliseconds();
         std.debug.print("[JIT] {s}: Ran {d} cycles in {} ms\n", .{ dc.gdrom.disc.?.get_product_name() orelse "Unknown", cycles, elapsed.toMilliseconds() });
     }

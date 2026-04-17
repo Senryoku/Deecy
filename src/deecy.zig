@@ -436,8 +436,8 @@ _allocator: std.mem.Allocator,
 _thread: ?std.Thread = null, // Thread for one-time, fire-and-forget, async jobs
 
 pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { wayland: bool }) !*@This() {
-    const start_time = std.Io.Clock.real.now(io);
-    defer deecy_log.info("Deecy initialized in {f}", .{start_time.durationTo(std.Io.Clock.real.now(io))});
+    const start_time = std.Io.Clock.awake.now(io);
+    defer deecy_log.info("Deecy initialized in {f}", .{start_time.durationTo(std.Io.Clock.awake.now(io))});
 
     std.Io.Dir.cwd().createDirPath(io, HostPaths.get_userdata_path(io)) catch |err| switch (err) {
         error.PathAlreadyExists => {},
@@ -488,8 +488,8 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
         defer joystick_thread.join();
 
         {
-            const window_init_time = std.Io.Clock.real.now(self.io);
-            defer deecy_log.info("Window initialized in {f}", .{window_init_time.durationTo(std.Io.Clock.real.now(self.io))});
+            const window_init_time = std.Io.Clock.awake.now(self.io);
+            defer deecy_log.info("Window initialized in {f}", .{window_init_time.durationTo(std.Io.Clock.awake.now(self.io))});
 
             // IDK, prevents device lost crash on Linux. See https://github.com/zig-gamedev/zig-gamedev/commit/9bd4cf860c8e295f4f0db9ec4357905e090b5b98
             zglfw.windowHint(.client_api, .no_api);
@@ -522,8 +522,8 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
         }
 
         {
-            const gctx_start_time = std.Io.Clock.real.now(self.io);
-            defer deecy_log.info("Graphics context initialized in {f}", .{gctx_start_time.durationTo(std.Io.Clock.real.now(self.io))});
+            const gctx_start_time = std.Io.Clock.awake.now(self.io);
+            defer deecy_log.info("Graphics context initialized in {f}", .{gctx_start_time.durationTo(std.Io.Clock.awake.now(self.io))});
             self.gctx = try zgpu.GraphicsContext.create(allocator, .{
                 .window = self.window,
                 .fn_getTime = @ptrCast(&zglfw.getTime),
@@ -587,8 +587,8 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
     // Avoid having other threads running while initialisation the Dreamcast to increase the chance of virtual_address_space initialization to succeed on Windows.
     // FIXME: See sh4_virtual_address_space_windows.zig
     {
-        const dc_init_time = std.Io.Clock.real.now(self.io);
-        defer deecy_log.info("Dreamcast initialized in {f}", .{dc_init_time.durationTo(std.Io.Clock.real.now(self.io))});
+        const dc_init_time = std.Io.Clock.awake.now(self.io);
+        defer deecy_log.info("Dreamcast initialized in {f}", .{dc_init_time.durationTo(std.Io.Clock.awake.now(self.io))});
         self.dc = while (true) {
             if (Dreamcast.create(allocator, self.io)) |dc| break dc else |err| {
                 switch (err) {
@@ -684,8 +684,8 @@ fn deinit_enabled_cheats(self: *@This()) void {
 }
 
 fn auto_populate_joysticks(self: *@This()) !void {
-    const start_time = std.Io.Clock.real.now(self.io);
-    defer deecy_log.info("Joysticks initialized in {f}", .{start_time.durationTo(std.Io.Clock.real.now(self.io))});
+    const start_time = std.Io.Clock.awake.now(self.io);
+    defer deecy_log.info("Joysticks initialized in {f}", .{start_time.durationTo(std.Io.Clock.awake.now(self.io))});
     var curr_pad: usize = 0;
     for (0..zglfw.Joystick.maximum_supported) |idx| {
         const joystick: zglfw.Joystick = @enumFromInt(idx);
@@ -1878,7 +1878,7 @@ fn audio_callback(
         // FIXME: Not elegant at all, but avoids hammering the audio thread for no reason, and I haven't heard any problems so far.
         //        1ms seems to be the lowest value that avoids simply spinning on Windows.
         // FIXME: Untested on Linux.
-        std.Io.sleep(self.io, .fromMilliseconds(1), .real) catch {};
+        std.Io.sleep(self.io, .fromMilliseconds(1), .awake) catch {};
     }
 
     var out: [*]i32 = @ptrCast(@alignCast(output));
@@ -1922,7 +1922,7 @@ pub fn save_state(self: *@This(), index: usize) !void {
         if (was_running) self.start();
     }
 
-    const start_time = std.Io.Clock.real.now(self.io);
+    const start_time = std.Io.Clock.awake.now(self.io);
     deecy_log.info("Saving State #{d}...", .{index});
 
     // var uncompressed_array = try std.ArrayList(u8).initCapacity(self._allocator, 32 * 1024 * 1024);
@@ -1933,13 +1933,13 @@ pub fn save_state(self: *@This(), index: usize) !void {
     _ = try writer.write(std.mem.asBytes(&self._cycles_to_run));
     try writer.flush();
 
-    deecy_log.info("  Serialized state in {f}. Compressing...", .{start_time.durationTo(std.Io.Clock.real.now(self.io))});
+    deecy_log.info("  Serialized state in {f}. Compressing...", .{start_time.durationTo(std.Io.Clock.awake.now(self.io))});
 
     try self.launch_async(compress_and_dump_save_state, .{ self, index, try allocating_writer.toOwnedSlice() });
 }
 
 fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array: []const u8) !void {
-    const start_time = std.Io.Clock.real.now(self.io);
+    const start_time = std.Io.Clock.awake.now(self.io);
     defer self._allocator.free(uncompressed_array);
 
     const compressed = try lz4.Standard.compress(self._allocator, uncompressed_array);
@@ -1964,7 +1964,7 @@ fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array
 
     self.save_state_slots[index] = true;
 
-    deecy_log.info("  Saved State #{d} to '{s}' in {f}", .{ index, save_slot_path, start_time.durationTo(std.Io.Clock.real.now(self.io)) });
+    deecy_log.info("  Saved State #{d} to '{s}' in {f}", .{ index, save_slot_path, start_time.durationTo(std.Io.Clock.awake.now(self.io)) });
 
     self.ui.notifications.push("State Saved", .{}, "State #{d} saved successfully.", .{index});
 }
@@ -1981,7 +1981,7 @@ pub fn load_state(self: *@This(), index: usize) !void {
 
     deecy_log.info("Loading State #{d} from '{s}'...", .{ index, save_slot_path });
 
-    const start_time = std.Io.Timestamp.now(self.io, .real);
+    const start_time = std.Io.Timestamp.now(self.io, .awake);
 
     const file = try std.Io.Dir.cwd().readFileAllocOptions(self.io, save_slot_path, self._allocator, .limited(32 * 1024 * 1024), .@"8", null);
     defer self._allocator.free(file);
@@ -2002,7 +2002,7 @@ pub fn load_state(self: *@This(), index: usize) !void {
     try self.dc.deserialize(&reader);
     try reader.readSliceAll(std.mem.asBytes(&self._cycles_to_run));
 
-    deecy_log.info("Loaded State #{d} from '{s}' in {f}", .{ index, save_slot_path, start_time.durationTo(.now(self.io, .real)) });
+    deecy_log.info("Loaded State #{d} from '{s}' in {f}", .{ index, save_slot_path, start_time.durationTo(.now(self.io, .awake)) });
 
     self.ui.notifications.push("State Loaded", .{}, "Save State #{d} loaded successfully.", .{index});
 }

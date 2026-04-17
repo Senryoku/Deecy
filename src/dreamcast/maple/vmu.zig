@@ -172,7 +172,7 @@ fn load_or_init(self: *@This()) !void {
             fat_entries[FATBlock] = FATValue.DataEnd;
             fat_entries[SystemBlock] = FATValue.DataEnd; // Marks the system area block.
         }
-        self.last_unsaved_change = std.Io.Clock.real.now(Context.io).toSeconds();
+        self.last_unsaved_change = std.Io.Clock.awake.now(Context.io).toSeconds();
     };
 }
 
@@ -293,7 +293,7 @@ pub fn block_write(self: *@This(), function: u32, partition: u8, phase: u8, bloc
             const size = @min(BlockSize / WriteAccessPerBlock, data.len * 4);
             @memcpy(self.blocks[block_num][start .. start + size], std.mem.sliceAsBytes(data)[0..size]);
 
-            self.last_unsaved_change = std.Io.Clock.real.now(Context.io).toSeconds();
+            self.last_unsaved_change = std.Io.Clock.awake.now(Context.io).toSeconds();
             return @intCast(size / 4);
         },
         else => log.err("Unimplemented VMU.block_write for function: {f}", .{@as(FunctionCodesMask, @bitCast(function))}),

@@ -58,7 +58,7 @@ fn push_impl(self: *@This(), comptime title_fmt: []const u8, title_args: anytype
     errdefer self._allocator.free(title);
     const text = try std.fmt.allocPrint(self._allocator, text_fmt, text_args);
     errdefer self._allocator.free(text);
-    try self.notifications.insert(self._allocator, 0, .{ .title = title, .text = text, .time = std.Io.Clock.real.now(self.io).toMilliseconds() });
+    try self.notifications.insert(self._allocator, 0, .{ .title = title, .text = text, .time = std.Io.Clock.awake.now(self.io).toMilliseconds() });
 }
 
 const ImguiWidgetIDs = arr: {
@@ -71,7 +71,7 @@ pub fn draw(self: *@This()) void {
     self._mutex.lockUncancelable(self.io);
     defer self._mutex.unlock(self.io);
 
-    const time = std.Io.Clock.real.now(self.io).toMilliseconds();
+    const time = std.Io.Clock.awake.now(self.io).toMilliseconds();
     const window_size = zgui.io.getDisplaySize();
     while (self.notifications.items.len > 0 and time - self.notifications.getLast().time > ExpireTime)
         self.notifications.pop().?.deinit(self._allocator);
