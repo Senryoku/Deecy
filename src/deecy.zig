@@ -709,7 +709,7 @@ fn audio_init(self: *@This()) !void {
     audio_device_config.sample_rate = DreamcastModule.AICAModule.AICA.SampleRate;
     audio_device_config.data_callback = audio_callback;
     audio_device_config.user_data = self;
-    audio_device_config.period_size_in_frames = 32;
+    audio_device_config.period_size_in_frames = if (builtin.os.tag == .linux) 2048 else 256;
     audio_device_config.playback.format = .signed32;
     audio_device_config.playback.channels = 2;
     self.audio_device = try zaudio.Device.create(null, audio_device_config);
@@ -1439,8 +1439,8 @@ pub fn start(self: *@This()) void {
                 return;
             };
         } else {
-            if (self.dc.aica.available_samples() <= 2 * 32)
-                self.run_for((2 * 32 - self.dc.aica.available_samples()) * AICA.SH4CyclesPerSample); // Preemptively accumulate some samples
+            if (self.dc.aica.available_samples() <= 2 * 256)
+                self.run_for((2 * 256 - self.dc.aica.available_samples()) * AICA.SH4CyclesPerSample); // Preemptively accumulate some samples
 
             self.running = true;
             self._dc_thread = std.Thread.spawn(.{}, dc_thread_loop_realtime, .{self}) catch |err| {

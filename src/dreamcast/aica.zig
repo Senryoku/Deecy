@@ -675,7 +675,7 @@ pub const AICA = struct {
             .regs = try allocator.alloc(u32, 0x8000 / 4),
             .wave_memory = memory,
             .channel_states = try allocator.alloc(AICAChannelState, 64),
-            .sample_buffer = try allocator.alloc(i32, 2048),
+            .sample_buffer = try allocator.alloc(i32, 2 * 4096),
             ._allocator = allocator,
         };
         @memset(r.channel_states, .{});
