@@ -56,7 +56,7 @@ pub fn virtual_alloc(comptime element_type: type, count: usize) ![]element_type 
             const memory = try std.posix.mmap(
                 null,
                 @sizeOf(element_type) * count,
-                std.posix.PROT.READ | std.posix.PROT.WRITE,
+                .{ .READ = true, .WRITE = true },
                 .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
                 -1,
                 0,
@@ -109,7 +109,7 @@ pub fn reset_virtual_alloc(memory: anytype) !void {
                 const remmaped = try std.posix.mmap(
                     @ptrCast(@alignCast(memory.ptr)),
                     byte_size,
-                    std.posix.PROT.READ | std.posix.PROT.WRITE,
+                    .{ .READ = true, .WRITE = true },
                     .{ .TYPE = .PRIVATE, .ANONYMOUS = true, .FIXED = true },
                     -1,
                     0,
