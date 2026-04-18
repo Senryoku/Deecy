@@ -1428,8 +1428,8 @@ pub const AICA = struct {
             // Direct send to the DAC
             if (disdl != 0) { // 0 means full attenuation, not send.
                 const s = apply_pan_attenuation(sample, disdl, dipan);
-                self.sample_buffer[(2 * i + 0) % self.sample_buffer.len] +|= s.left;
-                self.sample_buffer[(2 * i + 1) % self.sample_buffer.len] +|= s.right;
+                self.sample_buffer[self.sample_write_offset + 0] +|= s.left;
+                self.sample_buffer[self.sample_write_offset + 1] +|= s.right;
             }
             if (registers.dps_channel_send.level != 0) {
                 const channel = registers.dps_channel_send.channel;
