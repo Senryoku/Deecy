@@ -288,11 +288,11 @@ pub fn build(b: *std.Build) !void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/sh4_SingleStepTests.zig"),
             .target = target,
-            .optimize = optimize,
+            .optimize = .ReleaseFast,
         }),
         // NOTE: The ftrv XMTRX,FVn test fails with the self-hosted backend, I guess there are differences in float handling.
         //       I don't know if the test is reliable in the first place, but llvm is used in the releases anyway.
-        // .use_llvm = true,
+        .use_llvm = true,
     });
     sh4_tests.root_module.addImport("termcolor", termcolor_module);
     sh4_tests.root_module.addImport("dreamcast", dc_module);
