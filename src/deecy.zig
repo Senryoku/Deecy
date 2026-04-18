@@ -999,7 +999,7 @@ pub fn reset(self: *@This()) !void {
 pub fn stop(self: *@This()) !void {
     self.pause();
     try self.reset();
-    if (self.dc.gdrom.disc) |*disc| disc.deinit(self._allocator);
+    if (self.dc.gdrom.disc) |*disc| disc.deinit(self._allocator, self.io);
     self.dc.gdrom.disc = null;
 }
 

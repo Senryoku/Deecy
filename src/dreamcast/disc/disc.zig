@@ -38,9 +38,9 @@ pub const Disc = union(enum) {
         } else return error.UnknownDiscFormat;
     }
 
-    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator, io: std.Io) void {
         switch (self.*) {
-            inline else => |*d| d.deinit(allocator),
+            inline else => |*d| d.deinit(allocator, io),
         }
     }
 

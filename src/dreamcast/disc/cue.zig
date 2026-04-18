@@ -63,12 +63,12 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
 
                 const track_file_path = try std.fs.path.join(allocator, &[_][]const u8{ folder, filename });
                 defer allocator.free(track_file_path);
-                try self._files.append(allocator, try MemoryMappedFile.init(allocator, io, track_file_path));
+                try self._files.append(allocator, try MemoryMappedFile.init(io, track_file_path));
 
                 const track_type: Track.TrackType = if (std.mem.startsWith(u8, track_type_str, "MODE")) .Data else if (std.mem.startsWith(u8, track_type_str, "AUDIO")) .Audio else return error.UnsupportedTrackFormat;
                 const format = try sector_size(track_type_str);
                 const pregap = 0; // TODO
-                const sector_count = try self._files.items[self._files.items.len - 1].file_size() / format;
+                const sector_count = self._files.items[self._files.items.len - 1].size / format;
 
                 if (num != self.tracks.items.len + 1) return error.InvalidTrackNumber;
                 try self.tracks.append(allocator, .{
@@ -78,7 +78,7 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
                     .track_type = track_type,
                     .format = format,
                     .pregap = pregap,
-                    .data = try self._files.items[self._files.items.len - 1].create_full_view(),
+                    .data = self._files.items[self._files.items.len - 1].view(),
                 });
                 log.debug("  [+] FAD: {X}, Type: {t}, Format: {d}, Pregap: {d}", .{ self.tracks.items[num - 1].fad, self.tracks.items[num - 1].track_type, self.tracks.items[num - 1].format, self.tracks.items[num - 1].pregap });
                 track_fad += sector_count;
@@ -103,10 +103,10 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
     return self;
 }
 
-pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+pub fn deinit(self: *@This(), allocator: std.mem.Allocator, io: std.Io) void {
     self.tracks.deinit(allocator);
     for (self._files.items) |*file|
-        file.deinit();
+        file.deinit(io);
     self._files.deinit(allocator);
 }
 

@@ -51,26 +51,26 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
 
         const track_file_path = try std.fs.path.join(allocator, &[_][]const u8{ folder, filename });
         defer allocator.free(track_file_path);
-        try self._files.append(allocator, try MemoryMappedFile.init(allocator, io, track_file_path));
+        try self._files.append(allocator, try MemoryMappedFile.init(io, track_file_path));
 
         self.tracks.items[num - 1] = .{
             .num = num,
             .fad = offset,
-            .end_fad = @intCast(offset + try self._files.items[self._files.items.len - 1].file_size() / format),
+            .end_fad = @intCast(offset + self._files.items[self._files.items.len - 1].size / format),
             .track_type = @enumFromInt(track_type_int),
             .format = format,
             .pregap = pregap,
-            .data = try self._files.items[self._files.items.len - 1].create_full_view(),
+            .data = self._files.items[self._files.items.len - 1].view(),
         };
     }
 
     return self;
 }
 
-pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+pub fn deinit(self: *@This(), allocator: std.mem.Allocator, io: std.Io) void {
     self.tracks.deinit(allocator);
     for (self._files.items) |*file|
-        file.deinit();
+        file.deinit(io);
     self._files.deinit(allocator);
 }
 

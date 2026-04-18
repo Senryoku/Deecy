@@ -18,9 +18,9 @@ _file: MemoryMappedFile,
 
 pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@This() {
     var self: @This() = .{
-        ._file = try .init(allocator, io, filepath),
+        ._file = try .init(io, filepath),
     };
-    errdefer self.deinit(allocator);
+    errdefer self.deinit(allocator, io);
 
     const file = try std.Io.Dir.cwd().openFile(io, filepath, .{});
     defer file.close(io);
@@ -60,7 +60,7 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
 
     std.debug.assert(session_count == 2);
 
-    const mapped = try self._file.create_full_view();
+    const mapped = self._file.view();
 
     for (0..session_count) |_| {
         var session = Session{
@@ -162,10 +162,10 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
     return self;
 }
 
-pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+pub fn deinit(self: *@This(), allocator: std.mem.Allocator, io: std.Io) void {
     self.sessions.deinit(allocator);
     self.tracks.deinit(allocator);
-    self._file.deinit();
+    self._file.deinit(io);
 }
 
 pub fn get_first_data_track(self: *const @This()) ?Track {

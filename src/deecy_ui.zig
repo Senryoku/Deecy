@@ -274,7 +274,7 @@ fn get_game_image(self: *@This(), path: []const u8, cache: ?*GameInfoCache) void
         if (cache) |c| c.add(self.deecy.io, path, "NoName", "NoID", .{ .width = 0, .height = 0 }, null) catch {};
         return;
     };
-    defer disc.deinit(allocator);
+    defer disc.deinit(allocator, self.deecy.io);
 
     const product_name = disc.get_product_name() orelse "NoName";
     const product_id = disc.get_product_id() orelse "NoID";
@@ -718,7 +718,7 @@ pub fn draw(self: *@This()) !void {
             if (zgui.menuItem("Remove Disc", .{ .enabled = d.dc.gdrom.disc != null })) {
                 const was_running = d.running;
                 if (was_running) d.pause();
-                d.dc.gdrom.disc.?.deinit(d._allocator);
+                d.dc.gdrom.disc.?.deinit(d._allocator, d.io);
                 d.dc.gdrom.disc = null;
                 if (d.dc.gdrom.state != .Open)
                     d.dc.gdrom.state = .Empty;

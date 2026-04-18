@@ -280,7 +280,7 @@ pub fn deinit(self: *@This()) void {
     self._allocator.free(self.audio_state.buffer);
     self.pio_data_queue.deinit();
     self.dma_data_queue.deinit();
-    if (self.disc) |*d| d.deinit(self._allocator);
+    if (self.disc) |*d| d.deinit(self._allocator, Context.io);
 }
 
 pub fn get_cdda_samples(self: *@This()) [2]i16 {
