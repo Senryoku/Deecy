@@ -239,7 +239,7 @@ pub const Dreamcast = struct {
 
         self.scheduled_events.deinit(self._allocator);
         self.sh4_jit.deinit();
-        self.gdrom.deinit();
+        self.gdrom.deinit(Context.io);
         self.maple.deinit();
         self.aica.deinit();
         self.gpu.deinit();
