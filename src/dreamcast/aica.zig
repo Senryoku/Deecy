@@ -1639,12 +1639,16 @@ pub const AICA = struct {
         bytes += try writer.write(std.mem.sliceAsBytes(self._timer_counters[0..]));
         bytes += try writer.write(std.mem.asBytes(&self._samples_counter));
 
-        bytes += try writer.write(std.mem.asBytes(&self.sample_read_offset));
-        bytes += try writer.write(std.mem.asBytes(&self.sample_write_offset));
+        // FIXME: Backward compatibility. Marker for new version.
+        bytes += try writer.write(std.mem.asBytes(&@as(usize, 0xFFFFFFFF_FFFFFFFF)));
         if (self.sample_read_offset > self.sample_write_offset) {
-            bytes += try writer.write(std.mem.sliceAsBytes(self.sample_buffer[0..self.sample_write_offset]));
+            const sample_count = self.sample_read_offset - self.sample_write_offset;
+            bytes += try writer.write(std.mem.asBytes(&sample_count));
             bytes += try writer.write(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..]));
+            bytes += try writer.write(std.mem.sliceAsBytes(self.sample_buffer[0..self.sample_write_offset]));
         } else {
+            const sample_count = self.sample_write_offset - self.sample_read_offset;
+            bytes += try writer.write(std.mem.asBytes(&sample_count));
             bytes += try writer.write(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..self.sample_write_offset]));
         }
 
@@ -1665,13 +1669,26 @@ pub const AICA = struct {
         try reader.readSliceAll(std.mem.sliceAsBytes(self._timer_counters[0..]));
         try reader.readSliceAll(std.mem.asBytes(&self._samples_counter));
 
-        try reader.readSliceAll(std.mem.asBytes(&self.sample_read_offset));
-        try reader.readSliceAll(std.mem.asBytes(&self.sample_write_offset));
-        if (self.sample_read_offset > self.sample_write_offset) {
-            try reader.readSliceAll(std.mem.sliceAsBytes(self.sample_buffer[0..self.sample_write_offset]));
-            try reader.readSliceAll(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..]));
+        // FIXME: Backward compatibility.
+        //        Sample buffer size was increased from 2048 and the previous way to serialize depends on it.
+        const marker = try reader.takeInt(usize, .little);
+        if (marker == 0xFFFFFFFF_FFFFFFFF) {
+            const sample_count = try reader.takeInt(usize, .little);
+            self.sample_read_offset = 0;
+            self.sample_write_offset = sample_count;
+            try reader.readSliceAll(std.mem.sliceAsBytes(self.sample_buffer[0..sample_count]));
         } else {
-            try reader.readSliceAll(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..self.sample_write_offset]));
+            const old_buffer_size = 2048;
+            self.sample_read_offset = marker;
+            try reader.readSliceAll(std.mem.asBytes(&self.sample_write_offset));
+            const sample_count = if (self.sample_read_offset > self.sample_write_offset)
+                (old_buffer_size - self.sample_read_offset) + self.sample_write_offset
+            else
+                self.sample_write_offset - self.sample_read_offset;
+
+            self.sample_read_offset = 0;
+            self.sample_write_offset = sample_count;
+            try reader.readSliceAll(std.mem.sliceAsBytes(self.sample_buffer[0..sample_count]));
         }
     }
 };
