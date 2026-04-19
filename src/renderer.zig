@@ -3088,23 +3088,23 @@ pub const Renderer = struct {
         // TODO: Revert to integer math only when possible?
         const x_factor = @as(f32, @floatFromInt(self.resolution.width)) / @as(f32, @floatFromInt(NativeResolution.width));
         const y_factor = @as(f32, @floatFromInt(self.resolution.height)) / @as(f32, @floatFromInt(NativeResolution.height));
-        const x: u32 = @intFromFloat(x_factor * @as(f32, @floatFromInt(self.global_clip.x.min)));
-        const y: u32 = @intFromFloat(y_factor * @as(f32, @floatFromInt(self.global_clip.y.min)));
-        const width: u32 = @intFromFloat(@min(x_factor * @as(f32, @floatFromInt(self.global_clip.x.max - self.global_clip.x.min)), @as(f32, @floatFromInt(self.resolution.width))));
-        const height: u32 = @intFromFloat(@min(y_factor * @as(f32, @floatFromInt(self.global_clip.y.max - self.global_clip.y.min)), @as(f32, @floatFromInt(self.resolution.height))));
+        const x: u32 = @trunc(x_factor * self.global_clip.x.min);
+        const y: u32 = @trunc(y_factor * self.global_clip.y.min);
+        const width: u32 = @trunc(@min(x_factor * (self.global_clip.x.max - self.global_clip.x.min), @as(f32, @floatFromInt(self.resolution.width))));
+        const height: u32 = @trunc(@min(y_factor * (self.global_clip.y.max - self.global_clip.y.min), @as(f32, @floatFromInt(self.resolution.height))));
 
         if (user_clip) |uc| {
             // FIXME: Handle other usages.
             //        Use Stencil for OutsideEnabled
             if (uc.usage == .InsideEnabled) {
-                const scaled_x = @max(@as(u32, @intFromFloat(x_factor * @as(f32, @floatFromInt(uc.x)))), x);
-                const scaled_y = @max(@as(u32, @intFromFloat(y_factor * @as(f32, @floatFromInt(uc.y)))), y);
+                const scaled_x = @max(@as(u32, @trunc(x_factor * @as(f32, @floatFromInt(uc.x)))), x);
+                const scaled_y = @max(@as(u32, @trunc(y_factor * @as(f32, @floatFromInt(uc.y)))), y);
                 return .{
                     .usage = .InsideEnabled,
                     .x = @min(scaled_x, self.resolution.width),
                     .y = @min(scaled_y, self.resolution.height),
-                    .width = @min(@min(@as(u32, @intFromFloat(x_factor * @as(f32, @floatFromInt(uc.width)))), width), self.resolution.width -| scaled_x),
-                    .height = @min(@min(@as(u32, @intFromFloat(y_factor * @as(f32, @floatFromInt(uc.height)))), height), self.resolution.height -| scaled_y),
+                    .width = @min(@min(@as(u32, @trunc(x_factor * @as(f32, @floatFromInt(uc.width)))), width), self.resolution.width -| scaled_x),
+                    .height = @min(@min(@as(u32, @trunc(y_factor * @as(f32, @floatFromInt(uc.height)))), height), self.resolution.height -| scaled_y),
                 };
             }
         }

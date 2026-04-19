@@ -3,10 +3,12 @@ const builtin = @import("builtin");
 const Once = @import("helpers").Once;
 
 const termcolor = @import("termcolor");
+const log = std.log.scoped(.dc);
 
-const dc_log = std.log.scoped(.dc);
 pub const HostPaths = @import("host_paths.zig");
-pub const Context = @import("context.zig");
+pub const Context = struct {
+    pub var io: std.Io = std.Io.failing;
+};
 
 pub const HardwareRegisters = @import("hardware_registers.zig");
 pub const SH4Module = @import("sh4.zig");
@@ -542,13 +544,13 @@ pub const Dreamcast = struct {
     pub fn write_hw_register(self: *@This(), comptime T: type, addr: u32, value: T) void {
         const reg: HardwareRegister = @enumFromInt(addr);
         if (addr >= 0x005F7000 and addr <= 0x005F709C) {
-            if (T != u8 and T != u16) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (GDROM)\n", .{ T, addr });
+            if (T != u8 and T != u16) return log.err("Invalid Write({any}) to 0x{X:0>8} (GDROM)\n", .{ T, addr });
             return self.gdrom.write_register(T, addr, value);
         }
         // Hardware registers
         switch (reg) {
             .SB_SFRES => { // Software Reset
-                if (T != u32) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (SB_SFRES)\n", .{ T, addr });
+                if (T != u32) return log.err("Invalid Write({any}) to 0x{X:0>8} (SB_SFRES)\n", .{ T, addr });
                 if (value == 0x00007611)
                     self.cpu.software_reset();
             },
@@ -556,26 +558,26 @@ pub const Dreamcast = struct {
             .SB_SDST => if (value == 1) self.start_sort_dma(),
             .SB_E1ST, .SB_E2ST, .SB_DDST => {
                 if (value == 1)
-                    dc_log.err(termcolor.red("Unimplemented {t} DMA initiation!"), .{reg});
+                    log.err(termcolor.red("Unimplemented {t} DMA initiation!"), .{reg});
             },
             .SB_ADSUSP, .SB_E1SUSP, .SB_E2SUSP, .SB_DDSUSP => {
                 if ((value & 1) == 1)
-                    dc_log.debug(termcolor.yellow("Unimplemented DMA Suspend Request to {t}"), .{reg});
+                    log.debug(termcolor.yellow("Unimplemented DMA Suspend Request to {t}"), .{reg});
             },
             .SB_ADST => {
                 if (value == 1) self.aica.start_dma(self);
             },
             .SB_GDEN => {
-                dc_log.debug("Write to SB_GDEN: {X}", .{value});
+                log.debug("Write to SB_GDEN: {X}", .{value});
                 if (value == 0) self.abort_gd_dma();
                 self.hw_register(T, .SB_GDEN).* = value;
             },
             .SB_GDST => if (value == 1) self.start_gd_dma(),
             .SB_GDSTARD, .SB_GDLEND, .SB_ADSTAGD, .SB_E1STAGD, .SB_E2STAGD, .SB_DDSTAGD, .SB_ADSTARD, .SB_E1STARD, .SB_E2STARD, .SB_DDSTARD, .SB_ADLEND, .SB_E1LEND, .SB_E2LEND, .SB_DDLEND => {
-                dc_log.warn(termcolor.yellow("Ignoring write({any}) to Read Only register {t} = {X:0>8}."), .{ T, reg, value });
+                log.warn(termcolor.yellow("Ignoring write({any}) to Read Only register {t} = {X:0>8}."), .{ T, reg, value });
             },
             .SB_MDAPRO => {
-                if (T != u32) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (SB_MDAPRO)\n", .{ T, addr });
+                if (T != u32) return log.err("Invalid Write({any}) to 0x{X:0>8} (SB_MDAPRO)\n", .{ T, addr });
                 // This register specifies the address range for Maple-DMA involving the system (work) memory.
                 // Check "Security code"
                 if (value & 0xFFFF0000 != 0x61550000) return;
@@ -583,22 +585,22 @@ pub const Dreamcast = struct {
             },
             .SB_MDST => if (value == 1) self.start_maple_dma(),
             .SB_ISTNRM => {
-                if (T != u32) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (SB_ISTNRM)\n", .{ T, addr });
+                if (T != u32) return log.err("Invalid Write({any}) to 0x{X:0>8} (SB_ISTNRM)\n", .{ T, addr });
                 // Interrupt can be cleared by writing "1" to the corresponding bit.
                 self.hw_register(u32, .SB_ISTNRM).* &= ~(value & 0x3FFFFF);
             },
             .SB_ISTERR => {
-                if (T != u32) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (SB_ISTERR)\n", .{ T, addr });
+                if (T != u32) return log.err("Invalid Write({any}) to 0x{X:0>8} (SB_ISTERR)\n", .{ T, addr });
                 // Interrupt can be cleared by writing "1" to the corresponding bit.
                 self.hw_register(u32, .SB_ISTERR).* &= ~value;
             },
             .SB_C2DSTAT => {
-                if (T != u32) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (SB_C2DSTAT)\n", .{ T, addr });
+                if (T != u32) return log.err("Invalid Write({any}) to 0x{X:0>8} (SB_C2DSTAT)\n", .{ T, addr });
                 self.hw_register(u32, .SB_C2DSTAT).* = 0x10000000 | (0x03FFFFFF & value);
             },
             .SB_C2DST => if (value == 1) self.start_ch2_dma() else self.end_ch2_dma(),
             else => {
-                dc_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, HardwareRegisters.getRegisterName(addr), value });
+                log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, HardwareRegisters.getRegisterName(addr), value });
                 self.hw_register_addr(T, addr).* = value;
             },
         }
@@ -624,7 +626,7 @@ pub const Dreamcast = struct {
                     0x005FA000...0x005FFFFF => return self.hw_register_addr(u8, area_0_addr),
                     0x00600000...0x006007FF => {
                         if (Once(@src()))
-                            dc_log.warn(termcolor.yellow("  Unimplemented _get_memory to MODEM: {X:0>8} (This will only be reported once)"), .{addr});
+                            log.warn(termcolor.yellow("  Unimplemented _get_memory to MODEM: {X:0>8} (This will only be reported once)"), .{addr});
                         self._dummy = .{ 0, 0, 0, 0 };
                         return @ptrCast(&self._dummy);
                     },
@@ -633,11 +635,11 @@ pub const Dreamcast = struct {
                     // G2 AICA RTC Registers
                     0x00710000...0x00710008 => @panic("_get_memory to AICA RTC Register. This should be handled in read/write functions."),
                     0x00800000...0x009FFFFF, 0x02800000...0x029FFFFF => { // G2 Wave Memory and Mirror
-                        dc_log.debug("NOTE: _get_memory to AICA Wave Memory @{X:0>8} ({X:0>8}). This should be handled in read/write functions, except for DMA. Get rid of this warning when the ARM core is stable enough! (Direct access to wave memory specifically should be fine.)", .{ addr, area_0_addr });
+                        log.debug("NOTE: _get_memory to AICA Wave Memory @{X:0>8} ({X:0>8}). This should be handled in read/write functions, except for DMA. Get rid of this warning when the ARM core is stable enough! (Direct access to wave memory specifically should be fine.)", .{ addr, area_0_addr });
                         return @ptrCast(&self.aica.wave_memory[area_0_addr & (self.aica.wave_memory.len - 1)]);
                     },
                     0x01000000...0x01FFFFFF => { // Expansion Devices
-                        dc_log.warn(termcolor.yellow("  Unimplemented _get_memory to Expansion Devices: {X:0>8} ({X:0>8})"), .{ addr, area_0_addr });
+                        log.warn(termcolor.yellow("  Unimplemented _get_memory to Expansion Devices: {X:0>8} ({X:0>8})"), .{ addr, area_0_addr });
 
                         // FIXME: TEMP DEBUG: Crazy Taxi accesses 030100C0 (010100C0) and 030100A0 (010100A0)
                         //        And 0101003C to 0101007C, and 01010014, and 01010008
@@ -648,7 +650,7 @@ pub const Dreamcast = struct {
                         return @ptrCast(&self._dummy);
                     },
                     else => {
-                        dc_log.warn(termcolor.yellow("  Unimplemented _get_memory to Area 0: {X:0>8} ({X:0>8})"), .{ addr, area_0_addr });
+                        log.warn(termcolor.yellow("  Unimplemented _get_memory to Area 0: {X:0>8} ({X:0>8})"), .{ addr, area_0_addr });
                         self._dummy = .{ 0, 0, 0, 0 };
                         return @ptrCast(&self._dummy);
                     },
@@ -658,12 +660,12 @@ pub const Dreamcast = struct {
             0x08000000...0x0BFFFFFF => std.debug.panic("Invalid _get_memory to Area 2 @{X:0>8}", .{addr}),
             0x10000000...0x13FFFFFF => { // Area 4 - Tile accelerator command input
                 // NOTE: Marvel vs. Capcom 2 reads from here (Addr:103464A0 PC:8C031D3C). Ignoring it doesn't seem to hurt, so... Doing that instead of panicking for now.
-                dc_log.err(termcolor.red("[PC: 0x{X:0>8}] Unexpected _get_memory to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA."), .{ self.cpu.pc, addr });
+                log.err(termcolor.red("[PC: 0x{X:0>8}] Unexpected _get_memory to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA."), .{ self.cpu.pc, addr });
                 self._dummy = .{ 0, 0, 0, 0 };
                 return @ptrCast(&self._dummy);
             },
             0x14000000...0x17FFFFFF => { // Area 5 - G2 Expansion Devices
-                dc_log.warn(termcolor.yellow("Unimplemented _get_memory to Area 5 (G2 Expansion Devices): {X:0>8}"), .{addr});
+                log.warn(termcolor.yellow("Unimplemented _get_memory to Area 5 (G2 Expansion Devices): {X:0>8}"), .{addr});
                 self._dummy = .{ 0, 0, 0, 0 };
                 return @ptrCast(&self._dummy);
             },
@@ -680,7 +682,7 @@ pub const Dreamcast = struct {
                 //        Metropolis Street Racer and Legacy of the Kain - Soul Reaver write to 0xBCXXXXXX,
                 //        and I have no idea if this is an issue with the emulator... See #51.
                 //        Ignoring the writes allow these games to progress a bit, but this might become an issue.
-                dc_log.err(termcolor.red("Invalid _get_memory @{X:0>8}"), .{addr});
+                log.err(termcolor.red("Invalid _get_memory @{X:0>8}"), .{addr});
                 return @ptrCast(&self._dummy);
             },
         }
@@ -700,7 +702,7 @@ pub const Dreamcast = struct {
                             else => {
                                 // Too spammy even for debugging.
                                 if (addr != @intFromEnum(HardwareRegister.SB_ISTNRM) and addr != @intFromEnum(HardwareRegister.SB_FFST))
-                                    dc_log.debug("  Read({any}) to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{
+                                    log.debug("  Read({any}) to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{
                                         T, addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @ptrCast(@alignCast(@constCast(self)._get_memory(addr)))).*,
                                     });
                                 return self.read_hw_register_addr(T, addr);
@@ -732,7 +734,7 @@ pub const Dreamcast = struct {
             // Area 1 - 32bit access
             0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {
                 if (T == u64) {
-                    dc_log.debug("Read(64) from 0x{X:0>8}", .{addr});
+                    log.debug("Read(64) from 0x{X:0>8}", .{addr});
                     return @as(u64, self.read(u32, addr + 4)) << 32 | self.read(u32, addr);
                 }
                 return self.gpu.read_vram(T, addr);
@@ -742,7 +744,7 @@ pub const Dreamcast = struct {
                 // DCA3 Hack
                 if (addr & (@as(u32, 1) << 25) != 0)
                     return self.cpu.operand_cache_read(T, addr);
-                dc_log.err(termcolor.red("[PC: 0x{X:0>8}] Unexpected read({any}) to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA."), .{ self.cpu.pc, T, addr });
+                log.err(termcolor.red("[PC: 0x{X:0>8}] Unexpected read({any}) to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA."), .{ self.cpu.pc, T, addr });
                 return 0;
             },
             // Area 7
@@ -754,7 +756,7 @@ pub const Dreamcast = struct {
                     if (self.cpu._mmu_state != .Disabled) {
                         return self.cpu.read_p4(T, addr | 0xE000_0000);
                     } else {
-                        dc_log.err(termcolor.red("Read({any}) to Area 7 without using virtual memory space: {X:0>8}"), .{ T, addr });
+                        log.err(termcolor.red("Read({any}) to Area 7 without using virtual memory space: {X:0>8}"), .{ T, addr });
                         return 0;
                     }
                 }
@@ -781,7 +783,7 @@ pub const Dreamcast = struct {
                         if (T == u64) {
                             // FIXME: Allow 64bit writes to Palette RAM? Metropolis Street Racer does it, not sure how normal it is :)
                             if (addr >= 0x005F9000 and addr <= 0x005F9FFC) {
-                                dc_log.warn(termcolor.yellow("Write({any}) to Palette RAM @{X:0>8} = 0x{X:0>16}"), .{ T, addr, value });
+                                log.warn(termcolor.yellow("Write({any}) to Palette RAM @{X:0>8} = 0x{X:0>16}"), .{ T, addr, value });
                                 self.gpu._get_register_from_addr(u64, addr).* = value;
                                 return;
                             }
@@ -810,7 +812,7 @@ pub const Dreamcast = struct {
             // Area 1 - 32bit access
             0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {
                 if (T == u64) {
-                    dc_log.debug("Write(64) to 0x{X:0>8} = 0x{X:0>16}", .{ addr, value });
+                    log.debug("Write(64) to 0x{X:0>8} = 0x{X:0>16}", .{ addr, value });
                     self.write(u32, addr, @truncate(value));
                     self.write(u32, addr + 4, @truncate(value >> 32));
                     return;
@@ -836,7 +838,7 @@ pub const Dreamcast = struct {
                     if (self.cpu._mmu_state != .Disabled) {
                         return self.cpu.write_p4(T, addr | 0xE000_0000, value);
                     } else {
-                        dc_log.err(termcolor.red("Write({any}) to Area 7 without using virtual memory space: {X:0>8} = {X}"), .{ T, addr, value });
+                        log.err(termcolor.red("Write({any}) to Area 7 without using virtual memory space: {X:0>8} = {X}"), .{ T, addr, value });
                         return;
                     }
                 }
@@ -995,7 +997,7 @@ pub const Dreamcast = struct {
             self.hw_register(u32, .SB_MDST).* = 1;
             defer self.hw_register(u32, .SB_MDST).* = 0;
 
-            dc_log.debug("Maple-DMA initiation!", .{});
+            log.debug("Maple-DMA initiation!", .{});
             const sb_mdstar = self.read_hw_register(u32, .SB_MDSTAR);
             std.debug.assert(sb_mdstar >> 28 == 0 and sb_mdstar & 0x1F == 0);
             self.maple.transfer(self, @as([*]u32, @ptrCast(@alignCast(&self.ram[sb_mdstar - 0x0C000000])))[0..]);
@@ -1008,7 +1010,7 @@ pub const Dreamcast = struct {
             const len = self.read_hw_register(u32, .SB_GDLEN) & 0x01FFFFE0;
             const direction = self.read_hw_register(u32, .SB_GDDIR);
 
-            if (direction == 0) return dc_log.err(termcolor.red("DMA to GD-ROM not implemented."), .{});
+            if (direction == 0) return log.err(termcolor.red("DMA to GD-ROM not implemented."), .{});
 
             self.hw_register(u32, .SB_GDST).* = 1;
             self.hw_register(u32, .SB_GDLEND).* = 0;
@@ -1017,14 +1019,14 @@ pub const Dreamcast = struct {
             self.hw_register(u32, .SB_GDLEND).* = len;
             self.hw_register(u32, .SB_GDSTARD).* = dst_addr;
 
-            dc_log.debug("GD-ROM-DMA! {X:0>8} ({X:0>8} bytes / {X:0>8} in queue)", .{ dst_addr, len, self.gdrom.dma_data_queue.count });
+            log.debug("GD-ROM-DMA! {X:0>8} ({X:0>8} bytes / {X:0>8} in queue)", .{ dst_addr, len, self.gdrom.dma_data_queue.count });
 
             // NOTE: This should use ch0-DMA, but the SH4 DMAC implementation can't handle this case (yet?).
             //       Unless we copy u16 by u16 from the data register, but, mmh, yeah.
             const copied = self.gdrom.dma_data_queue.read(@as([*]u8, @ptrCast(self._get_memory(dst_addr)))[0..len]);
 
             if (copied < len) {
-                dc_log.warn(termcolor.yellow("  GD DMA: {X:0>8} bytes copied out of {X:0>8} expected."), .{ copied, len });
+                log.warn(termcolor.yellow("  GD DMA: {X:0>8} bytes copied out of {X:0>8} expected."), .{ copied, len });
                 // Pad with zeroes in this case.
                 @memset(@as([*]u8, @ptrCast(self._get_memory(dst_addr)))[copied..len], 0);
             }
@@ -1063,7 +1065,7 @@ pub const Dreamcast = struct {
 
     pub fn abort_gd_dma(self: *@This()) void {
         if (self.read_hw_register(u32, .SB_GDST) != 0) {
-            dc_log.debug("Aborting GD DMA", .{});
+            log.debug("Aborting GD DMA", .{});
             self.hw_register(u32, .SB_GDST).* = 0;
             // FIXME: This should probably clear the EndGDDMA event, but it breaks everything :D
             // self.clear_event(.EndGDDMA);
@@ -1076,7 +1078,7 @@ pub const Dreamcast = struct {
         const dst_addr = self.read_hw_register(u32, .SB_C2DSTAT);
         const len = self.read_hw_register(u32, .SB_C2DLEN);
 
-        dc_log.debug("  Start ch2-DMA: {X:0>8} -> {X:0>8} ({X:0>8} bytes)", .{ self.cpu.read_p4_register(u32, .SAR2), dst_addr, len });
+        log.debug("  Start ch2-DMA: {X:0>8} -> {X:0>8} ({X:0>8} bytes)", .{ self.cpu.read_p4_register(u32, .SAR2), dst_addr, len });
 
         std.debug.assert(dst_addr & 0xF8000000 == 0x10000000);
         self.cpu.p4_register(u32, .DAR2).* = dst_addr; // FIXME: Not sure this is correct
@@ -1122,7 +1124,7 @@ pub const Dreamcast = struct {
         const src = if (dir == 0) mem_start else pvr_start;
         const dst = if (dir == 0) pvr_start else mem_start;
 
-        dc_log.debug("  Start PVR DMA: {X:0>8} -> {X:0>8} ({X:0>8} bytes)", .{ src, dst, len });
+        log.debug("  Start PVR DMA: {X:0>8} -> {X:0>8} ({X:0>8} bytes)", .{ src, dst, len });
 
         var chcr = self.cpu.p4_register(SH4Module.P4.CHCR, .CHCR0);
         chcr.ts = 4;
@@ -1142,7 +1144,7 @@ pub const Dreamcast = struct {
     }
 
     pub fn start_sort_dma(self: *@This()) void {
-        dc_log.debug("Start Sort-DMA", .{});
+        log.debug("Start Sort-DMA", .{});
         // NOTE: Uses ch0:DDT
         self.hw_register(u32, .SB_SDST).* = 1;
 
@@ -1150,10 +1152,10 @@ pub const Dreamcast = struct {
         const start_link_base_address = self.read_hw_register(u32, .SB_SDBAAW);
         const bit_width = self.read_hw_register(u32, .SB_SDWLT);
         const link_address = self.read_hw_register(u32, .SB_SDLAS);
-        dc_log.debug("  Start Link Address Table: {X}", .{start_link_address_table});
-        dc_log.debug("  Start Link Base Address: {X}", .{start_link_base_address});
-        dc_log.debug("  Bit Width: {X}", .{bit_width});
-        dc_log.debug("  Link Address: {X}", .{link_address});
+        log.debug("  Start Link Address Table: {X}", .{start_link_address_table});
+        log.debug("  Start Link Base Address: {X}", .{start_link_base_address});
+        log.debug("  Bit Width: {X}", .{bit_width});
+        log.debug("  Link Address: {X}", .{link_address});
 
         const bytes_transfered = if (bit_width == 0) self.sort_dma_link(u16) else self.sort_dma_link(u32);
 
@@ -1184,7 +1186,7 @@ pub const Dreamcast = struct {
             const start_link_address: u32 = self.cpu.read_physical(T, @intCast(start_link_address_table + offset));
             sb_sddiv += 1;
 
-            dc_log.debug("  [{d}] {X}", .{ offset, start_link_address });
+            log.debug("  [{d}] {X}", .{ offset, start_link_address });
 
             var link_address = start_link_address;
             while (true) {
@@ -1201,7 +1203,7 @@ pub const Dreamcast = struct {
                 const current_data_size = self.cpu.read_physical(u32, link_address + 0x18);
                 const next_link_address = self.cpu.read_physical(u32, link_address + 0x1C);
 
-                dc_log.debug("   - Size: {d}, Next: {X}", .{ current_data_size, next_link_address });
+                log.debug("   - Size: {d}, Next: {X}", .{ current_data_size, next_link_address });
 
                 const block_count = if (current_data_size == 0) 0x100 else current_data_size;
                 const bytes = block_count * 8 * 4;

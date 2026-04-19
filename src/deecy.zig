@@ -946,8 +946,8 @@ fn vmu_alarm_callback(self: *@This(), alw0: u8, ald0: u8, alw1: u8, ald1: u8) vo
         const frequency = 3876.0 + (1.0 - w / 255.0) * 7752.0;
         const period = DreamcastModule.AICAModule.AICA.SampleRate / frequency;
         const duty_ratio: f32 = d / w;
-        self.vmu_alarm.period_cycles = @intFromFloat(period);
-        self.vmu_alarm.low_cycles = @intFromFloat(period * duty_ratio);
+        self.vmu_alarm.period_cycles = @trunc(period);
+        self.vmu_alarm.low_cycles = @trunc(period * duty_ratio);
     }
     if (alw1 != 0 or ald1 != 0) deecy_log.warn("Unimplemented VMU second alarm: W={X} D={X}", .{ alw1, ald1 });
 }
@@ -1122,9 +1122,9 @@ pub fn poll_controllers(self: *@This()) void {
                                             }
                                         }
                                         if (config.right_trigger) |axis|
-                                            c.axis[0] = @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255);
+                                            c.axis[0] = @trunc(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255);
                                         if (config.left_trigger) |axis|
-                                            c.axis[1] = @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255);
+                                            c.axis[1] = @trunc(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255);
 
                                         const capabilities: DreamcastModule.Maple.Controller.InputCapabilities = @bitCast(c.subcapabilities[0]);
                                         inline for ([_]struct { host: ?zglfw.Gamepad.Axis, guest: u8 }{
@@ -1140,7 +1140,7 @@ pub fn poll_controllers(self: *@This()) void {
                                                         value = 0.0;
                                                     // TODO: Remap with deadzone?
                                                     value = value * 0.5 + 0.5;
-                                                    c.axis[binding.guest] = @intFromFloat(std.math.ceil(value * 255));
+                                                    c.axis[binding.guest] = @trunc(std.math.ceil(value * 255));
                                                 }
                                             }
                                         }
@@ -1889,7 +1889,7 @@ fn audio_callback(
 
     if (self.config.vmu_alarm_volume > 0.0 and self.vmu_alarm.active()) {
         for (0..frame_count) |i| {
-            const s: i32 = @intFromFloat(self.config.vmu_alarm_volume * @as(f32, @floatFromInt(self.vmu_alarm.sample())));
+            const s: i32 = @trunc(self.config.vmu_alarm_volume * @as(f32, @floatFromInt(self.vmu_alarm.sample())));
             out[2 * i + 0] += s;
             out[2 * i + 1] += s;
         }

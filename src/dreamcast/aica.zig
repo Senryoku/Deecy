@@ -607,7 +607,7 @@ fn attenuate(sample: i32, attenuation: u8) i32 {
     };
     // TODO: Move this to integer only?
     const s: f32 = @floatFromInt(sample);
-    return @intFromFloat(factors[attenuation] * s);
+    return @round(factors[attenuation] * s);
 }
 
 fn apply_pan_attenuation(sample: i32, level: u4, pan: u5) struct { left: i32, right: i32 } {
@@ -1393,7 +1393,7 @@ pub const AICA = struct {
 
             // TODO: Figure out the resonant part and the exact contribution of the Q register (registers.env_settings.q).
 
-            sample = std.math.clamp(@as(i32, @intFromFloat(tmp)), std.math.minInt(i16), std.math.maxInt(i16));
+            sample = std.math.clamp(@as(i32, @round(tmp)), std.math.minInt(i16), std.math.maxInt(i16));
             state.low_pass_filter_samples[1] = state.low_pass_filter_samples[0];
             state.low_pass_filter_samples[0] = sample;
         }

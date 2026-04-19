@@ -208,9 +208,9 @@ pub const fRGBA = packed struct {
 //   α= 255
 pub inline fn _yuv(y: f32, u: f32, v: f32) RGBA {
     return .{
-        .r = @intFromFloat(std.math.clamp(y + (11.0 / 8.0) * v, 0.0, 255.0)),
-        .g = @intFromFloat(std.math.clamp(y - 0.25 * (11.0 / 8.0) * u - 0.5 * (11.0 / 8.0) * v, 0.0, 255.0)),
-        .b = @intFromFloat(std.math.clamp(y + 1.25 * (11.0 / 8.0) * u, 0.0, 255.0)),
+        .r = @trunc(std.math.clamp(y + (11.0 / 8.0) * v, 0.0, 255.0)),
+        .g = @trunc(std.math.clamp(y - 0.25 * (11.0 / 8.0) * u - 0.5 * (11.0 / 8.0) * v, 0.0, 255.0)),
+        .b = @trunc(std.math.clamp(y + 1.25 * (11.0 / 8.0) * u, 0.0, 255.0)),
         .a = 255,
     };
 }
