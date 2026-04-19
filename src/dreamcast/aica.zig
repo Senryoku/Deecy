@@ -9,6 +9,7 @@ const ARM7JIT = @import("jit/arm_jit.zig").ARM7JIT;
 const DSP = @import("aica_dsp.zig");
 
 const DreamcastModule = @import("dreamcast.zig");
+const Context = DreamcastModule.Context;
 const Dreamcast = DreamcastModule.Dreamcast;
 const HardwareRegisters = DreamcastModule.HardwareRegisters;
 
@@ -606,7 +607,7 @@ fn attenuate(sample: i32, attenuation: u8) i32 {
     };
     // TODO: Move this to integer only?
     const s: f32 = @floatFromInt(sample);
-    return @intFromFloat(factors[attenuation] * s);
+    return @round(factors[attenuation] * s);
 }
 
 fn apply_pan_attenuation(sample: i32, level: u4, pan: u5) struct { left: i32, right: i32 } {
@@ -674,9 +675,10 @@ pub const AICA = struct {
             .regs = try allocator.alloc(u32, 0x8000 / 4),
             .wave_memory = memory,
             .channel_states = try allocator.alloc(AICAChannelState, 64),
-            .sample_buffer = try allocator.alloc(i32, 2048),
+            .sample_buffer = try allocator.alloc(i32, 2 * 4096),
             ._allocator = allocator,
         };
+        @memset(r.channel_states, .{});
         r.arm7 = .init(r.wave_memory, 0x1FFFFF, 0x800000);
         r.arm_jit = try .init(allocator, r.arm7.memory_address_mask);
         r.dsp = .init(@ptrCast(&r.regs[0x2804 / 4]), r.regs[0x3000 / 4 ..], r.wave_memory, allocator);
@@ -1011,7 +1013,7 @@ pub const AICA = struct {
     }
 
     pub fn timestamp() u32 {
-        const utc = std.time.timestamp();
+        const utc = std.Io.Clock.real.now(Context.io).toSeconds();
         // TODO: Handle timezone?
         return @intCast(utc + (20 * 365 + 5) * 24 * 60 * 60); // Dreamcast epoch is January 1, 1950 00:00
     }
@@ -1062,28 +1064,22 @@ pub const AICA = struct {
 
     pub fn dump_wave_memory(self: *const @This()) void {
         const path = "logs/wave_memory_dump.bin";
-        const file = std.fs.cwd().createFile(path, .{}) catch |err| {
-            aica_log.err("Failed to create file '{s}': {}", .{ path, err });
-            return;
-        };
-        defer file.close();
-        _ = file.write(self.wave_memory) catch |err| {
-            aica_log.err("Failed to write to file '{s}': {}", .{ path, err });
-            return;
-        };
+        std.Io.Dir.cwd().writeFile(Context.io, .{
+            .sub_path = path,
+            .data = self.wave_memory,
+            .flags = .{},
+        }) catch |err|
+            return aica_log.err("Failed to write to file '{s}': {}", .{ path, err });
         aica_log.info("[+] Wrote wave memory dump to '{s}'.", .{path});
     }
     pub fn dump_registers(self: *const @This()) void {
         const path = "logs/aica_registers_dump.bin";
-        const file = std.fs.cwd().createFile(path, .{}) catch |err| {
-            aica_log.err("Failed to create file '{s}': {}", .{ path, err });
-            return;
-        };
-        defer file.close();
-        _ = file.write(std.mem.sliceAsBytes(self.regs)) catch |err| {
-            aica_log.err("Failed to write to file '{s}': {}", .{ path, err });
-            return;
-        };
+        std.Io.Dir.cwd().writeFile(Context.io, .{
+            .sub_path = path,
+            .data = std.mem.sliceAsBytes(self.regs),
+            .flags = .{},
+        }) catch |err|
+            return aica_log.err("Failed to write to file '{s}': {}", .{ path, err });
         aica_log.info("[+] Wrote registers dump to '{s}'.", .{path});
     }
 
@@ -1397,7 +1393,7 @@ pub const AICA = struct {
 
             // TODO: Figure out the resonant part and the exact contribution of the Q register (registers.env_settings.q).
 
-            sample = std.math.clamp(@as(i32, @intFromFloat(tmp)), std.math.minInt(i16), std.math.maxInt(i16));
+            sample = std.math.clamp(@as(i32, @round(tmp)), std.math.minInt(i16), std.math.maxInt(i16));
             state.low_pass_filter_samples[1] = state.low_pass_filter_samples[0];
             state.low_pass_filter_samples[0] = sample;
         }
@@ -1432,8 +1428,8 @@ pub const AICA = struct {
             // Direct send to the DAC
             if (disdl != 0) { // 0 means full attenuation, not send.
                 const s = apply_pan_attenuation(sample, disdl, dipan);
-                self.sample_buffer[(2 * i + 0) % self.sample_buffer.len] +|= s.left;
-                self.sample_buffer[(2 * i + 1) % self.sample_buffer.len] +|= s.right;
+                self.sample_buffer[self.sample_write_offset + 0] +|= s.left;
+                self.sample_buffer[self.sample_write_offset + 1] +|= s.right;
             }
             if (registers.dps_channel_send.level != 0) {
                 const channel = registers.dps_channel_send.channel;
@@ -1643,12 +1639,16 @@ pub const AICA = struct {
         bytes += try writer.write(std.mem.sliceAsBytes(self._timer_counters[0..]));
         bytes += try writer.write(std.mem.asBytes(&self._samples_counter));
 
-        bytes += try writer.write(std.mem.asBytes(&self.sample_read_offset));
-        bytes += try writer.write(std.mem.asBytes(&self.sample_write_offset));
+        // FIXME: Backward compatibility. Marker for new version.
+        bytes += try writer.write(std.mem.asBytes(&@as(usize, 0xFFFFFFFF_FFFFFFFF)));
         if (self.sample_read_offset > self.sample_write_offset) {
-            bytes += try writer.write(std.mem.sliceAsBytes(self.sample_buffer[0..self.sample_write_offset]));
+            const sample_count = self.sample_read_offset - self.sample_write_offset;
+            bytes += try writer.write(std.mem.asBytes(&sample_count));
             bytes += try writer.write(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..]));
+            bytes += try writer.write(std.mem.sliceAsBytes(self.sample_buffer[0..self.sample_write_offset]));
         } else {
+            const sample_count = self.sample_write_offset - self.sample_read_offset;
+            bytes += try writer.write(std.mem.asBytes(&sample_count));
             bytes += try writer.write(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..self.sample_write_offset]));
         }
 
@@ -1669,13 +1669,26 @@ pub const AICA = struct {
         try reader.readSliceAll(std.mem.sliceAsBytes(self._timer_counters[0..]));
         try reader.readSliceAll(std.mem.asBytes(&self._samples_counter));
 
-        try reader.readSliceAll(std.mem.asBytes(&self.sample_read_offset));
-        try reader.readSliceAll(std.mem.asBytes(&self.sample_write_offset));
-        if (self.sample_read_offset > self.sample_write_offset) {
-            try reader.readSliceAll(std.mem.sliceAsBytes(self.sample_buffer[0..self.sample_write_offset]));
-            try reader.readSliceAll(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..]));
+        // FIXME: Backward compatibility.
+        //        Sample buffer size was increased from 2048 and the previous way to serialize depends on it.
+        const marker = try reader.takeInt(usize, .little);
+        if (marker == 0xFFFFFFFF_FFFFFFFF) {
+            const sample_count = try reader.takeInt(usize, .little);
+            self.sample_read_offset = 0;
+            self.sample_write_offset = sample_count;
+            try reader.readSliceAll(std.mem.sliceAsBytes(self.sample_buffer[0..sample_count]));
         } else {
-            try reader.readSliceAll(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..self.sample_write_offset]));
+            const old_buffer_size = 2048;
+            self.sample_read_offset = marker;
+            try reader.readSliceAll(std.mem.asBytes(&self.sample_write_offset));
+            const sample_count = if (self.sample_read_offset > self.sample_write_offset)
+                (old_buffer_size - self.sample_read_offset) + self.sample_write_offset
+            else
+                self.sample_write_offset - self.sample_read_offset;
+
+            self.sample_read_offset = 0;
+            self.sample_write_offset = sample_count;
+            try reader.readSliceAll(std.mem.sliceAsBytes(self.sample_buffer[0..sample_count]));
         }
     }
 };

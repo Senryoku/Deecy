@@ -69,7 +69,7 @@ Contribute in [its repository](https://github.com/Senryoku/Deecy-Compatibility).
 Install the correct zig version (see `.zigversion`). 
 You can use [zigup](https://github.com/marler8997/zigup) to manage your installed zig versions, or get it from https://ziglang.org/download/.
 ```sh
-zigup 0.15.2
+zigup 0.16.0
 ```
 Clone and build. Zig will fetch all dependencies automatically.
 ```sh
@@ -139,6 +139,8 @@ Dependencies are managed by the `build.zig.zon` file.
 -   Multiple libraries from https://github.com/zig-gamedev (MIT)
 -   ndf-zig: https://github.com/fabioarnold/nfd-zig (MIT)
 -   zig-lz4: https://github.com/SnorlaxAssist/zig-lz4 (MIT), bindings for LZ4 https://github.com/lz4/lz4 (BSD 2-Clause)
+-   [known-folders](https://github.com/ziglibs/known-folders): Optional, only required for the `-Duse_appdata_dir=true` option (MIT).
+-   [DreamPicoPort-API](https://github.com/OrangeFox86/DreamPicoPort-API): Brings [DreamPicoPort](https://github.com/OrangeFox86/DreamPicoPort) support (Optional, can be turned off with `-Ddreampicoport=false`. MIT)
 
 ## Thanks
 

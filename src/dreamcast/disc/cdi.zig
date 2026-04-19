@@ -16,18 +16,18 @@ tracks: std.ArrayList(Track) = .empty,
 sessions: std.ArrayList(Session) = .empty,
 _file: MemoryMappedFile,
 
-pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
+pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@This() {
     var self: @This() = .{
-        ._file = try .init(allocator, filepath),
+        ._file = try .init(io, filepath),
     };
-    errdefer self.deinit(allocator);
+    errdefer self.deinit(allocator, io);
 
-    const file = try std.fs.cwd().openFile(filepath, .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().openFile(io, filepath, .{});
+    defer file.close(io);
 
     const buffer = try allocator.alloc(u8, 8192);
     defer allocator.free(buffer);
-    var file_reader = file.reader(buffer);
+    var file_reader = file.reader(io, buffer);
 
     const size = try file_reader.getSize();
     if (size < 8) return error.InvalidCDI;
@@ -59,6 +59,8 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
     var track_offset: u64 = 0;
 
     std.debug.assert(session_count == 2);
+
+    const mapped = self._file.view();
 
     for (0..session_count) |_| {
         var session = Session{
@@ -118,7 +120,7 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
                 },
             }
 
-            log.debug("     [+] Creating view: {X}, length: {X}", .{ track_offset + pregap * sector_size, length * sector_size });
+            log.debug("     [+] Track offset: {X}, length: {X}", .{ track_offset + pregap * sector_size, length * sector_size });
 
             try self.tracks.append(allocator, .{
                 .num = @truncate(self.tracks.items.len + 1),
@@ -127,7 +129,7 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
                 .track_type = @enumFromInt(sector_type),
                 .format = sector_size,
                 .pregap = pregap,
-                .data = try self._file.create_view(track_offset + pregap * sector_size, length * sector_size),
+                .data = mapped[track_offset + pregap * sector_size ..][0 .. length * sector_size],
             });
 
             log.debug("Loaded: {any}", .{self.tracks.items[self.tracks.items.len - 1].data[0..32]});
@@ -160,10 +162,10 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
     return self;
 }
 
-pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+pub fn deinit(self: *@This(), allocator: std.mem.Allocator, io: std.Io) void {
     self.sessions.deinit(allocator);
     self.tracks.deinit(allocator);
-    self._file.deinit();
+    self._file.deinit(io);
 }
 
 pub fn get_first_data_track(self: *const @This()) ?Track {
@@ -202,7 +204,7 @@ pub fn get_area_boundaries(self: *const @This(), area: Session.Area) [2]u32 {
     return .{ 0, @intCast(self.tracks.items.len - 1) };
 }
 
-fn track_header(reader: *std.io.Reader) !void {
+fn track_header(reader: *std.Io.Reader) !void {
     const null_or_extra = try reader.takeInt(u32, .little);
     if (null_or_extra != 0)
         std.debug.assert(try reader.discardShort(8) == 8);

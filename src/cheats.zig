@@ -92,27 +92,27 @@ pub fn path(allocator: std.mem.Allocator, product_name: []const u8, product_id: 
     return try std.fs.path.join(allocator, &[_][]const u8{ game_dir, "cheats.zon" });
 }
 
-pub fn save(allocator: std.mem.Allocator, product_name: []const u8, product_id: []const u8, cheats: []const Cheat) !void {
+pub fn save(allocator: std.mem.Allocator, io: std.Io, product_name: []const u8, product_id: []const u8, cheats: []const Cheat) !void {
     const cheat_path = try path(allocator, product_name, product_id);
     defer allocator.free(cheat_path);
 
-    if (std.fs.path.dirname(cheat_path)) |dir| try std.fs.cwd().makePath(dir);
+    if (std.fs.path.dirname(cheat_path)) |dir| try std.Io.Dir.cwd().createDirPath(io, dir);
 
-    const file = try std.fs.cwd().createFile(cheat_path, .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().createFile(io, cheat_path, .{});
+    defer file.close(io);
     const buffer = try allocator.alloc(u8, 8192);
     defer allocator.free(buffer);
-    var writer = file.writer(buffer);
+    var writer = file.writer(io, buffer);
     try std.zon.stringify.serialize(cheats, .{}, &writer.interface);
     try writer.end();
 }
 
 /// Caller owns the returned memory
-pub fn load(allocator: std.mem.Allocator, product_name: []const u8, product_id: []const u8) !?[]Cheat {
+pub fn load(allocator: std.mem.Allocator, io: std.Io, product_name: []const u8, product_id: []const u8) !?[]Cheat {
     const cheat_path = try path(allocator, product_name, product_id);
     defer allocator.free(cheat_path);
 
-    const file = std.fs.cwd().openFile(cheat_path, .{}) catch |err| {
+    const cheats_str = std.Io.Dir.cwd().readFileAllocOptions(io, cheat_path, allocator, .limited(8 * 1024 * 1024), .@"8", 0) catch |err| {
         switch (err) {
             error.FileNotFound => {
                 // Load default cheats.
@@ -126,7 +126,7 @@ pub fn load(allocator: std.mem.Allocator, product_name: []const u8, product_id: 
                         try cheat_list.append(allocator, try cheat.dupe(allocator));
                     const slice = try cheat_list.toOwnedSlice(allocator);
 
-                    try save(allocator, product_name, product_id, slice);
+                    try save(allocator, io, product_name, product_id, slice);
 
                     return slice;
                 }
@@ -135,12 +135,9 @@ pub fn load(allocator: std.mem.Allocator, product_name: []const u8, product_id: 
             else => return err,
         }
     };
-    defer file.close();
-
-    const cheats_str = try file.readToEndAllocOptions(allocator, 1024 * 1024, null, .@"8", 0);
     defer allocator.free(cheats_str);
 
-    const zon = std.zon.parse.fromSlice([]Cheat, allocator, cheats_str, null, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
+    const zon = std.zon.parse.fromSliceAlloc([]Cheat, allocator, cheats_str, null, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
         log.err("Failed to parse cheats file '{s}': {t}.", .{ cheat_path, err });
         return &.{};
     };

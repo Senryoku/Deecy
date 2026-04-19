@@ -518,21 +518,19 @@ const DrawCallKey = struct {
 };
 
 const PipelineMetadata = struct {
-    draw_calls: std.AutoArrayHashMap(DrawCallKey, DrawCall),
+    draw_calls: std.array_hash_map.Auto(DrawCallKey, DrawCall) = .empty,
 
-    pub fn init(allocator: std.mem.Allocator) PipelineMetadata {
-        return .{ .draw_calls = .init(allocator) };
-    }
+    pub const init: @This() = .{};
 
     fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         for (self.draw_calls.values()) |*draw_call| draw_call.deinit(allocator);
-        self.draw_calls.deinit();
+        self.draw_calls.deinit(allocator);
     }
 };
 
 const PassMetadata = struct {
     pass_type: HollyModule.ListType,
-    steps: std.ArrayList(std.AutoArrayHashMap(PipelineKey, PipelineMetadata)) = .empty,
+    steps: std.ArrayList(std.array_hash_map.Auto(PipelineKey, PipelineMetadata)) = .empty,
 
     pub fn init(pass_type: HollyModule.ListType) PassMetadata {
         return .{
@@ -549,7 +547,7 @@ const PassMetadata = struct {
         for (self.steps.items) |*step| {
             for (step.values()) |*pipeline|
                 pipeline.deinit(allocator);
-            step.deinit();
+            step.deinit(allocator);
         }
         self.steps.clearRetainingCapacity();
     }
@@ -985,8 +983,9 @@ pub const Renderer = struct {
     _scratch_pad: []u8 align(4), // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
 
     _gctx: *zgpu.GraphicsContext,
-    _gctx_queue_mutex: *std.Thread.Mutex,
+    _gctx_queue_mutex: *std.Io.Mutex,
     _allocator: std.mem.Allocator,
+    io: std.Io,
 
     fn create_textures_bind_group_layout(gctx: *zgpu.GraphicsContext) zgpu.BindGroupLayoutHandle {
         return gctx.createBindGroupLayout(&.{
@@ -1028,9 +1027,9 @@ pub const Renderer = struct {
         });
     }
 
-    pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, gctx_queue_mutex: *std.Thread.Mutex, config: *const Configuration) !*Renderer {
-        const start = std.time.milliTimestamp();
-        defer log.info("Renderer initialized in {d}ms", .{std.time.milliTimestamp() - start});
+    pub fn create(allocator: std.mem.Allocator, io: std.Io, gctx: *zgpu.GraphicsContext, gctx_queue_mutex: *std.Io.Mutex, config: *const Configuration) !*Renderer {
+        const start = std.Io.Clock.awake.now(io);
+        defer log.info("Renderer initialized in {f}", .{start.durationTo(std.Io.Clock.awake.now(io))});
 
         // Writes to texture all rely on that.
         std.debug.assert(zgpu.GraphicsContext.surface_texture_format == .bgra8_unorm);
@@ -1438,7 +1437,7 @@ pub const Renderer = struct {
             .strips_metadata = try .initCapacity(allocator, 4096),
             .modifier_volume_vertices = try .initCapacity(allocator, 4096),
 
-            .last_frame_timestamp = std.time.microTimestamp(),
+            .last_frame_timestamp = std.Io.Clock.awake.now(io).toMicroseconds(),
 
             .render_passes = .empty,
             .ta_lists = .empty,
@@ -1449,6 +1448,7 @@ pub const Renderer = struct {
             ._gctx = gctx,
             ._gctx_queue_mutex = gctx_queue_mutex,
             ._allocator = allocator,
+            .io = io,
         };
         try renderer.ta_lists.append(allocator, .init());
 
@@ -1748,7 +1748,7 @@ pub const Renderer = struct {
     pub fn reset(self: *@This()) void {
         self.render_pending = false;
         self.render_request = false;
-        self.last_frame_timestamp = std.time.microTimestamp();
+        self.last_frame_timestamp = std.Io.Clock.awake.now(self.io).toMicroseconds();
         self.last_n_frametimes = .{};
         for (self.texture_metadata) |arr| {
             for (arr) |*tex| tex.* = .{};
@@ -1767,8 +1767,8 @@ pub const Renderer = struct {
         const render_to_texture = dc.gpu.render_to_texture();
 
         // NOTE: Here we also rely on this lock to protect access to `ta_lists` and `render_passes`.
-        self._gctx_queue_mutex.lock();
-        defer self._gctx_queue_mutex.unlock();
+        self._gctx_queue_mutex.lockUncancelable(self.io);
+        defer self._gctx_queue_mutex.unlock(self.io);
 
         if (self.render_pending) {
             if (Once(@src())) log.warn("Missed a pending render. Consider enabling 'Synchronous Rendering'.", .{});
@@ -1871,8 +1871,8 @@ pub const Renderer = struct {
         if (new_value == self.write_back_parameters.fb_w_sof1) {
             // Let the main thread process the list asynchronously unless explicitly disabled.
             if (self.config.synchronous_render) {
-                self._gctx_queue_mutex.lock();
-                defer self._gctx_queue_mutex.unlock();
+                self._gctx_queue_mutex.lockUncancelable(self.io);
+                defer self._gctx_queue_mutex.unlock(self.io);
                 self.render(&dc.gpu, false) catch |err| return log.err("Failed to render: {t}", .{err});
             } else {
                 self.render_request = true;
@@ -2184,8 +2184,8 @@ pub const Renderer = struct {
             }
         }
 
-        self._gctx_queue_mutex.lock();
-        defer self._gctx_queue_mutex.unlock();
+        self._gctx_queue_mutex.lockUncancelable(self.io);
+        defer self._gctx_queue_mutex.unlock(self.io);
         self._gctx.queue.writeTexture(
             .{
                 .texture = self._gctx.lookupResource(self.framebuffer.texture).?,
@@ -2501,7 +2501,7 @@ pub const Renderer = struct {
                 const display_list: *const HollyModule.DisplayList = @constCast(ta_lists).get_list(list_type);
 
                 var current_depth_compare_function: ?wgpu.CompareFunction = null;
-                var current_step: *std.AutoArrayHashMap(PipelineKey, PipelineMetadata) = undefined;
+                var current_step: *std.array_hash_map.Auto(PipelineKey, PipelineMetadata) = undefined;
 
                 const pass = switch (list_type) {
                     .Opaque => &render_pass.opaque_pass,
@@ -3001,16 +3001,16 @@ pub const Renderer = struct {
                                 // functions, this seem to be enough, while keeping most of the benefit of batching.
                                 if (current_depth_compare_function == null) { // Initialisation
                                     current_depth_compare_function = pipeline_key.depth_compare;
-                                    try pass.steps.append(self._allocator, .init(self._allocator));
+                                    try pass.steps.append(self._allocator, .empty);
                                     current_step = &pass.steps.items[0];
                                 } else if (current_depth_compare_function != pipeline_key.depth_compare) { // Next Step
                                     current_depth_compare_function = pipeline_key.depth_compare;
-                                    try pass.steps.append(self._allocator, .init(self._allocator));
+                                    try pass.steps.append(self._allocator, .empty);
                                     current_step = &pass.steps.items[pass.steps.items.len - 1];
                                 }
 
                                 var pipeline = current_step.getPtr(pipeline_key) orelse put: {
-                                    try current_step.put(pipeline_key, .init(self._allocator));
+                                    try current_step.put(self._allocator, pipeline_key, .{});
                                     break :put current_step.getPtr(pipeline_key).?;
                                 };
 
@@ -3018,7 +3018,7 @@ pub const Renderer = struct {
 
                                 var draw_call = pipeline.draw_calls.getPtr(draw_call_key);
                                 if (draw_call == null) {
-                                    try pipeline.draw_calls.put(draw_call_key, .init(
+                                    try pipeline.draw_calls.put(self._allocator, draw_call_key, .init(
                                         sampler,
                                         display_list.vertex_strips.items[idx].user_clip,
                                     ));
@@ -3088,23 +3088,23 @@ pub const Renderer = struct {
         // TODO: Revert to integer math only when possible?
         const x_factor = @as(f32, @floatFromInt(self.resolution.width)) / @as(f32, @floatFromInt(NativeResolution.width));
         const y_factor = @as(f32, @floatFromInt(self.resolution.height)) / @as(f32, @floatFromInt(NativeResolution.height));
-        const x: u32 = @intFromFloat(x_factor * @as(f32, @floatFromInt(self.global_clip.x.min)));
-        const y: u32 = @intFromFloat(y_factor * @as(f32, @floatFromInt(self.global_clip.y.min)));
-        const width: u32 = @intFromFloat(@min(x_factor * @as(f32, @floatFromInt(self.global_clip.x.max - self.global_clip.x.min)), @as(f32, @floatFromInt(self.resolution.width))));
-        const height: u32 = @intFromFloat(@min(y_factor * @as(f32, @floatFromInt(self.global_clip.y.max - self.global_clip.y.min)), @as(f32, @floatFromInt(self.resolution.height))));
+        const x: u32 = @trunc(x_factor * self.global_clip.x.min);
+        const y: u32 = @trunc(y_factor * self.global_clip.y.min);
+        const width: u32 = @trunc(@min(x_factor * (self.global_clip.x.max - self.global_clip.x.min), @as(f32, @floatFromInt(self.resolution.width))));
+        const height: u32 = @trunc(@min(y_factor * (self.global_clip.y.max - self.global_clip.y.min), @as(f32, @floatFromInt(self.resolution.height))));
 
         if (user_clip) |uc| {
             // FIXME: Handle other usages.
             //        Use Stencil for OutsideEnabled
             if (uc.usage == .InsideEnabled) {
-                const scaled_x = @max(@as(u32, @intFromFloat(x_factor * @as(f32, @floatFromInt(uc.x)))), x);
-                const scaled_y = @max(@as(u32, @intFromFloat(y_factor * @as(f32, @floatFromInt(uc.y)))), y);
+                const scaled_x = @max(@as(u32, @trunc(x_factor * @as(f32, @floatFromInt(uc.x)))), x);
+                const scaled_y = @max(@as(u32, @trunc(y_factor * @as(f32, @floatFromInt(uc.y)))), y);
                 return .{
                     .usage = .InsideEnabled,
                     .x = @min(scaled_x, self.resolution.width),
                     .y = @min(scaled_y, self.resolution.height),
-                    .width = @min(@min(@as(u32, @intFromFloat(x_factor * @as(f32, @floatFromInt(uc.width)))), width), self.resolution.width -| scaled_x),
-                    .height = @min(@min(@as(u32, @intFromFloat(y_factor * @as(f32, @floatFromInt(uc.height)))), height), self.resolution.height -| scaled_y),
+                    .width = @min(@min(@as(u32, @trunc(x_factor * @as(f32, @floatFromInt(uc.width)))), width), self.resolution.width -| scaled_x),
+                    .height = @min(@min(@as(u32, @trunc(y_factor * @as(f32, @floatFromInt(uc.height)))), height), self.resolution.height -| scaled_y),
                 };
             }
         }
@@ -3121,8 +3121,8 @@ pub const Renderer = struct {
     /// Locks _gctx_queue_mutex.
     pub fn blit_framebuffer(self: *const @This()) void {
         const gctx = self._gctx;
-        self._gctx_queue_mutex.lock();
-        defer self._gctx_queue_mutex.unlock();
+        self._gctx_queue_mutex.lockUncancelable(self.io);
+        defer self._gctx_queue_mutex.unlock(self.io);
 
         if (gctx.lookupResource(self.blit_pipeline)) |pipeline| {
             const commands = commands: {
@@ -3931,7 +3931,7 @@ pub const Renderer = struct {
         }
 
         if (!render_to_texture) {
-            const now = std.time.microTimestamp();
+            const now = std.Io.Clock.awake.now(self.io).toMicroseconds();
             self.last_n_frametimes.push(now - self.last_frame_timestamp);
             self.last_frame_timestamp = now;
         }
@@ -3940,8 +3940,8 @@ pub const Renderer = struct {
     /// Blit the last rendered frame to the window surface.
     /// Locks _gctx_queue_mutex.
     pub fn draw(self: *const @This(), window_width: u32, window_height: u32, aspect_ratio: Configuration.AspectRatio) void {
-        self._gctx_queue_mutex.lock();
-        defer self._gctx_queue_mutex.unlock();
+        self._gctx_queue_mutex.lockUncancelable(self.io);
+        defer self._gctx_queue_mutex.unlock(self.io);
 
         self.update_blit_to_screen_vertex_buffer(window_width, window_height, aspect_ratio);
 
@@ -4015,7 +4015,7 @@ pub const Renderer = struct {
             return pl;
 
         log.info("Creating Pipeline: {f}", .{key});
-        const start = std.time.milliTimestamp();
+        const start = std.Io.Clock.awake.now(self.io);
 
         const color_targets = [_]wgpu.ColorTargetState{
             .{
@@ -4074,7 +4074,7 @@ pub const Renderer = struct {
                 return ptr.*;
             },
             else => {
-                defer log.info("Pipeline created in {d}ms", .{std.time.milliTimestamp() - start});
+                defer log.info("Pipeline created in {f}", .{start.durationTo(std.Io.Clock.real.now(self.io))});
                 const pl = self._gctx.createRenderPipeline(self.opaque_pipeline_layout, pipeline_descriptor);
 
                 if (!self._gctx.isResourceValid(pl)) {
@@ -4163,8 +4163,8 @@ pub const Renderer = struct {
     /// Locks self._gctx_queue_mutex.
     /// Caller owns the returned memory and should call `deinit` on the returned Image.
     pub fn capture(self: *const @This(), allocator: std.mem.Allocator) !@import("image.zig") {
-        self._gctx_queue_mutex.lock();
-        defer self._gctx_queue_mutex.unlock();
+        self._gctx_queue_mutex.lockUncancelable(self.io);
+        defer self._gctx_queue_mutex.unlock(self.io);
 
         const static = struct {
             var result: zgpu.wgpu.MapAsyncStatus = .@"error";

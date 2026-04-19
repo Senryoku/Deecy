@@ -1,24 +1,36 @@
 const std = @import("std");
 pub const path_config = @import("path_config");
+const known_folders = @import("known-folders");
 
 var data_path: []const u8 = "";
 var userdata_path: []const u8 = "";
 
-var data_path_buffer: [std.fs.max_path_bytes]u8 = @splat(0);
-var userdata_path_buffer: [std.fs.max_path_bytes]u8 = @splat(0);
+pub fn init(io: std.Io, allocator: std.mem.Allocator, environ: std.process.Environ.Map) !void {
+    if (path_config.use_appdata_dir) {
+        const app_data_dir = try known_folders.getPath(io, allocator, environ, .local_configuration) orelse {
+            std.log.warn("No known 'local_configuration' folder.", .{});
+            return error.MissingKnownFolder;
+        };
+        defer allocator.free(app_data_dir);
 
-var _mutex = if (path_config.use_appdata_dir) std.Thread.Mutex{} else void;
+        const deecy_folder = try std.fs.path.join(allocator, &[_][]const u8{ app_data_dir, "Deecy" });
+        defer allocator.free(deecy_folder);
+        std.log.info("Using App data folder as '{s}'", .{deecy_folder});
 
-fn generate_appdata_path(buf: []u8, path: []const u8) []const u8 {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    const app_data_dir = std.fs.getAppDataDir(allocator, "Deecy") catch |err|
-        std.debug.panic("Failed to get appdata dir: {t}\n", .{err});
-    const p = std.fs.path.resolve(allocator, &[_][]const u8{ app_data_dir, path }) catch |err|
-        std.debug.panic("Failed to resolve paths: {t}\n", .{err});
-    @memcpy(buf[0..p.len], p);
-    return buf[0..p.len];
+        data_path = try std.fs.path.resolve(allocator, &[_][]const u8{ deecy_folder, path_config.data_path });
+        userdata_path = try std.fs.path.resolve(allocator, &[_][]const u8{ deecy_folder, path_config.userdata_path });
+
+        try std.Io.Dir.cwd().createDirPath(io, deecy_folder);
+        try std.Io.Dir.cwd().createDirPath(io, data_path);
+        try std.Io.Dir.cwd().createDirPath(io, userdata_path);
+    }
+}
+
+pub fn deinit(allocator: std.mem.Allocator) void {
+    if (path_config.use_appdata_dir) {
+        allocator.free(data_path);
+        allocator.free(userdata_path);
+    }
 }
 
 /// Replaces invalid characters with underscores
@@ -32,27 +44,18 @@ pub fn safe_path(path: []u8) void {
 }
 
 pub fn get_data_path() []const u8 {
-    if (path_config.use_appdata_dir) {
-        _mutex.lock();
-        defer _mutex.unlock();
-        if (data_path.len == 0)
-            data_path = generate_appdata_path(&data_path_buffer, path_config.data_path);
+    if (path_config.use_appdata_dir)
         return data_path;
-    }
     return path_config.data_path;
 }
 
 pub fn get_userdata_path() []const u8 {
-    if (path_config.use_appdata_dir) {
-        _mutex.lock();
-        defer _mutex.unlock();
-        if (userdata_path.len == 0)
-            userdata_path = generate_appdata_path(&userdata_path_buffer, path_config.userdata_path);
+    if (path_config.use_appdata_dir)
         return userdata_path;
-    }
     return path_config.userdata_path;
 }
 
+/// Caller owns the returned memory
 pub fn userdata_game_directory(allocator: std.mem.Allocator, product_name: []const u8, product_id: []const u8) ![]const u8 {
     const folder_name = try std.fmt.allocPrint(allocator, "{s}[{s}]", .{ product_name, product_id });
     safe_path(folder_name);

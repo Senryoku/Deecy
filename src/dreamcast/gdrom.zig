@@ -185,8 +185,6 @@ packet_command_idx: u8 = 0,
 packet_command: [12]u8 = @splat(0),
 
 audio_state: struct {
-    mutex: std.Thread.Mutex = .{}, // NOTE: Should not be needed anymore.
-
     status: CDAudioStatus = .NoInfo,
 
     start_addr: u32 = 0,
@@ -211,7 +209,6 @@ audio_state: struct {
         bytes += try writer.write(std.mem.asBytes(&self.end_addr));
         bytes += try writer.write(std.mem.asBytes(&self.current_addr));
         bytes += try writer.write(std.mem.asBytes(&self.repetitions));
-
         bytes += try writer.write(std.mem.asBytes(&self.current_position));
         bytes += try writer.write(std.mem.asBytes(&self.samples_in_buffer));
         bytes += try writer.write(std.mem.sliceAsBytes(self.buffer[0..self.samples_in_buffer]));
@@ -220,9 +217,6 @@ audio_state: struct {
     }
 
     pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
         try reader.readSliceAll(std.mem.asBytes(&self.status));
         try reader.readSliceAll(std.mem.asBytes(&self.start_addr));
         try reader.readSliceAll(std.mem.asBytes(&self.end_addr));
@@ -275,17 +269,14 @@ pub fn reset(self: *@This()) void {
     self.cd_read_state = .{};
 }
 
-pub fn deinit(self: *@This()) void {
+pub fn deinit(self: *@This(), io: std.Io) void {
     self._allocator.free(self.audio_state.buffer);
     self.pio_data_queue.deinit();
     self.dma_data_queue.deinit();
-    if (self.disc) |*d| d.deinit(self._allocator);
+    if (self.disc) |*d| d.deinit(self._allocator, io);
 }
 
 pub fn get_cdda_samples(self: *@This()) [2]i16 {
-    self.audio_state.mutex.lock();
-    defer self.audio_state.mutex.unlock();
-
     if (self.audio_state.status != .Playing) return .{ 0, 0 };
 
     if (self.audio_state.samples_in_buffer <= self.audio_state.current_position + 1) {
@@ -310,7 +301,7 @@ fn fetch_next_cdda_sector(self: *@This()) bool {
     self.audio_state.samples_in_buffer = 0;
 
     if (self.disc) |*disc| {
-        const count = disc.load_sectors(self.audio_state.current_addr, 1, @as([*]u8, @ptrCast(self.audio_state.buffer.ptr))[0..2352]);
+        const count = disc.load_sectors(self.audio_state.current_addr, 1, std.mem.sliceAsBytes(self.audio_state.buffer));
         self.audio_state.samples_in_buffer = count / 2; // 16-bit samples
         self.audio_state.current_addr += 1;
         return true;
@@ -858,9 +849,6 @@ fn req_ses(self: *@This()) !void {
 
 fn cd_play(self: *@This()) !void {
     gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand CDPlay: {X}"), .{self.packet_command});
-
-    self.audio_state.mutex.lock();
-    defer self.audio_state.mutex.unlock();
 
     const parameter_type = self.packet_command[1] & 0x7;
 

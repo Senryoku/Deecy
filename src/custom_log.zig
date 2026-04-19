@@ -13,6 +13,14 @@ var last_message: struct {
 var count: u32 = 0;
 var buffer: [128]u8 = undefined;
 
+var allocator: std.mem.Allocator = undefined;
+var io: std.Io = undefined;
+
+pub fn init(_io: std.Io, _allocator: std.mem.Allocator) void {
+    allocator = _allocator;
+    io = _io;
+}
+
 pub fn deinit() void {
     file.close();
 }
@@ -24,7 +32,7 @@ pub fn set_output(out: Output) void {
     file.close();
     output = out;
     if (output == .File or output == .Both) {
-        file.open(std.heap.page_allocator) catch {
+        file.open(allocator, io) catch {
             output = .Console;
             std.log.err("Failed to open log file. That's akward...", .{});
         };
@@ -33,11 +41,14 @@ pub fn set_output(out: Output) void {
 
 pub fn log(
     comptime message_level: std.log.Level,
-    comptime scope: @Type(.enum_literal),
+    comptime scope: @EnumLiteral(),
     comptime format: []const u8,
     args: anytype,
 ) void {
     if (output == .None) return;
+
+    const prev = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(prev);
 
     file.lock();
     defer file.unlock();
@@ -55,18 +66,18 @@ pub fn log(
         count +|= 1;
 
         if (output_to_console) {
-            const stderr = std.debug.lockStderrWriter(&buffer);
-            defer std.debug.unlockStderrWriter();
-            nosuspend stderr.print(termcolor.grey("\r  (...x{d})"), .{count}) catch return;
+            const stderr = std.debug.lockStderr(&buffer);
+            defer std.debug.unlockStderr();
+            stderr.terminal().writer.print(termcolor.grey("\r  (...x{d})"), .{count}) catch return;
         }
         return;
     }
 
     if (count > 1) {
         if (output_to_console) {
-            const stderr = std.debug.lockStderrWriter(&buffer);
-            defer std.debug.unlockStderrWriter();
-            nosuspend stderr.print("\n", .{}) catch return;
+            const stderr = std.debug.lockStderr(&buffer);
+            defer std.debug.unlockStderr();
+            stderr.terminal().writer.print("\n", .{}) catch return;
         }
         if (output_to_file) {
             file.writer.print("(...x{d})\n", .{count}) catch return;
@@ -84,9 +95,9 @@ pub fn log(
     const level_txt = comptime message_level.asText();
     const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
     if (output_to_console) {
-        const stderr = std.debug.lockStderrWriter(&buffer);
-        defer std.debug.unlockStderrWriter();
-        nosuspend stderr.print(comptime switch (message_level) {
+        const stderr = std.debug.lockStderr(&buffer);
+        defer std.debug.unlockStderr();
+        stderr.terminal().writer.print(comptime switch (message_level) {
             inline .debug, .info => level_txt ++ prefix2,
             inline .warn => termcolor.yellow(level_txt ++ prefix2),
             inline .err => termcolor.red(level_txt ++ prefix2),

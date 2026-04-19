@@ -78,16 +78,21 @@ pub const Action = struct {
 
 shortcuts: std.AutoHashMap(Key, Action),
 
-pub fn init(allocator: std.mem.Allocator) !@This() {
+pub fn init(allocator: std.mem.Allocator, io: std.Io) !@This() {
     var self = @This(){
         .shortcuts = .init(allocator),
     };
-    try self.deserialize(allocator);
+    self.deserialize(allocator, io) catch |err| {
+        switch (err) {
+            error.FileNotFound => try self.load_default_shortcuts(),
+            else => return err,
+        }
+    };
     return self;
 }
 
-pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-    self.serialize(allocator) catch |err| log.err("Failed to serialize shortcuts: {t}", .{err});
+pub fn deinit(self: *@This(), allocator: std.mem.Allocator, io: std.Io) void {
+    self.serialize(allocator, io) catch |err| log.err("Failed to serialize shortcuts: {t}", .{err});
     self.shortcuts.deinit();
 }
 
@@ -135,7 +140,7 @@ const SerializedShortcut = struct {
     key: Key,
 };
 
-fn serialize(self: @This(), allocator: std.mem.Allocator) !void {
+fn serialize(self: @This(), allocator: std.mem.Allocator, io: std.Io) !void {
     if (self.shortcuts.count() == 0) return;
 
     var list: std.ArrayList(SerializedShortcut) = .empty;
@@ -148,31 +153,26 @@ fn serialize(self: @This(), allocator: std.mem.Allocator) !void {
     const config_path = try get_config_path(allocator);
     defer allocator.free(config_path);
 
-    var config_file = try std.fs.cwd().createFile(config_path, .{});
-    defer config_file.close();
+    var config_file = try std.Io.Dir.cwd().createFile(io, config_path, .{});
+    defer config_file.close(io);
 
     const buffer = try allocator.alloc(u8, 8192);
     defer allocator.free(buffer);
-    var writer = config_file.writer(buffer);
+    var writer = config_file.writer(io, buffer);
     try std.zon.stringify.serialize(list.items, .{}, &writer.interface);
     try writer.end();
 }
 
-fn deserialize(self: *@This(), allocator: std.mem.Allocator) !void {
+fn deserialize(self: *@This(), allocator: std.mem.Allocator, io: std.Io) !void {
     const config_path = try get_config_path(allocator);
     defer allocator.free(config_path);
 
-    var file = std.fs.cwd().openFile(config_path, .{}) catch |err| {
-        log.warn("Failed to open shortcuts file: {t}. Loading default configuration.", .{err});
-        return self.load_default_shortcuts();
-    };
-    defer file.close();
-    const data = try file.readToEndAllocOptions(allocator, 32 * 1024 * 1024, null, .@"8", 0);
+    const data = try std.Io.Dir.cwd().readFileAllocOptions(io, config_path, allocator, .limited(32 * 1024 * 1024), .@"8", 0);
     defer allocator.free(data);
 
     var diagnostics: std.zon.parse.Diagnostics = .{};
     defer diagnostics.deinit(allocator);
-    const zon = std.zon.parse.fromSlice([]const SerializedShortcut, allocator, data, &diagnostics, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
+    const zon = std.zon.parse.fromSliceAlloc([]const SerializedShortcut, allocator, data, &diagnostics, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
         log.err(termcolor.red("Failed to parse shortcuts file: {t}."), .{err});
         log.err("{f}", .{diagnostics});
         return err;

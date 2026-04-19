@@ -17,11 +17,11 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     self.selected_file = null;
 }
 
-pub fn setup(self: *@This(), allocator: std.mem.Allocator, entry: *const GameFile) !void {
+pub fn setup(self: *@This(), allocator: std.mem.Allocator, io: std.Io, entry: *const GameFile) !void {
     std.debug.assert(self.selected_file == null);
     self.selected_file = entry;
     if (entry.product_name != null and entry.product_id != null) {
-        if (try Cheats.load(allocator, entry.product_name.?, entry.product_id.?)) |cheats|
+        if (try Cheats.load(allocator, io, entry.product_name.?, entry.product_id.?)) |cheats|
             self.cheats = .fromOwnedSlice(cheats);
     }
     // TODO: Load per-game settings for this game.
@@ -32,17 +32,17 @@ pub fn open(self: *@This()) void {
     zgui.openPopup("Game Settings", .{});
 }
 
-fn close(self: *@This(), allocator: std.mem.Allocator) void {
+fn close(self: *@This(), allocator: std.mem.Allocator, io: std.Io) void {
     if (self.selected_file) |f|
         if (f.product_name != null and f.product_id != null)
-            Cheats.save(allocator, f.product_name.?, f.product_id.?, self.cheats.items) catch |err|
+            Cheats.save(allocator, io, f.product_name.?, f.product_id.?, self.cheats.items) catch |err|
                 std.log.err("Failed to save cheats: {t}", .{err});
     zgui.closeCurrentPopup();
     self.deinit(allocator);
 }
 
 /// Needs to be called on the same stack ID as open()
-pub fn draw(self: *@This(), allocator: std.mem.Allocator) !void {
+pub fn draw(self: *@This(), allocator: std.mem.Allocator, io: std.Io) !void {
     if (zgui.beginPopupModal("Game Settings", .{ .flags = .{ .always_auto_resize = true } })) {
         if (zgui.beginTabBar("GameSettingsTabBar", .{})) {
             // if (zgui.beginTabItem("Settings", .{})) {
@@ -162,7 +162,7 @@ pub fn draw(self: *@This(), allocator: std.mem.Allocator) !void {
             }
             zgui.endTabBar();
         }
-        if (zgui.button("Save & Close", .{})) self.close(allocator);
+        if (zgui.button("Save & Close", .{})) self.close(allocator, io);
         zgui.endPopup();
     }
 }

@@ -2,7 +2,7 @@ const std = @import("std");
 
 fn get_git_commit(b: *std.Build) []const u8 {
     var code: u8 = undefined;
-    const commit = b.runAllowFail(&.{ "git", "rev-parse", "--short", "HEAD" }, &code, .Inherit) catch {
+    const commit = b.runAllowFail(&.{ "git", "rev-parse", "--short", "HEAD" }, &code, .inherit) catch {
         return "Unknown Commit";
     };
     return std.mem.trimEnd(u8, commit, "\r\n");
@@ -53,6 +53,18 @@ pub fn build(b: *std.Build) !void {
     dc_module.addOptions("dc_config", dc_options);
     dc_module.addOptions("path_config", path_options);
 
+    if (use_appdata_dir) {
+        if (b.lazyDependency("known_folders", .{
+            .target = target,
+            .optimize = optimize,
+        })) |known_folders| {
+            dc_module.addImport("known-folders", known_folders.module("known-folders"));
+        } else {
+            std.log.err("Option 'use_appdata_dir' requires the dependency 'known-folders'", .{});
+            return error.MissingDependency;
+        }
+    }
+
     const ziglz4 = b.dependency("ziglz4", .{
         .target = target,
         .optimize = .ReleaseFast,
@@ -90,14 +102,19 @@ pub fn build(b: *std.Build) !void {
     const exe = b.addExecutable(.{
         .name = "Deecy",
         .root_module = deecy_module,
-        .use_llvm = true, // NOTE: zgpu doesn't work correctly with the self-hosted backend (zig 0.15.1), leading to a crash in Linux in debug mode. Forcing LLVM use fixes the issue.
+        // NOTE:
+        //  - zig 0.15.1: zgpu doesn't work correctly with the self-hosted backend, leading to a crash in Linux in debug mode. Forcing LLVM use fixes the issue.
+        //  - zig 0.16.0: I can't get some inline assembly to compile in Linux with the self-hosted backend.
+        .use_llvm = true,
     });
-    exe.addWin32ResourceFile(.{ .file = b.path("src/assets/resource.rc") });
+    exe.root_module.addWin32ResourceFile(.{ .file = b.path("src/assets/resource.rc") });
     if (target.result.os.tag == .windows and no_console)
         exe.subsystem = .Windows;
     if (optimize == .ReleaseFast) {
         exe.root_module.strip = true;
-        exe.lto = .full;
+        // FIXME: As of zig 0.16.0, full LTO leads to a bunch of undefined symbols on Windows. Disabling for now.
+        if (target.result.os.tag != .windows)
+            exe.lto = .full;
         exe.link_gc_sections = true;
     }
 
@@ -165,9 +182,6 @@ pub fn build(b: *std.Build) !void {
         deecy_module.addImport("zglfw", zglfw.module("root"));
         deecy_module.linkLibrary(zglfw.artifact("glfw"));
 
-        const zpool = b.dependency("zpool", .{ .target = target, .optimize = optimize });
-        deecy_module.addImport("zpool", zpool.module("root"));
-
         const zgpu = @import("zgpu");
         if (target.result.os.tag == .windows) {
             zgpu.installDxcFrom(exe, "zgpu");
@@ -222,7 +236,8 @@ pub fn build(b: *std.Build) !void {
             }),
         });
         interpreter_perf.root_module.strip = true;
-        interpreter_perf.lto = .full;
+        if (target.result.os.tag != .windows)
+            interpreter_perf.lto = .full;
         interpreter_perf.link_gc_sections = true;
         interpreter_perf.root_module.addImport("termcolor", termcolor_module);
         interpreter_perf.root_module.addImport("lz4", ziglz4.module("zig-lz4"));
@@ -249,7 +264,8 @@ pub fn build(b: *std.Build) !void {
             }),
         });
         // jit_perf.root_module.strip = true;
-        jit_perf.lto = .full;
+        if (target.result.os.tag != .windows)
+            jit_perf.lto = .full;
         jit_perf.link_gc_sections = true;
         jit_perf.root_module.addImport("termcolor", termcolor_module);
         jit_perf.root_module.addImport("lz4", ziglz4.module("zig-lz4"));
@@ -284,10 +300,10 @@ pub fn build(b: *std.Build) !void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/sh4_SingleStepTests.zig"),
             .target = target,
-            .optimize = optimize,
+            .optimize = .ReleaseFast,
         }),
         // NOTE: The ftrv XMTRX,FVn test fails with the self-hosted backend, I guess there are differences in float handling.
-        //       I don't know if the test is reliable in the first place, but llvm is used the releases anyway.
+        //       I don't know if the test is reliable in the first place, but llvm is used in the releases anyway.
         .use_llvm = true,
     });
     sh4_tests.root_module.addImport("termcolor", termcolor_module);

@@ -55,24 +55,30 @@ pub extern "kernel32" fn timeEndPeriod(uPeriod: std.os.windows.UINT) callconv(.w
 pub extern "kernel32" fn AttachConsole(dwProcessId: std.os.windows.DWORD) callconv(.winapi) std.os.windows.BOOL;
 const ATTACH_PARENT_PROCESS = ~@as(std.os.windows.DWORD, 0);
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const allocator = init.gpa;
+
+    custom_log.init(io, allocator);
     defer custom_log.deinit();
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    var allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+    try DreamcastModule.HostPaths.init(io, allocator, init.environ_map.*);
+    defer DreamcastModule.HostPaths.deinit(allocator);
 
     if (builtin.os.tag == .windows and config.no_console) {
         // When built with the GUI subsystem on Windows, try to attach to the console if we received any arguments.
-        var args = try std.process.argsWithAllocator(allocator);
-        defer args.deinit();
-        var arg_count: u64 = 0;
-        while (args.next()) |_| arg_count += 1;
-        if (arg_count > 1)
+        if (init.minimal.args.vector.len > 1)
             _ = AttachConsole(ATTACH_PARENT_PROCESS);
     }
+    const wayland = wl: {
+        if (builtin.os.tag == .windows) break :wl false;
+        if (init.minimal.environ.getPosix("XDG_SESSION_TYPE")) |session_type| {
+            break :wl std.mem.eql(u8, session_type, "wayland");
+        }
+        break :wl false;
+    };
 
-    var d = try Deecy.create(allocator);
+    var d = try Deecy.create(allocator, io, .{ .wayland = wayland });
     defer d.destroy();
     var dc = d.dc;
 
@@ -87,28 +93,28 @@ pub fn main() !void {
     var force_render = false; // Enable to re-render every time and help capturing with RenderDoc (will mess with framebuffer emulation).
     var load_state: ?u32 = null;
 
-    var args = try std.process.argsWithAllocator(allocator);
-    defer args.deinit();
-    _ = args.skip();
-    while (args.next()) |arg| {
+    var args_iterator = try init.minimal.args.iterateAllocator(allocator);
+    defer args_iterator.deinit();
+    _ = args_iterator.skip();
+    while (args_iterator.next()) |arg| {
         if (std.mem.startsWith(u8, arg, "-")) {
             if (std.mem.eql(u8, arg, "-b")) {
-                binary_path = args.next() orelse {
+                binary_path = args_iterator.next() orelse {
                     std.log.err(termcolor.red("Expected path to binary file after -b."), .{});
                     return error.InvalidArguments;
                 };
             } else if (std.mem.eql(u8, arg, "-g")) {
-                disc_path = args.next() orelse {
+                disc_path = args_iterator.next() orelse {
                     std.log.err(termcolor.red("Expected path to disc file after -g."), .{});
                     return error.InvalidArguments;
                 };
             } else if (std.mem.eql(u8, arg, "-i")) {
-                ip_bin_path = args.next() orelse {
+                ip_bin_path = args_iterator.next() orelse {
                     std.log.err(termcolor.red("Expected path to IP.bin after -i."), .{});
                     return error.InvalidArguments;
                 };
             } else if (std.mem.eql(u8, arg, "--vmu")) {
-                const path = args.next() orelse {
+                const path = args_iterator.next() orelse {
                     std.log.err(termcolor.red("Expected path to VMU after --vmu."), .{});
                     return error.InvalidArguments;
                 };
@@ -129,7 +135,7 @@ pub fn main() !void {
                     d.toggle_fullscreen();
                 }
             } else if (std.mem.eql(u8, arg, "--load-state")) {
-                const num_str = args.next() orelse {
+                const num_str = args_iterator.next() orelse {
                     std.log.err(termcolor.red("Expected state number after --load-state."), .{});
                     return error.InvalidArguments;
                 };
@@ -152,7 +158,7 @@ pub fn main() !void {
             } else if (std.mem.endsWith(u8, arg, ".gdi") or std.mem.endsWith(u8, arg, ".cdi") or std.mem.endsWith(u8, arg, ".chd") or std.mem.endsWith(u8, arg, ".cue")) {
                 disc_path = arg;
             } else {
-                std.log.warn(termcolor.yellow("Unsupported file format: '{s}'"), .{arg});
+                std.log.warn("Unsupported file format: '{s}'", .{arg});
             }
         }
     }
@@ -166,37 +172,36 @@ pub fn main() !void {
         var entry_point: u32 = 0xAC010000;
 
         if (std.mem.endsWith(u8, path, ".elf")) {
-            var elf_file = try std.fs.cwd().openFile(path, .{});
-            defer elf_file.close();
+            var elf_file = try std.Io.Dir.cwd().openFile(io, path, .{});
+            defer elf_file.close(io);
             const buffer = try allocator.alloc(u8, 8192);
             defer allocator.free(buffer);
-            var file_reader = elf_file.reader(buffer);
+            var file_reader = elf_file.reader(io, buffer);
             var elf = try ELF.init(allocator, &file_reader);
             defer elf.deinit();
 
             entry_point = @intCast(elf.program_entry_offset);
             for (elf.program_headers) |ph| {
                 if (ph.p_type == .Load) {
-                    try elf_file.seekTo(ph.p_offset);
-                    _ = try elf_file.readAll(dc.ram[(ph.p_vaddr & 0x1FFF_FFFF) - 0x0C00_0000 ..]);
+                    try file_reader.seekTo(ph.p_offset);
+                    const offset = (ph.p_vaddr & 0x1FFF_FFFF) - 0x0C00_0000;
+                    var writer: std.Io.Writer = .fixed(dc.ram[offset..]);
+                    _ = try file_reader.streamMode(&writer, .limited(dc.ram.len - offset), .positional);
+                    try writer.flush();
                 } else {
                     if (std.enums.tagName(ELF.SegmentType, ph.p_type)) |tag| {
-                        std.log.scoped(.elf).warn(termcolor.yellow("Program header type {s} not supported"), .{tag});
+                        std.log.scoped(.elf).warn("Program header type {s} not supported", .{tag});
                     } else {
-                        std.log.scoped(.elf).warn(termcolor.yellow("Program header type {d} not supported"), .{@intFromEnum(ph.p_type)});
+                        std.log.scoped(.elf).warn("Program header type {d} not supported", .{@intFromEnum(ph.p_type)});
                     }
                 }
             }
         } else {
-            var bin_file = try std.fs.cwd().openFile(path, .{});
-            defer bin_file.close();
-            _ = try bin_file.readAll(dc.ram[0x10000..]);
+            _ = try std.Io.Dir.cwd().readFile(io, path, dc.ram[0x10000..]);
         }
 
         if (ip_bin_path) |ipb_path| {
-            var ip_bin_file = try std.fs.cwd().openFile(ipb_path, .{});
-            defer ip_bin_file.close();
-            _ = try ip_bin_file.readAll(dc.ram[0x8000..]);
+            _ = try std.Io.Dir.cwd().readFile(io, ipb_path, dc.ram[0x8000..]);
         } else {
             // Skip IP.bin
             dc.cpu.pc = entry_point;
@@ -205,7 +210,7 @@ pub fn main() !void {
         d.set_display_ui(false);
         d.ui.binary_loaded = true;
     } else if (disc_path) |path| {
-        std.log.info("Loading Disc: {s}...", .{path});
+        std.log.info("Loading Disc: '{s}'...", .{path});
 
         try d.load_disc(path);
 
@@ -258,7 +263,7 @@ pub fn main() !void {
         if (builtin.os.tag == .windows) _ = timeEndPeriod(1);
     }
 
-    var precise_sleep: PreciseSleep = .init();
+    var precise_sleep: PreciseSleep = .init(io);
     defer precise_sleep.deinit();
     var then = zglfw.getTime();
     while (!d.window.shouldClose()) {
@@ -279,13 +284,13 @@ pub fn main() !void {
             //        Some games (like Speed Devils) renders only at 30FPS and each frame is presented twice,
             //        however we don't actually write back the framebuffer to VRAM, meaning we'd blit garbage to the screen.
             //        Plus, even if PVR writing to the framebuffer was perfectly emulated, it would still only be at native resolution.
-            if (std.time.microTimestamp() - d.renderer.last_frame_timestamp > 40_000)
+            if (std.Io.Clock.awake.now(io).toMicroseconds() - d.renderer.last_frame_timestamp > 40_000)
                 d.renderer.blit_framebuffer();
         }
 
         {
-            d.gctx_queue_mutex.lock();
-            defer d.gctx_queue_mutex.unlock();
+            d.gctx_queue_mutex.lockUncancelable(io);
+            defer d.gctx_queue_mutex.unlock(io);
             const render_start = d.renderer.render_request;
             if (render_start) {
                 try d.renderer.update(&d.dc.gpu);
@@ -305,8 +310,8 @@ pub fn main() !void {
         d.submit_ui();
 
         const resized = resized: {
-            d.gctx_queue_mutex.lock();
-            defer d.gctx_queue_mutex.unlock();
+            d.gctx_queue_mutex.lockUncancelable(io);
+            defer d.gctx_queue_mutex.unlock(io);
             break :resized d.gctx.present() == .surface_reconfigured;
         };
         if (resized)
@@ -321,7 +326,7 @@ pub fn main() !void {
                 .@"50Hz" => 20_000_000,
                 .Off => unreachable,
             };
-            precise_sleep.wait_for_interval(ns_per_frame);
+            precise_sleep.wait_for_interval(io, ns_per_frame);
         }
     }
 }

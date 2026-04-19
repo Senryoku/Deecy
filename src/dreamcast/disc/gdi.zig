@@ -13,16 +13,11 @@ tracks: std.ArrayList(Track) = .empty,
 
 _files: std.ArrayList(MemoryMappedFile) = .empty,
 
-pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
+pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@This() {
     var self: @This() = .{};
 
-    const file = std.fs.cwd().openFile(filepath, .{}) catch |err| {
-        log.err("Error opening '{s}': {t}", .{ filepath, err });
-        return err;
-    };
-    defer file.close();
     const folder = std.fs.path.dirname(filepath) orelse ".";
-    const data = try file.readToEndAlloc(allocator, 1024 * 1024);
+    const data = try std.Io.Dir.cwd().readFileAlloc(io, filepath, allocator, .limited(1024 * 1024));
     defer allocator.free(data);
     const end_line = if (std.mem.containsAtLeast(u8, data, 1, "\r\n")) "\r\n" else "\n";
     var lines = std.mem.splitSequence(u8, data, end_line);
@@ -56,26 +51,26 @@ pub fn init(allocator: std.mem.Allocator, filepath: []const u8) !@This() {
 
         const track_file_path = try std.fs.path.join(allocator, &[_][]const u8{ folder, filename });
         defer allocator.free(track_file_path);
-        try self._files.append(allocator, try MemoryMappedFile.init(allocator, track_file_path));
+        try self._files.append(allocator, try MemoryMappedFile.init(io, track_file_path));
 
         self.tracks.items[num - 1] = .{
             .num = num,
             .fad = offset,
-            .end_fad = @intCast(offset + try self._files.items[self._files.items.len - 1].file_size() / format),
+            .end_fad = @intCast(offset + self._files.items[self._files.items.len - 1].size / format),
             .track_type = @enumFromInt(track_type_int),
             .format = format,
             .pregap = pregap,
-            .data = try self._files.items[self._files.items.len - 1].create_full_view(),
+            .data = self._files.items[self._files.items.len - 1].view(),
         };
     }
 
     return self;
 }
 
-pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+pub fn deinit(self: *@This(), allocator: std.mem.Allocator, io: std.Io) void {
     self.tracks.deinit(allocator);
     for (self._files.items) |*file|
-        file.deinit();
+        file.deinit(io);
     self._files.deinit(allocator);
 }
 

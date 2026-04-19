@@ -2,6 +2,7 @@ const std = @import("std");
 const log = std.log.scoped(.maple);
 const termcolor = @import("termcolor");
 
+const Context = @import("../dreamcast.zig").Context;
 const common = @import("../maple.zig");
 const FunctionCodesMask = common.FunctionCodesMask;
 const DeviceInfoPayload = common.DeviceInfoPayload;
@@ -117,74 +118,62 @@ pub fn init(allocator: std.mem.Allocator, backing_file_path: []const u8) !@This(
 }
 
 fn load_or_init(self: *@This()) !void {
-    try std.fs.cwd().makePath(std.fs.path.dirname(self.backing_file_path) orelse ".");
-    var new_file = std.fs.cwd().createFile(self.backing_file_path, .{ .exclusive = true }) catch |e| {
-        switch (e) {
-            error.PathAlreadyExists => {
-                log.info("Loading VMU from file '{s}'.", .{self.backing_file_path});
-                var file = try std.fs.cwd().openFile(self.backing_file_path, .{});
-                defer file.close();
-                _ = try file.readAll(@as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize]);
-                return;
-            },
-            else => {
-                log.err("Failed to create VMU file '{s}': {t}", .{ self.backing_file_path, e });
-                return e;
-            },
+    if (std.fs.path.dirname(self.backing_file_path)) |dir|
+        try std.Io.Dir.cwd().createDirPath(Context.io, dir);
+
+    log.info("Loading VMU from file '{s}'.", .{self.backing_file_path});
+    _ = std.Io.Dir.cwd().readFile(Context.io, self.backing_file_path, @as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize]) catch {
+        log.info("  Not found: Initializing new VMU at '{s}'.", .{self.backing_file_path});
+        // FIXME: Something's wrong here. I'm not initiliazing it properly.
+        //        Switching to a dumb copy of a freshly formatted VMU by the bios, until I understand it better.
+        if (comptime true) {
+            for (0..self.blocks.len) |i|
+                @memset(&self.blocks[i], 0);
+            var fat_entries = @as([*]FATValue, @ptrCast(@alignCast(&self.blocks[FATBlock][0])));
+            @memset(fat_entries[0..0x100], FATValue.Unused);
+            @memcpy(self.blocks[FATBlock][0x1E0..], &[_]u8{
+                0xFC, 0xFF, 0xFA, 0xFF, 0xF1, 0x00, 0xF2, 0x00,
+                0xF3, 0x00, 0xF4, 0x00, 0xF5, 0x00, 0xF6, 0x00,
+                0xF7, 0x00, 0xF8, 0x00, 0xF9, 0x00, 0xFA, 0x00,
+                0xFB, 0x00, 0xFC, 0x00, 0xFA, 0xFF, 0xFA, 0xFF,
+            });
+            @memcpy(self.blocks[0xFF][0..96], &[_]u8{
+                0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
+                0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x20, 0x24, 0x07, 0x23, 0x01, 0x45, 0x23, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0xFF, 0x00, 0x00, 0x00, 0xFF, 0x00, 0xFE, 0x00, 0x01, 0x00, 0xFD, 0x00, 0x0D, 0x00, 0x00, 0x00,
+                0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            });
+        } else {
+            @memset(self.blocks[0xFF][0..0x200], 0);
+            // Fill system area
+            @memset(self.blocks[0xFF][0..0x10], 0x55); // Format Information, all 0x55 means formatted.
+            @memcpy(self.blocks[0xFF][0x10..0x30], "Volume Label                    "); // Volume Label
+            @memcpy(self.blocks[0xFF][0x30..0x38], &[_]u8{ 19, 99, 12, 31, 23, 59, 0, 0 }); // Date and time created
+            @memset(self.blocks[0xFF][0x38..0x40], 0); // Reserved
+
+            @memcpy(self.blocks[0xFF][0x40 .. 0x40 + 24], std.mem.asBytes(&StorageMediaInfo{
+                .total_size = BlockCount - 1,
+                .partition_number = 0x0000,
+                .system_area_block_number = SystemBlock,
+                .fat_area_block_number = FATBlock,
+                .number_of_fat_area_blocks = 0x0001,
+                .file_information_block_number = 0x00FD,
+                .number_of_file_information_blocks = 0x000D,
+                .volume_icon = 0,
+                .save_area_block_number = 0x00C8,
+                .number_of_save_area_blocks = 0x00C8,
+            })[0..24]);
+
+            // "Format" the device.
+            var fat_entries = @as([*]FATValue, @ptrCast(@alignCast(&self.blocks[FATBlock][0])));
+            @memset(fat_entries[0..0x100], FATValue.Unused);
+            fat_entries[FATBlock] = FATValue.DataEnd;
+            fat_entries[SystemBlock] = FATValue.DataEnd; // Marks the system area block.
         }
+        self.last_unsaved_change = std.Io.Clock.awake.now(Context.io).toSeconds();
     };
-    defer new_file.close();
-
-    // FIXME: Something's wrong here. I'm not initiliazing it properly.
-    //        Switching to a dumb copy of a freshly formatted VMU by the bios, until I understand it better.
-    if (comptime true) {
-        for (0..self.blocks.len) |i| {
-            @memset(&self.blocks[i], 0);
-        }
-        var fat_entries = @as([*]FATValue, @ptrCast(@alignCast(&self.blocks[FATBlock][0])));
-        @memset(fat_entries[0..0x100], FATValue.Unused);
-        @memcpy(self.blocks[FATBlock][0x1E0..], &[_]u8{
-            0xFC, 0xFF, 0xFA, 0xFF, 0xF1, 0x00, 0xF2, 0x00,
-            0xF3, 0x00, 0xF4, 0x00, 0xF5, 0x00, 0xF6, 0x00,
-            0xF7, 0x00, 0xF8, 0x00, 0xF9, 0x00, 0xFA, 0x00,
-            0xFB, 0x00, 0xFC, 0x00, 0xFA, 0xFF, 0xFA, 0xFF,
-        });
-        @memcpy(self.blocks[0xFF][0..96], &[_]u8{
-            0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
-            0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x20, 0x24, 0x07, 0x23, 0x01, 0x45, 0x23, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0xFF, 0x00, 0x00, 0x00, 0xFF, 0x00, 0xFE, 0x00, 0x01, 0x00, 0xFD, 0x00, 0x0D, 0x00, 0x00, 0x00,
-            0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        });
-    } else {
-        @memset(self.blocks[0xFF][0..0x200], 0);
-        // Fill system area
-        @memset(self.blocks[0xFF][0..0x10], 0x55); // Format Information, all 0x55 means formatted.
-        @memcpy(self.blocks[0xFF][0x10..0x30], "Volume Label                    "); // Volume Label
-        @memcpy(self.blocks[0xFF][0x30..0x38], &[_]u8{ 19, 99, 12, 31, 23, 59, 0, 0 }); // Date and time created
-        @memset(self.blocks[0xFF][0x38..0x40], 0); // Reserved
-
-        @memcpy(self.blocks[0xFF][0x40 .. 0x40 + 24], std.mem.asBytes(&StorageMediaInfo{
-            .total_size = BlockCount - 1,
-            .partition_number = 0x0000,
-            .system_area_block_number = SystemBlock,
-            .fat_area_block_number = FATBlock,
-            .number_of_fat_area_blocks = 0x0001,
-            .file_information_block_number = 0x00FD,
-            .number_of_file_information_blocks = 0x000D,
-            .volume_icon = 0,
-            .save_area_block_number = 0x00C8,
-            .number_of_save_area_blocks = 0x00C8,
-        })[0..24]);
-
-        // "Format" the device.
-        var fat_entries = @as([*]FATValue, @ptrCast(@alignCast(&self.blocks[FATBlock][0])));
-        @memset(fat_entries[0..0x100], FATValue.Unused);
-        fat_entries[FATBlock] = FATValue.DataEnd;
-        fat_entries[SystemBlock] = FATValue.DataEnd; // Marks the system area block.
-    }
-    try new_file.writeAll(@as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize]);
 }
 
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
@@ -196,34 +185,31 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
 
 pub fn save(self: *@This()) void {
     self.save_backup();
-    var file = std.fs.cwd().openFile(self.backing_file_path, .{ .mode = .write_only }) catch |err| {
-        log.err("Failed to open VMU file '{s}': {t}", .{ self.backing_file_path, err });
-        return;
-    };
-    defer file.close();
-    file.writeAll(@as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize]) catch |err| {
+
+    std.Io.Dir.cwd().writeFile(
+        Context.io,
+        .{
+            .sub_path = self.backing_file_path,
+            .data = @as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize],
+            .flags = .{ .truncate = true },
+        },
+    ) catch |err| {
         log.err("Failed to save VMU: {t}", .{err});
         return;
     };
+
     log.info("Saved VMU to file '{s}'.", .{self.backing_file_path});
     self.last_unsaved_change = null;
 }
 
 pub fn save_backup(self: *const @This()) void {
-    const filename = std.fs.path.basename(self.backing_file_path);
-    const dir_path = std.fs.path.dirname(self.backing_file_path) orelse ".";
-    var dest_dir = std.fs.cwd().openDir(dir_path, .{}) catch |err| {
-        log.err("Failed to open VMU destination directory '{s}': {t}", .{ dir_path, err });
-        return;
-    };
     var buf: [256]u8 = @splat(0);
-    const backup_filename = std.fmt.bufPrint(&buf, "{s}.bak", .{filename}) catch |err| {
+    const backup_file_path = std.fmt.bufPrint(&buf, "{s}.bak", .{self.backing_file_path}) catch |err| {
         log.err("Failed to format backup filename: {t}", .{err});
         return;
     };
-    defer dest_dir.close();
-    std.fs.cwd().copyFile(self.backing_file_path, dest_dir, backup_filename, .{}) catch |err| {
-        log.err("Failed to backup VMU file '{s}': {t}", .{ backup_filename, err });
+    std.Io.Dir.cwd().copyFile(self.backing_file_path, std.Io.Dir.cwd(), backup_file_path, Context.io, .{ .make_path = false, .replace = true }) catch |err| {
+        log.err("Failed to backup VMU file '{s}': {t}", .{ backup_file_path, err });
     };
 }
 
@@ -307,7 +293,7 @@ pub fn block_write(self: *@This(), function: u32, partition: u8, phase: u8, bloc
             const size = @min(BlockSize / WriteAccessPerBlock, data.len * 4);
             @memcpy(self.blocks[block_num][start .. start + size], std.mem.sliceAsBytes(data)[0..size]);
 
-            self.last_unsaved_change = std.time.timestamp();
+            self.last_unsaved_change = std.Io.Clock.awake.now(Context.io).toSeconds();
             return @intCast(size / 4);
         },
         else => log.err("Unimplemented VMU.block_write for function: {f}", .{@as(FunctionCodesMask, @bitCast(function))}),

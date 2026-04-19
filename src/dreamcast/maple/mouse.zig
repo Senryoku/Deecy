@@ -59,15 +59,15 @@ pub fn move_to(self: *@This(), x: f64, y: f64) void {
     self.absolute_positions[0] = x;
     self.absolute_positions[1] = y;
 
-    self.axes_delta[0] = @intFromFloat(std.math.clamp(@as(f64, @floatFromInt(self.axes_delta[0])) - x_diff, 0.0, RelativeMax));
-    self.axes_delta[1] = @intFromFloat(std.math.clamp(@as(f64, @floatFromInt(self.axes_delta[1])) - y_diff, 0.0, RelativeMax));
+    self.axes_delta[0] = @trunc(std.math.clamp(@as(f64, @floatFromInt(self.axes_delta[0])) - x_diff, 0.0, RelativeMax));
+    self.axes_delta[1] = @trunc(std.math.clamp(@as(f64, @floatFromInt(self.axes_delta[1])) - y_diff, 0.0, RelativeMax));
 }
 
 pub fn scroll(self: *@This(), y: f64) void {
-    self.axes_delta[2] = @intFromFloat(std.math.clamp(@as(f64, @floatFromInt(self.axes_delta[2])) - y, 0.0, RelativeMax));
+    self.axes_delta[2] = @trunc(std.math.clamp(@as(f64, @floatFromInt(self.axes_delta[2])) - y, 0.0, RelativeMax));
 }
 
-pub const Buttons = packed struct {
+pub const Buttons = packed struct(u8) {
     c: bool = false,
     b: bool = false, // Right button: Cancel
     a: bool = false, // Left button: OK
@@ -116,7 +116,7 @@ pub const FunctionDefinition = packed struct(u32) {
 
 pub const MouseData = extern struct {
     buttons: Buttons = .{},
-    op: packed struct { wire: enum(u1) { Connected = 0, Disconnected = 1 } = .Connected, battery: enum(u1) { NoProblem = 0, BatteryLow = 1 } = .NoProblem, _: u6 = 0 } = .{},
+    op: packed struct(u8) { wire: enum(u1) { Connected = 0, Disconnected = 1 } = .Connected, battery: enum(u1) { NoProblem = 0, BatteryLow = 1 } = .NoProblem, _: u6 = 0 } = .{},
     /// Coordinate data overflow, one flag per axis
     aov: u8 = 0,
     reserved: u8 = 0,

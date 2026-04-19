@@ -9,9 +9,11 @@ pub fn runtime_check_cpu_feature(feature: std.Target.x86.Feature) !bool {
         var features: ?std.Target.Cpu.Feature.Set = null;
     };
     if (static.features == null) {
+        var threaded: std.Io.Threaded = .init_single_threaded;
+        const io = threaded.io();
         var query = std.Target.Query.fromTarget(&builtin.target);
         query.cpu_model = .native;
-        const native_target = try std.zig.system.resolveTargetQuery(query);
+        const native_target = try std.zig.system.resolveTargetQuery(io, query);
         static.features = native_target.cpu.features;
         std.debug.assert(builtin.target.cpu.arch == .x86_64);
     }
@@ -32,7 +34,9 @@ pub fn has_fast_pdep_pext() bool {
     } else {
         var query = std.Target.Query.fromTarget(&builtin.target);
         query.cpu_model = .native;
-        if (std.zig.system.resolveTargetQuery(query)) |native_target| {
+        var threaded: std.Io.Threaded = .init_single_threaded;
+        const io = threaded.io();
+        if (std.zig.system.resolveTargetQuery(io, query)) |native_target| {
             static.result = !std.mem.eql(u8, native_target.cpu.model.name, "znver1") and !std.mem.eql(u8, native_target.cpu.model.name, "znver2");
         } else |_| {
             static.result = false;
@@ -1127,7 +1131,7 @@ pub const Emitter = struct {
                     else => return error.InvalidMovSourceFromMem,
                 }
             },
-            .reg8 => |_| {
+            .reg8 => {
                 switch (src) {
                     .mem => |src_m| try self.mov_reg_mem(.MemToReg, dst, src_m),
                     else => return error.InvalidMovSourceFromReg8,

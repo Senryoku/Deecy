@@ -47,16 +47,17 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
     if (!mapped) return error.FailedToMapVirtualAddressSpace;
 
     GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE = vas.base;
-    GLOBAL_EXCEPTION_HANDLER = std.os.windows.kernel32.AddVectoredExceptionHandler(1, handle_segfault_windows);
+    GLOBAL_EXCEPTION_HANDLER = std.os.windows.ntdll.RtlAddVectoredExceptionHandler(1, handle_segfault_windows);
 
     return vas;
 }
 
 fn try_mapping(self: *@This(), allocator: std.mem.Allocator) !void {
     // Ask nicely for an available virtual address space.
-    self.base = try std.os.windows.VirtualAlloc(null, 0x1_0000_0000, std.os.windows.MEM_RESERVE, std.os.windows.PAGE_NOACCESS);
+    self.base = windows.VirtualAlloc(null, 0x1_0000_0000, windows.MEM_RESERVE, windows.PAGE_NOACCESS) orelse return error.OutOfMemory;
     // Free it immediately. We'll try to reacquire it.
-    std.os.windows.VirtualFree(self.base, 0, std.os.windows.MEM_RELEASE);
+    if (windows.VirtualFree(self.base, 0, windows.MEM_RELEASE) == .FALSE)
+        log.err("VirtualFree Error: {}\n", .{std.os.windows.GetLastError()});
 
     errdefer self.release_views();
 
@@ -84,12 +85,13 @@ fn try_mapping(self: *@This(), allocator: std.mem.Allocator) !void {
 
 fn release_views(self: *@This()) void {
     for (self.mirrors.items) |item| {
-        if (windows.UnmapViewOfFile(item) == 0)
-            log.warn(termcolor.yellow("UnmapViewOfFile Error: {}\n"), .{std.os.windows.GetLastError()});
+        if (windows.UnmapViewOfFile(item) == .FALSE)
+            log.err("UnmapViewOfFile Error: {}\n", .{std.os.windows.GetLastError()});
     }
     self.mirrors.clearRetainingCapacity();
     for (self.no_access.items) |item| {
-        std.os.windows.VirtualFree(item, 0, std.os.windows.MEM_RELEASE);
+        if (windows.VirtualFree(item, 0, windows.MEM_RELEASE) == .FALSE)
+            log.err("VirtualFree Error: {}\n", .{std.os.windows.GetLastError()});
     }
     self.no_access.clearRetainingCapacity();
 }
@@ -102,8 +104,8 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     std.os.windows.CloseHandle(self.vram);
     std.os.windows.CloseHandle(self.ram);
     std.os.windows.CloseHandle(self.boot);
-    if (std.os.windows.kernel32.RemoveVectoredExceptionHandler(GLOBAL_EXCEPTION_HANDLER.?) == 0)
-        log.err(termcolor.red("Call to RemoveVectoredExceptionHandler failed.\n"), .{});
+    if (std.os.windows.ntdll.RtlRemoveVectoredExceptionHandler(GLOBAL_EXCEPTION_HANDLER.?) == 0)
+        log.err("Call to RtlRemoveVectoredExceptionHandler failed.", .{});
     GLOBAL_EXCEPTION_HANDLER = null;
     GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE = null;
 }
@@ -113,7 +115,7 @@ pub fn base_addr(self: *@This()) *u8 {
 }
 
 fn allocate_backing_memory(size: std.os.windows.DWORD) !*anyopaque {
-    if (windows.CreateFileMappingA(std.os.windows.INVALID_HANDLE_VALUE, null, std.os.windows.PAGE_READWRITE, 0, size, null)) |handle| {
+    if (windows.CreateFileMappingA(std.os.windows.INVALID_HANDLE_VALUE, null, windows.PAGE_READWRITE, 0, size, null)) |handle| {
         return handle;
     }
     return error.FileMapError;
@@ -129,19 +131,19 @@ fn mirror(self: *@This(), allocator: std.mem.Allocator, file_handle: std.os.wind
         @ptrFromInt(@intFromPtr(self.base) + addr),
     );
     if (result == null) {
-        std.debug.print("MapViewOfFileEx({X:0>8}) Error: {}\n", .{ addr, std.os.windows.GetLastError() });
+        log.err("MapViewOfFileEx({X:0>8}) Error: {}", .{ addr, std.os.windows.GetLastError() });
         return error.MapError;
     }
     try self.mirrors.append(allocator, result.?);
 }
 
 fn forbid(self: *@This(), allocator: std.mem.Allocator, from: u32, to: u64) !void {
-    try self.no_access.append(allocator, try std.os.windows.VirtualAlloc(
+    try self.no_access.append(allocator, windows.VirtualAlloc(
         @ptrFromInt(@intFromPtr(self.base) + from),
         to - from,
-        std.os.windows.MEM_RESERVE,
-        std.os.windows.PAGE_NOACCESS,
-    ));
+        windows.MEM_RESERVE,
+        windows.PAGE_NOACCESS,
+    ) orelse return error.VirtualAllocError);
 }
 
 fn handle_segfault_windows(info: *std.os.windows.EXCEPTION_POINTERS) callconv(.winapi) c_long {
@@ -151,8 +153,8 @@ fn handle_segfault_windows(info: *std.os.windows.EXCEPTION_POINTERS) callconv(.w
 
             VAS.patch_access(fault_address, @intFromPtr(GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE), 0x1_0000_0000, &info.ContextRecord.Rip) catch |err| {
                 log.err("Failed to patch FastMem access @{X}: {t}", .{ fault_address, err });
-                if (std.os.windows.kernel32.RemoveVectoredExceptionHandler(GLOBAL_EXCEPTION_HANDLER.?) == 0)
-                    log.err(termcolor.red("Call to RemoveVectoredExceptionHandler failed.\n"), .{});
+                if (std.os.windows.ntdll.RtlRemoveVectoredExceptionHandler(GLOBAL_EXCEPTION_HANDLER.?) == 0)
+                    log.err("Call to RtlRemoveVectoredExceptionHandler failed.", .{});
                 return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
             };
 
