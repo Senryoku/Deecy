@@ -629,7 +629,15 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
             const bytes = sectors_per_hunk * CDMaxSectorBytes;
             const num_samples = bytes / @sizeOf(i16);
             var flac_reader = std.Io.Reader.fixed(self._file.view()[self.map[hunk].offset..]);
-            try chd_flac.decode_frames(i16, self._allocator, &flac_reader, @as([*]i16, @ptrCast(@alignCast(dest.ptr)))[0 .. sectors_per_hunk * CDMaxSectorBytes / 2], num_samples, CDMaxSectorBytes, 2, 16);
+            const dest_i16: []i16 = @alignCast(std.mem.bytesAsSlice(i16, dest)[0 .. sectors_per_hunk * CDMaxSectorBytes / 2]);
+            try chd_flac.decode_frames(i16, self._allocator, &flac_reader, dest_i16, num_samples, CDMaxSectorBytes, 2, 16);
+            // Convert from big endian.
+            // FIXME: I don't understand when it is needed and when it isn't.
+            //        Using the CDROM sync pattern to detect decompressed hunks with clearly wrong endianess.
+            if (std.mem.eql(u8, dest[0..12], "\xFF\x00\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\x00\xFF")) {
+                std.debug.assert(@import("builtin").target.cpu.arch.endian() == .little);
+                for (dest_i16) |*i| i.* = @byteSwap(i.*);
+            }
             return bytes;
         },
         else => {
