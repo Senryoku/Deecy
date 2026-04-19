@@ -53,6 +53,18 @@ pub fn build(b: *std.Build) !void {
     dc_module.addOptions("dc_config", dc_options);
     dc_module.addOptions("path_config", path_options);
 
+    if (use_appdata_dir) {
+        if (b.lazyDependency("known_folders", .{
+            .target = target,
+            .optimize = optimize,
+        })) |known_folders| {
+            dc_module.addImport("known-folders", known_folders.module("known-folders"));
+        } else {
+            std.log.err("Option 'use_appdata_dir' requires the dependency 'known-folders'", .{});
+            return error.MissingDependency;
+        }
+    }
+
     const ziglz4 = b.dependency("ziglz4", .{
         .target = target,
         .optimize = .ReleaseFast,

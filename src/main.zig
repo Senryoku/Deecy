@@ -59,8 +59,11 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const allocator = init.gpa;
 
-    custom_log.init(allocator, io);
+    custom_log.init(io, allocator);
     defer custom_log.deinit();
+
+    try DreamcastModule.HostPaths.init(io, allocator, init.environ_map.*);
+    defer DreamcastModule.HostPaths.deinit(allocator);
 
     if (builtin.os.tag == .windows and config.no_console) {
         // When built with the GUI subsystem on Windows, try to attach to the console if we received any arguments.

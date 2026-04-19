@@ -139,6 +139,8 @@ Dependencies are managed by the `build.zig.zon` file.
 -   Multiple libraries from https://github.com/zig-gamedev (MIT)
 -   ndf-zig: https://github.com/fabioarnold/nfd-zig (MIT)
 -   zig-lz4: https://github.com/SnorlaxAssist/zig-lz4 (MIT), bindings for LZ4 https://github.com/lz4/lz4 (BSD 2-Clause)
+-   [known-folders](https://github.com/ziglibs/known-folders): Optional, only required for the `-Duse_appdata_dir=true` option (MIT).
+-   [DreamPicoPort-API](https://github.com/OrangeFox86/DreamPicoPort-API): Brings [DreamPicoPort](https://github.com/OrangeFox86/DreamPicoPort) support (Optional, can be turned off with `-Ddreampicoport=false`. MIT)
 
 ## Thanks
 

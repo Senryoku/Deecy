@@ -322,7 +322,7 @@ const GameInfoCache = struct {
     _mutex: std.Io.Mutex = .init,
     _arena: std.heap.ArenaAllocator,
 
-    pub fn create(allocator: std.mem.Allocator, io: std.Io) !*@This() {
+    pub fn create(allocator: std.mem.Allocator) !*@This() {
         var r = try allocator.create(@This());
         r.* = .{
             .map = undefined,
@@ -330,7 +330,7 @@ const GameInfoCache = struct {
             ._arena = std.heap.ArenaAllocator.init(allocator),
         };
         r.map = std.StringHashMap(Entry).init(r._arena.allocator());
-        r._path = try get_path(r._arena.allocator(), io);
+        r._path = try get_path(r._arena.allocator());
         return r;
     }
 
@@ -339,8 +339,8 @@ const GameInfoCache = struct {
         allocator.destroy(self);
     }
 
-    fn get_path(allocator: std.mem.Allocator, io: std.Io) ![]const u8 {
-        return try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_userdata_path(io), "game_info_cache" });
+    fn get_path(allocator: std.mem.Allocator) ![]const u8 {
+        return try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_userdata_path(), "game_info_cache" });
     }
 
     pub fn load(self: *@This(), io: std.Io) !void {
@@ -477,7 +477,7 @@ pub fn refresh_games(self: *@This()) !void {
         const start_time = std.Io.Clock.awake.now(self.deecy.io);
         defer ui_log.info("Checked {d} disc files in {f}", .{ self.disc_files.items.len, start_time.durationTo(std.Io.Clock.awake.now(self.deecy.io)) });
 
-        var cache = try GameInfoCache.create(self.allocator, self.deecy.io);
+        var cache = try GameInfoCache.create(self.allocator);
         defer cache.destroy(self.allocator);
         cache.load(self.deecy.io) catch |err|
             ui_log.err(termcolor.red("Failed to load game info cache: {t}"), .{err});
@@ -597,7 +597,7 @@ pub fn draw(self: *@This()) !void {
                 if (zgui.menuItem("File", .{ .selected = d.config.log_output == .File }))
                     d.config.log_output = .File;
                 if (zgui.isItemHovered(.{ .for_tooltip = true }) and zgui.beginTooltip()) {
-                    const path = try custom_log.get_path(d._allocator, d.io);
+                    const path = try custom_log.get_path(d._allocator);
                     defer d._allocator.free(path);
                     zgui.text("Logs will be saved in '{s}'", .{path});
                     zgui.endTooltip();

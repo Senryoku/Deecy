@@ -439,14 +439,14 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
     const start_time = std.Io.Clock.awake.now(io);
     defer deecy_log.info("Deecy initialized in {f}", .{start_time.durationTo(std.Io.Clock.awake.now(io))});
 
-    std.Io.Dir.cwd().createDirPath(io, HostPaths.get_userdata_path(io)) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(io, HostPaths.get_userdata_path()) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
 
     // Load user config
     const config: Configuration = config: {
-        const config_path = try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_userdata_path(io), ConfigFile });
+        const config_path = try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_userdata_path(), ConfigFile });
         defer allocator.free(config_path);
         if (std.Io.Dir.cwd().readFileAllocOptions(io, config_path, allocator, .limited(1024 * 1024), .@"8", 0)) |conf_str| {
             defer allocator.free(conf_str);
@@ -597,7 +597,7 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
                         \\Please copy your bios file as 'dc_boot.bin' to '{s}'.
                         \\
                         \\(Error: {t})
-                    , .{ HostPaths.get_data_path(self.io), err }) == .retry) continue,
+                    , .{ HostPaths.get_data_path(), err }) == .retry) continue,
                     else => self.display_unrecoverable_error("Error initializing Dreamcast: {t}", .{err}),
                 }
                 return err;
@@ -610,7 +610,7 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
                     \\Please copy your flash file as 'dc_flash.bin' to '{s}'.
                     \\ 
                     \\(Error: {t})
-                , .{ HostPaths.get_data_path(self.io), err }) == .retry) continue;
+                , .{ HostPaths.get_data_path(), err }) == .retry) continue;
                 return err;
             };
             break;
@@ -884,7 +884,7 @@ pub fn init_peripheral(self: *@This(), port: u8, slot: u8) !void {
     switch (self.config.controllers[port].subperipherals[slot]) {
         .None => {},
         .VMU => |vmu| {
-            const vmu_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(self.io), vmu.filename });
+            const vmu_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), vmu.filename });
             defer self._allocator.free(vmu_path);
             try self.load_vmu(port, slot, vmu_path);
         },
@@ -1334,7 +1334,7 @@ pub fn get_product_id(self: *const @This()) []const u8 {
 /// Game specific sub directory name (for VMUs, save states...)
 /// Caller owns the returned string.
 fn userdata_game_directory(self: *const @This()) ![]const u8 {
-    return HostPaths.userdata_game_directory(self._allocator, self.io, self.get_product_name(), self.get_product_id());
+    return HostPaths.userdata_game_directory(self._allocator, self.get_product_name(), self.get_product_id());
 }
 
 /// Caller owns the returned string
@@ -1704,7 +1704,7 @@ fn display_missing_file_error(self: *@This(), comptime fmt: []const u8, args: an
         if (zgui.beginPopupModal("Error##Modal", .{ .flags = .{ .always_auto_resize = true } })) {
             zgui.text(fmt, args);
             if (zgui.button(UI.Icons.Folder ++ " Open folder", .{})) {
-                const absolute_path = try std.Io.Dir.cwd().realPathFileAlloc(self.io, HostPaths.get_data_path(self.io), self._allocator);
+                const absolute_path = try std.Io.Dir.cwd().realPathFileAlloc(self.io, HostPaths.get_data_path(), self._allocator);
                 defer self._allocator.free(absolute_path);
                 var file_explorer = try std.process.spawn(
                     self.io,
@@ -2008,7 +2008,7 @@ pub fn load_state(self: *@This(), index: usize) !void {
 }
 
 fn save_config(self: *@This()) !void {
-    const config_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(self.io), ConfigFile });
+    const config_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), ConfigFile });
     defer self._allocator.free(config_path);
     var config_file = try std.Io.Dir.cwd().createFile(self.io, config_path, .{});
     defer config_file.close(self.io);

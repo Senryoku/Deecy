@@ -18,7 +18,7 @@ pub fn open(allocator: std.mem.Allocator, io: std.Io) !void {
 
         mutex.lockUncancelable(io);
         defer mutex.unlock(io);
-        const path = try get_path(allocator, io);
+        const path = try get_path(allocator);
         defer allocator.free(path);
         file = try std.Io.Dir.cwd().createFile(io, path, .{});
         file_writer = file.writer(io, &buffer);
@@ -52,6 +52,6 @@ pub fn unlock() void {
     if (opened()) mutex.unlock(_io);
 }
 
-pub fn get_path(allocator: std.mem.Allocator, io: std.Io) ![]const u8 {
-    return std.fs.path.join(allocator, &.{ HostPaths.get_userdata_path(io), "deecy.log" });
+pub fn get_path(allocator: std.mem.Allocator) ![]const u8 {
+    return std.fs.path.join(allocator, &.{ HostPaths.get_userdata_path(), "deecy.log" });
 }

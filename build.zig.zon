@@ -37,5 +37,10 @@
             .url = "git+https://github.com/Senryoku/zglfw.git#f30d5e926d7bb4449cca926092d3851f52edf937",
             .hash = "zglfw-0.10.0-dev-zgVDNGK_JQAgkrsKRDze2u_peWzXx9dxcws6jaBw8Djr",
         },
+        .known_folders = .{
+            .url = "git+https://github.com/ziglibs/known-folders.git#d6d03830968cca6b7b9f24fd97ee348346a6905d",
+            .hash = "known_folders-0.0.0-Fy-PJk3KAACzUg2us_0JvQQmod1ZA8jBt7MuoKCihq88",
+            .lazy = true,
+        },
     },
 }

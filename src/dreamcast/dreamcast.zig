@@ -201,9 +201,9 @@ pub const Dreamcast = struct {
         errdefer dc.destroy();
 
         // Create 'userdata' folder if it doesn't exist
-        try std.Io.Dir.cwd().createDirPath(Context.io, HostPaths.get_userdata_path(Context.io));
+        try std.Io.Dir.cwd().createDirPath(Context.io, HostPaths.get_userdata_path());
 
-        const bios_path = try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_data_path(Context.io), "dc_boot.bin" });
+        const bios_path = try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_data_path(), "dc_boot.bin" });
         defer allocator.free(bios_path);
         dc.load_bios(bios_path) catch |err| {
             switch (err) {
@@ -318,7 +318,7 @@ pub const Dreamcast = struct {
 
     pub fn load_flash(self: *@This(), io: std.Io, region: Region, bios_config: BiosConfig) !void {
         // FIXME: User flash is sometimes corrupted. Always load default until I understand what's going on.
-        const default_flash_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_data_path(Context.io), "dc_flash.bin" });
+        const default_flash_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_data_path(), "dc_flash.bin" });
         defer self._allocator.free(default_flash_path);
 
         // var flash_file = std.fs.cwd().openFile(get_user_flash_path(), .{}) catch |err| f: {

@@ -16,7 +16,7 @@ var buffer: [128]u8 = undefined;
 var allocator: std.mem.Allocator = undefined;
 var io: std.Io = undefined;
 
-pub fn init(_allocator: std.mem.Allocator, _io: std.Io) void {
+pub fn init(_io: std.Io, _allocator: std.mem.Allocator) void {
     allocator = _allocator;
     io = _io;
 }
