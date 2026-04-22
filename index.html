@@ -235,12 +235,12 @@
 						<div>
 							Unstable builds:
 							<a
-								href="https://nightly.link/Senryoku/Deecy/workflows/publish/main/Deecy-x86_64_v3-windows.zip"
+								href="https://nightly.link/Senryoku/Deecy/workflows/publish/main/Deecy-x86_64_v2-windows.zip"
 							>
 								Windows</a
 							>,
 							<a
-								href="https://nightly.link/Senryoku/Deecy/workflows/publish/main/Deecy-x86_64_v3-linux.zip"
+								href="https://nightly.link/Senryoku/Deecy/workflows/publish/main/Deecy-x86_64_v2-linux.zip"
 							>
 								Linux
 							</a>
@@ -380,11 +380,23 @@
 					} — ${new Date(latest.published_at).toLocaleDateString()}`;
 					container.appendChild(info);
 
+					// Group by OS and adds download counts
+					const download_counts = latest.assets.reduce(
+						(acc, asset) => {
+							const platform = extractPlatform(asset.name);
+							if (!acc.hasOwnProperty(platform))
+								acc[platform] = 0;
+							acc[platform] += asset.download_count;
+							return acc;
+						},
+						{},
+					);
+
 					latest.assets
 						.filter(
 							(asset) =>
 								asset.name.toLowerCase().endsWith(".zip") &&
-								asset.name.includes("x86_64_v3"),
+								asset.name.includes("x86_64_v2"),
 						)
 						.sort((a, b) =>
 							extractPlatform(a.name) === userOS
@@ -409,7 +421,7 @@
 
 							const downloads = document.createElement("div");
 							downloads.className = "download-count";
-							downloads.textContent = `Downloads: ${asset.download_count}`;
+							downloads.textContent = `Downloads: ${download_counts[platform]}`;
 							item.appendChild(downloads);
 
 							container.appendChild(item);
