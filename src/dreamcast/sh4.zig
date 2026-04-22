@@ -1657,7 +1657,7 @@ pub const SH4 = struct {
                             sh4_log.debug("Write to SCFSR2: {any}", .{val});
                             // Writable bits can only be cleared.
                             // TODO: "Also note that in order to clear these flags they must be read as 1 beforehand."
-                            self.p4_register(u16, .SCFSR2).* &= (value | 0b11111111_00001100);
+                            // self.p4_register(u16, .SCFSR2).* &= (value | 0b11111111_00001100);
                             return;
                         },
                         @intFromEnum(P4Register.SCFCR2) => {
@@ -1667,7 +1667,7 @@ pub const SH4 = struct {
                             sh4_log.debug("Write to SCFCR2: {any}", .{val});
                             if (val.rfrst) sh4_log.debug("  Resetting Receive FIFO", .{});
                             if (val.tfrst) sh4_log.debug("  Resetting Transmit FIFO", .{});
-                            self.p4_register(P4.SCFCR2, .SCFSR2).* = val;
+                            // self.p4_register(P4.SCFCR2, .SCFSR2).* = val;
                             return;
                         },
                         0xFFEB0000 => {
