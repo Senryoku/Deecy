@@ -508,14 +508,21 @@ pub const Dreamcast = struct {
 
     const RefreshRate = enum(u8) {
         @"50Hz" = 50,
+        @"59.94Hz" = 59,
         @"60Hz" = 60,
 
-        pub fn as_u64(s: @This()) u64 {
-            return @intFromEnum(s);
+        pub fn cycles_per_frame(s: @This()) u64 {
+            return switch (s) {
+                .@"50Hz" => SH4Clock / 50,
+                .@"59.94Hz" => 3_336_670,
+                .@"60Hz" => SH4Clock / 60,
+            };
         }
+
         pub fn ns_per_frame(s: @This()) u64 {
             return switch (s) {
                 .@"50Hz" => 20_000_000,
+                .@"59.94Hz" => 16_683_350,
                 .@"60Hz" => 16_666_666,
             };
         }
@@ -524,7 +531,7 @@ pub const Dreamcast = struct {
     pub fn target_refresh_rate(self: *const @This()) RefreshRate {
         const spg_control = self.gpu.read_register(HollyModule.SPG_CONTROL, .SPG_CONTROL);
         // TODO: What about PAL games with a 60Hz mode?
-        return if (spg_control.PAL == 1) .@"50Hz" else .@"60Hz";
+        return if (spg_control.PAL == 1) .@"50Hz" else if (spg_control.NTSC == 1) .@"59.94Hz" else .@"60Hz";
     }
 
     pub inline fn hw_register(self: *@This(), comptime T: type, r: HardwareRegister) *T {

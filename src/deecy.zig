@@ -299,7 +299,7 @@ const Configuration = struct {
     window_size: struct { width: u32 = 2 * @ceil((16.0 / 9.0 * @as(f32, @floatFromInt(Renderer.NativeResolution.height)))), height: u32 = 2 * Renderer.NativeResolution.height } = .{},
     present_mode: PresentMode = .Fifo,
     fullscreen: bool = false,
-    frame_limiter: enum { Off, Auto, @"120Hz", @"100Hz", @"60Hz", @"50Hz" } = .Off,
+    frame_limiter: enum { Off, Auto, @"120Hz", @"100Hz", @"60Hz", @"59.94Hz", @"50Hz" } = .Off,
 
     renderer: Renderer.Configuration = .{},
     enable_dawn_pipeline_cache: bool = false,
@@ -1807,7 +1807,7 @@ fn run_for(self: *@This(), sh4_cycles: u64) void {
 fn dc_thread_loop(self: *@This()) void {
     while (self.running) {
         const refresh_rate = self.dc.target_refresh_rate();
-        self.run_for(DreamcastModule.Dreamcast.SH4Clock / refresh_rate.as_u64());
+        self.run_for(refresh_rate.cycles_per_frame());
     }
 }
 
@@ -1816,7 +1816,7 @@ fn dc_thread_loop_realtime(self: *@This()) void {
     defer precise_sleep.deinit();
     while (self.running) {
         const refresh_rate = self.dc.target_refresh_rate();
-        self.run_for(DreamcastModule.Dreamcast.SH4Clock / refresh_rate.as_u64());
+        self.run_for(refresh_rate.cycles_per_frame());
         precise_sleep.wait_for_interval(self.io, refresh_rate.ns_per_frame());
     }
 }
