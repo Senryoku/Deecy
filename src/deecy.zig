@@ -1233,42 +1233,9 @@ pub fn load_and_start(self: *@This(), path: []const u8) !void {
 }
 
 pub fn load_disc(self: *@This(), path: []const u8) !void {
-    if (std.mem.endsWith(u8, path, ".zip")) {
-        // FIXME: With 0.15.1 zip_file.seekableStream doesn't exist anymore, and I've always hated the fact that it extracted everything to disk.
-        //        Waiting on extract to memory to land (see https://github.com/ziglang/zig/issues/21922) before re-writing this.
-        if (false) {
-            var zip_file = try std.fs.cwd().openFile(path, .{});
-            defer zip_file.close();
-            var stream = zip_file.seekableStream();
-            var iter = try std.zip.Iterator(std.fs.File.SeekableStream).init(stream);
-            var filename_buf: [std.fs.max_path_bytes]u8 = undefined;
-            var gdi_filename: []u8 = "";
-            while (try iter.next()) |entry| {
-                const filename = filename_buf[0..entry.filename_len];
-                try zip_file.seekTo(entry.header_zip_offset + @sizeOf(std.zip.CentralDirectoryFileHeader));
-                std.debug.assert(try stream.context.reader().readAll(filename) == filename.len);
-                if (std.mem.endsWith(u8, filename, ".gdi")) {
-                    gdi_filename = filename;
-                    break;
-                }
-            }
-            if (gdi_filename.len == 0) {
-                deecy_log.err("Could not find GDI file in zip file '{s}'.", .{path});
-                return error.GDIFileNotFound;
-            }
-            const tmp_gdi_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), "./.tmp_deecy", gdi_filename });
-            defer self._allocator.free(tmp_gdi_path);
-            deecy_log.info("Found GDI file: '{s}'.", .{gdi_filename});
-            deecy_log.info("Extracting zip to '{s}'...", .{tmp_gdi_path});
-            var tmp_dir = try std.fs.cwd().makeOpenPath(tmp_gdi_path, .{});
-            defer tmp_dir.close();
-            try std.zip.extract(tmp_dir, stream, .{});
-            self.dc.gdrom.disc = try .init(self._allocator, tmp_gdi_path);
-        }
-        return error.Unimplemented;
-    } else {
-        self.dc.gdrom.disc = try .init(self._allocator, self.io, path);
-    }
+    const tmp: DreamcastModule.GDROM.Disc = try .init(self._allocator, self.io, path);
+    if (self.dc.gdrom.disc) |*disc| disc.deinit(self._allocator, self.io);
+    self.dc.gdrom.disc = tmp;
 
     if (self.config.region == .Auto) {
         self.dc.load_flash(self.io, self.dc.gdrom.disc.?.get_region(), self.config.bios_config) catch |err| {
@@ -1768,7 +1735,7 @@ fn apply_cheats(self: *@This()) void {
     }
 }
 
-fn run_for(self: *@This(), sh4_cycles: u64) void {
+pub fn run_for(self: *@This(), sh4_cycles: u64) void {
     self.apply_cheats();
 
     self._cycles_to_run += @intCast(sh4_cycles);

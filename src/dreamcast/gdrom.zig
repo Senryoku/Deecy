@@ -653,7 +653,7 @@ fn nop(self: *@This()) void {
     //   Asserting the INTRQ signal
     self.schedule_event(.{
         .cycles = 0,
-        .status = .{ .bsy = 0, .drdy = 1 },
+        .status = .{ .drq = 0, .bsy = 0, .drdy = 1 },
         .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
     });
 }
@@ -1035,6 +1035,7 @@ fn get_subcode(self: *@This()) !void {
     try self.pio_data_queue.writeItem(@intFromEnum(self.audio_state.status)); // Audio Status
     switch (data_format) {
         1 => {
+            gdrom_log.debug("GDROM PacketCommand GetSCD - Format: {X:0>1}, AllocLength: {X:0>4}", .{ data_format, alloc_length });
             // Subcode Q data only
             const fad: u32 = switch (self.state) {
                 .Busy => 0x00, // Undefined
@@ -1080,14 +1081,14 @@ fn get_subcode(self: *@This()) !void {
         2, // Media catalog number (UPC/bar code)
         3, // International standard recording code (ISRC)
         => {
-            gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand GetSCD - Format: {X:0>1}, AllocLength: {X:0>4}"), .{ data_format, alloc_length });
+            gdrom_log.warn("GDROM Unimplemented PacketCommand GetSCD - Format: {X:0>1}, AllocLength: {X:0>4}", .{ data_format, alloc_length });
             for (0..alloc_length - 2) |_| {
                 try self.pio_data_queue.writeItem(0);
             }
         },
         else => {
             // Reserved
-            gdrom_log.err(termcolor.red("  GDROM PacketCommand GetSCD - Format: {X:0>1}, AllocLength: {X:0>4}"), .{ data_format, alloc_length });
+            gdrom_log.err("GDROM Invalid PacketCommand GetSCD - Format: {X:0>1}, AllocLength: {X:0>4}", .{ data_format, alloc_length });
         },
     }
 
