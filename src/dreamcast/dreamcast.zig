@@ -1019,14 +1019,14 @@ pub const Dreamcast = struct {
             self.hw_register(u32, .SB_GDLEND).* = len;
             self.hw_register(u32, .SB_GDSTARD).* = dst_addr;
 
-            log.debug("GD-ROM-DMA! {X:0>8} ({X:0>8} bytes / {X:0>8} in queue)", .{ dst_addr, len, self.gdrom.dma_data_queue.count });
+            log.info("GD-ROM-DMA! {X:0>8} ({X:0>8} bytes / {X:0>8} in queue)", .{ dst_addr, len, self.gdrom.dma_data_queue.count });
 
             // NOTE: This should use ch0-DMA, but the SH4 DMAC implementation can't handle this case (yet?).
             //       Unless we copy u16 by u16 from the data register, but, mmh, yeah.
             const copied = self.gdrom.dma_data_queue.read(@as([*]u8, @ptrCast(self._get_memory(dst_addr)))[0..len]);
 
             if (copied < len) {
-                log.warn(termcolor.yellow("  GD DMA: {X:0>8} bytes copied out of {X:0>8} expected."), .{ copied, len });
+                log.warn("GD DMA: {X:0>8} bytes copied out of {X:0>8} expected.", .{ copied, len });
                 // Pad with zeroes in this case.
                 @memset(@as([*]u8, @ptrCast(self._get_memory(dst_addr)))[copied..len], 0);
             }

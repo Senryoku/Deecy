@@ -554,6 +554,9 @@ pub fn decompress_sectors(self: *@This(), fad: u32, count: u32) !void {
 
     for (start_hunk..end_hunk) |hunk| {
         if (!self.map[hunk].loaded) {
+            if ((sector_offset + sectors_per_hunk) * CDMaxSectorBytes > dest.len)
+                return log.warn("Attempt at decompressing sectors overlapping two tracks [{d}, {d}]. Overflow will be ignored.", .{ fad, fad + count - 1 });
+
             self.map[hunk].loaded = true;
             const bytes = try self.read_hunk(hunk, dest[sector_offset * CDMaxSectorBytes ..][0 .. sectors_per_hunk * CDMaxSectorBytes]);
             std.debug.assert(bytes == sectors_per_hunk * CDMaxSectorBytes);
