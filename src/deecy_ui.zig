@@ -714,16 +714,18 @@ pub fn draw(self: *@This()) !void {
                     //        This hasn't been tested on any other game for now.
                     d.dc.gdrom.reset();
                     d.dc.gdrom.state = .Open;
-                    d.run_for(DreamcastModule.Dreamcast.SH4Clock);
+                    d.dc.gdrom.set_sense_data(.NoDisc);
+                    d.run_for(DreamcastModule.Dreamcast.SH4Clock / 10);
                     d.dc.gdrom.state = .Busy;
-                    d.run_for(DreamcastModule.Dreamcast.SH4Clock);
+                    d.dc.gdrom.set_sense_data(.DriveBusy);
+                    d.run_for(DreamcastModule.Dreamcast.SH4Clock / 10);
                     d.dc.gdrom.state = .Standby;
-                    d.dc.gdrom.error_register.sense_key = .UnitAttention;
-                    d.dc.gdrom.status_register.check = 1;
+                    d.dc.gdrom.set_sense_data(.LidClosed);
                 }
             }
             if (zgui.menuItem("Open Tray", .{ .enabled = d.dc.gdrom.state != .Open })) {
                 d.dc.gdrom.state = .Open;
+                d.dc.gdrom.set_sense_data(.NoDisc);
             }
             if (zgui.menuItem("Remove Disc", .{ .enabled = d.dc.gdrom.disc != null })) {
                 const was_running = d.running;
@@ -741,8 +743,7 @@ pub fn draw(self: *@This()) !void {
                 } else {
                     d.dc.gdrom.state = .Standby;
                 }
-                d.dc.gdrom.error_register.sense_key = .UnitAttention;
-                d.dc.gdrom.status_register.check = 1;
+                d.dc.gdrom.set_sense_data(.LidClosed);
             }
             zgui.endMenu();
         }

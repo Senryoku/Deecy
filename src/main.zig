@@ -289,7 +289,7 @@ pub fn main(init: std.process.Init) !void {
         }
 
         {
-            d.gctx_queue_mutex.lockUncancelable(io);
+            try d.gctx_queue_mutex.lock(io);
             defer d.gctx_queue_mutex.unlock(io);
             const render_start = d.renderer.render_request;
             if (render_start) {
@@ -310,7 +310,7 @@ pub fn main(init: std.process.Init) !void {
         d.submit_ui();
 
         const resized = resized: {
-            d.gctx_queue_mutex.lockUncancelable(io);
+            try d.gctx_queue_mutex.lock(io);
             defer d.gctx_queue_mutex.unlock(io);
             break :resized d.gctx.present() == .surface_reconfigured;
         };
