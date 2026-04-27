@@ -299,7 +299,7 @@ const Configuration = struct {
     window_size: struct { width: u32 = 2 * @ceil((16.0 / 9.0 * @as(f32, @floatFromInt(Renderer.NativeResolution.height)))), height: u32 = 2 * Renderer.NativeResolution.height } = .{},
     present_mode: PresentMode = .Fifo,
     fullscreen: bool = false,
-    frame_limiter: enum { Off, Auto, @"120Hz", @"100Hz", @"60Hz", @"50Hz" } = .Off,
+    frame_limiter: enum { Off, Auto, @"120Hz", @"100Hz", @"60Hz", @"50Hz" } = .Auto,
 
     renderer: Renderer.Configuration = .{},
     enable_dawn_pipeline_cache: bool = false,
