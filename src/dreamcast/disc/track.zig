@@ -109,8 +109,10 @@ pub fn load_sectors(self: *const @This(), fad: u32, requested_count: u32, dest: 
 
 pub fn load_sectors_raw(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
     std.debug.assert(fad >= self.fad);
-    @memcpy(dest[0 .. self.format * count], self.data[(fad - self.fad) * self.format .. self.format * ((fad - self.fad) + count)]);
-    return self.format * count;
+    if (fad + count > self.end_fad) log.warn("FAD out of range, reading [{d}-{d}) from track #{d} [{d}-{d})", .{ fad, fad + count, self.num, self.fad, self.end_fad });
+    const capped_count = @min(count, self.end_fad - fad);
+    @memcpy(dest[0 .. self.format * capped_count], self.data[(fad - self.fad) * self.format .. self.format * ((fad - self.fad) + capped_count)]);
+    return self.format * capped_count;
 }
 
 pub fn get_corresponding_track(arr: *const std.ArrayList(@This()), fad: u32) *const @This() {
