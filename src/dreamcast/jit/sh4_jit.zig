@@ -1344,7 +1344,6 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
 }
 
 // We need pointers to all of these functions, can't really refactor that mess sadly.
-
 pub fn interpreter_fallback_cached(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     var cache_access = sh4.instructions.Opcodes[sh4.instructions.JumpTable[@as(u16, @bitCast(instr))]].access;
 

@@ -102,6 +102,8 @@ pub const Opcodes = [_]OpcodeDescription{
     .{ .code = 0b0000000001000000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_gdrom, .name = "Syscall GDROM", .issue_cycles = 1, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
     .{ .code = 0b0000000001010000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_unknown, .name = "Syscall", .issue_cycles = 1, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
     .{ .code = 0b0000000001100000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_misc, .name = "Syscall Misc.", .issue_cycles = 1, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
+    // Fake opcode to communicate with the emulator
+    .{ .code = 0b0000000001110000, .mask = 0b0000000000000000, .fn_ = EmulatorSyscall.call, .name = "Emulator Syscall", .issue_cycles = 1, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
 
     .{ .code = 0b0110000000000011, .mask = 0b0000111111110000, .fn_ = interpreter.mov_Rm_Rn, .name = "mov Rm,Rn", .jit_emit_fn = sh4_jit.mov_Rm_Rn, .access = .{ .r = .Rm, .w = .Rn } },
     .{ .code = 0b1110000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.mov_imm_Rn, .name = "mov #imm,Rn", .jit_emit_fn = sh4_jit.mov_imm_Rn, .access = .{ .r = .{}, .w = .Rn } },
@@ -356,4 +358,28 @@ pub const Opcodes = [_]OpcodeDescription{
     .{ .code = 0b0100000001010010, .mask = 0b0000111100000000, .fn_ = interpreter.stsl_FPUL_atDecRn, .name = "sts.l FPUL,@-Rn", .jit_emit_fn = sh4_jit.stsl_FPUL_atDecRn, .access = .{ .r = .Rn, .w = .MRn } },
     .{ .code = 0b1111101111111101, .mask = 0b0000000000000000, .fn_ = interpreter.frchg, .name = "frchg", .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b1111001111111101, .mask = 0b0000000000000000, .fn_ = interpreter.fschg, .name = "fschg", .jit_emit_fn = sh4_jit.fschg, .access = .{ .r = .{}, .w = .{} } },
+};
+
+pub const EmulatorSyscall = struct {
+    var _function: ?*const fn (?*anyopaque, *sh4.SH4, sh4.Instr) void = null;
+    var _context: ?*anyopaque = null;
+
+    pub fn set(function: *const fn (?*anyopaque, *sh4.SH4, sh4.Instr) void, context: ?*anyopaque) void {
+        EmulatorSyscall._function = function;
+        EmulatorSyscall._context = context;
+    }
+
+    pub fn clear() void {
+        EmulatorSyscall._function = null;
+        EmulatorSyscall._context = null;
+    }
+
+    pub fn call(cpu: *sh4.SH4, instr: sh4.Instr) !void {
+        if (EmulatorSyscall._function) |func| {
+            func(EmulatorSyscall._context, cpu, instr);
+        } else {
+            std.log.warn("Emulator syscall instruction without callback (R4={X:0>8}, R5={X:0>8}, R6={X:0>8}, R7={X:0>8}).", .{ cpu.R(4).*, cpu.R(5).*, cpu.R(6).*, cpu.R(7).* });
+            cpu.R(0).* = 0xFFFFFFFF;
+        }
+    }
 };

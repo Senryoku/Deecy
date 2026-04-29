@@ -384,6 +384,7 @@ shortcuts: Shortcuts,
 running: bool = false,
 _cycles_to_run: i64 = 0,
 _stop_request: bool = false,
+_on_stop_request: ?*const fn (*Self) void = null,
 realtime: bool = true, // Unlimited emulation speed when false.
 _dc_thread: ?std.Thread = null,
 
@@ -641,6 +642,7 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
         .function = @ptrCast(&Renderer.on_fb_r_sof1),
         .context = self.renderer,
     };
+    @import("launcher.zig").init(self);
 
     self.ui = try .create(self._allocator, self);
     self.debug_ui = try .init(self);
@@ -1023,6 +1025,7 @@ pub fn update(self: *@This(), delta_time: f32) void {
     if (self._stop_request) {
         self.pause();
         self._stop_request = false;
+        if (self._on_stop_request) |on_stop_request| on_stop_request(self);
     }
 }
 
