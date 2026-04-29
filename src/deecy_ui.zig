@@ -693,27 +693,39 @@ pub fn draw(self: *@This()) !void {
                 if (exit_fullscreen) self.deecy.toggle_fullscreen();
                 defer if (exit_fullscreen) self.deecy.toggle_fullscreen();
 
-                const open_path = try nfd.openFileDialog("gdi,cdi,chd,cue", null);
-
                 const was_running = d.running;
                 if (was_running) d.pause();
+                defer if (was_running) d.start();
+
+                const open_path = try nfd.openFileDialog("gdi,cdi,chd,cue", null);
 
                 if (open_path) |path| err_brk: {
                     defer nfd.freePath(path);
-                    // TODO! Emulate opening the tray and inserting a new disc.
                     d.load_disc(path) catch |err| {
                         ui_log.err("Failed to load disc: {t}", .{err});
                         self.last_error = "Failed to load disc.";
                         zgui.openPopup("ErrorPopup", .{});
                         break :err_brk;
                     };
+                    // FIXME: Pretty much all the following steps are necessary to get D2 disc swapping working (see #265).
+                    //        It is still very unreliable and the game still often misses the swap.
+                    //        (It continues sending GetSCD commands when the drive is busy. This could lead it to miss the check
+                    //         bit, but accounting for that still isn't enough)
+                    //        This hasn't been tested on any other game for now.
+                    d.dc.gdrom.reset();
                     d.dc.gdrom.state = .Open;
-                    if (was_running)
-                        d.start();
+                    d.dc.gdrom.set_sense_data(.NoDisc);
+                    d.run_for(DreamcastModule.Dreamcast.SH4Clock / 10);
+                    d.dc.gdrom.state = .Busy;
+                    d.dc.gdrom.set_sense_data(.DriveBusy);
+                    d.run_for(DreamcastModule.Dreamcast.SH4Clock / 10);
+                    d.dc.gdrom.state = .Standby;
+                    d.dc.gdrom.set_sense_data(.LidClosed);
                 }
             }
             if (zgui.menuItem("Open Tray", .{ .enabled = d.dc.gdrom.state != .Open })) {
                 d.dc.gdrom.state = .Open;
+                d.dc.gdrom.set_sense_data(.NoDisc);
             }
             if (zgui.menuItem("Remove Disc", .{ .enabled = d.dc.gdrom.disc != null })) {
                 const was_running = d.running;
@@ -731,6 +743,7 @@ pub fn draw(self: *@This()) !void {
                 } else {
                     d.dc.gdrom.state = .Standby;
                 }
+                d.dc.gdrom.set_sense_data(.LidClosed);
             }
             zgui.endMenu();
         }

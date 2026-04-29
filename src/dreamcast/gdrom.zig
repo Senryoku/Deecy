@@ -35,11 +35,11 @@ const CDAudioStatus = enum(u8) {
     NoInfo = 0x15, // No audio status information
 };
 
-const Command = enum(u32) {
+const ATACommand = enum(u32) {
     NOP = 0x00,
     SoftReset = 0x08,
     ExecuteDeviceDiagnostic = 0x90,
-    PacketCommand = 0xA0,
+    Packet = 0xA0,
     IdentifyDevice = 0xA1,
     IdentifyDevice2 = 0xEC, // NOTE: This is not in the documentation, but is used byt a KallistiOS example.
     SetFeatures = 0xEF,
@@ -79,6 +79,37 @@ const SenseKey = enum(u4) {
     AbortedCommand = 0xB,
 
     _,
+};
+
+/// Some common sense states
+const SenseData = struct {
+    sense_key: SenseKey,
+    /// Additional Sense Code
+    asc: u8,
+    /// Additional Sense Code Qualifier
+    ascq: u8,
+
+    pub const NoError = @This(){ .sense_key = .NoSense, .asc = 0, .ascq = 0 };
+    /// Drive is busy. This status is reported only when no
+    /// command from host can be accepted (until the READY
+    /// state is established after the lid is closed or during
+    /// execution of security check by command).
+    pub const DriveBusy = @This(){ .sense_key = .NotReady, .asc = 0x04, .ascq = 0x01 };
+    /// Unsupported command was received.
+    pub const UnsupportedCommand = @This(){ .sense_key = .IllegalRequest, .asc = 0x20, .ascq = 0x00 };
+    /// Invalid address was specified.
+    pub const InvalidAddress = @This(){ .sense_key = .IllegalRequest, .asc = 0x21, .ascq = 0x00 };
+    /// Command with invalid field was detected (Reserved bit is not "0", etc.)
+    pub const InvalidField = @This(){ .sense_key = .IllegalRequest, .asc = 0x24, .ascq = 0x00 };
+    /// Invalid parameter was detected.
+    pub const InvalidParameter = @This(){ .sense_key = .IllegalRequest, .asc = 0x26, .ascq = 0x00 };
+    /// Disc is inserted at the time of power-on or hard reset. Or
+    /// the lid was closed no matter whether a disc is inserted or not.
+    pub const LidClosed = @This(){ .sense_key = .UnitAttention, .asc = 0x28, .ascq = 0x00 };
+    /// No disc inserted at the time of power-on, reset or hard
+    /// reset, or TOC cannot be read. Or soft reset from host no
+    /// matter whether a disc is inserted or not.
+    pub const NoDisc = @This(){ .sense_key = .UnitAttention, .asc = 0x29, .ascq = 0x00 };
 };
 
 const ErrorRegister = packed struct(u8) {
@@ -140,7 +171,7 @@ const ScheduledEvent = struct {
     }
 };
 
-const SPIPacketCommandCode = enum(u8) {
+const SPIPacketCommand = enum(u8) {
     TestUnit = 0x00, // Verify access readiness
     ReqStat = 0x10, // Get CD status
     ReqMode = 0x11, // Get various settings
@@ -177,6 +208,10 @@ error_register: ErrorRegister = .{},
 interrupt_reason_register: InterruptReasonRegister = .{},
 features: packed struct(u8) { DMA: u1 = 1, _: u7 = 0 } = .{},
 byte_count: u16 = 0,
+/// Additional Sense Code. FIXME: Not serialized.
+asc: u8 = 0,
+/// Additional Sense Code Qualifier. FIXME: Not serialized.
+ascq: u8 = 0,
 
 pio_data_queue: fifo.LinearFifo(u8, .Dynamic),
 dma_data_queue: fifo.LinearFifo(u8, .Dynamic),
@@ -261,6 +296,8 @@ pub fn reset(self: *@This()) void {
     self.interrupt_reason_register = .{};
     self.features = .{};
     self.byte_count = 0;
+    self.asc = 0;
+    self.ascq = 0;
     self.pio_data_queue.discard(self.pio_data_queue.count);
     self.dma_data_queue.discard(self.dma_data_queue.count);
     self.packet_command_idx = 0;
@@ -274,6 +311,12 @@ pub fn deinit(self: *@This(), io: std.Io) void {
     self.pio_data_queue.deinit();
     self.dma_data_queue.deinit();
     if (self.disc) |*d| d.deinit(self._allocator, io);
+}
+
+pub fn set_sense_data(self: *@This(), sense_data: SenseData) void {
+    self.error_register.sense_key = sense_data.sense_key;
+    self.asc = sense_data.asc;
+    self.ascq = sense_data.ascq;
 }
 
 pub fn get_cdda_samples(self: *@This()) [2]i16 {
@@ -332,7 +375,7 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
     std.debug.assert(addr >= 0x005F7000 and addr <= 0x005F709C);
     switch (@as(HardwareRegister, @enumFromInt(addr))) {
         .GD_AlternateStatus_DeviceControl => {
-            gdrom_log.debug("  Read Alternate Status @{X:0>8} = {}", .{ addr, self.status_register });
+            gdrom_log.debug("Read Alternate Status @{X:0>8} = {}", .{ addr, self.status_register });
             // NOTE: Alternate status reads do NOT clear the pending interrupt signal.
 
             // FIXME: CDI Hack - See issue #70
@@ -356,7 +399,7 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
         },
         .GD_Status_Command => {
             const val: T = @intCast(@as(u8, @bitCast(self.status_register)));
-            gdrom_log.debug("  Read Status @{X:0>8} = {}", .{ addr, self.status_register });
+            gdrom_log.debug("Read Status @{X:0>8} = {}", .{ addr, self.status_register });
             // Clear the pending interrupt signal.
             self._dc.clear_external_interrupt(.{ .GDRom = 1 });
             return val;
@@ -387,11 +430,11 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
         .GD_Error_Features => {
             // 7    6    5    4   3    2    1    0
             //    Sense Key      MCR  ABRT EOMF ILI
-            gdrom_log.info("  Read GD_Error_Features @{X:0>8} = {}", .{ addr, self.error_register });
+            gdrom_log.info("Read GD_Error_Features @{X:0>8} = {}", .{ addr, self.error_register });
             return @as(u8, @bitCast(self.error_register));
         },
         .GD_InterruptReason_SectorCount => {
-            gdrom_log.info("  Read Interrupt Reason @{X:0>8} = {}", .{ addr, self.interrupt_reason_register });
+            gdrom_log.info("Read Interrupt Reason @{X:0>8} = {}", .{ addr, self.interrupt_reason_register });
             return @intCast(@as(u8, @bitCast(self.interrupt_reason_register)));
         },
         .GD_SectorNumber => {
@@ -401,32 +444,32 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
             var status = self.state;
             if (status != GDROMStatus.Open and self.disc == null) status = .Empty;
             const val = (if (self.disc) |d| @as(u8, @intFromEnum(d.get_format())) << 4 else 0) | @intFromEnum(status);
-            gdrom_log.debug("  GDROM Read to SectorNumber @{X:0>8} = {X:0>2}", .{ addr, val });
+            gdrom_log.debug("Read to SectorNumber @{X:0>8} = {X:0>2}", .{ addr, val });
             return val;
         },
         .GD_ByteCountLow => {
             const val = @as(u8, @truncate(self.pio_data_queue.readableLength()));
-            gdrom_log.debug("  Read Byte Count Low @{X:0>8} = 0x{X:0>8}", .{ addr, val });
+            gdrom_log.debug("Read Byte Count Low @{X:0>8} = 0x{X:0>8}", .{ addr, val });
             return val;
         },
         .GD_ByteCountHigh => {
             const val = @as(u8, @truncate(self.pio_data_queue.readableLength() >> @intCast(8)));
-            gdrom_log.debug("  Read Byte Count High @{X:0>8} = 0x{X:0>8}", .{ addr, val });
+            gdrom_log.debug("Read Byte Count High @{X:0>8} = 0x{X:0>8}", .{ addr, val });
             return val;
         },
         .GD_DriveSelect => {
             const val = 0b10100000;
-            gdrom_log.info("  Read Drive Select @{X:0>8} = 0x{X:0>8}", .{ addr, val });
+            gdrom_log.info("Read Drive Select @{X:0>8} = 0x{X:0>8}", .{ addr, val });
             return val;
         },
-        else => {
-            gdrom_log.warn(termcolor.yellow("  Unhandled GDROM Read to @{X:0>8}"), .{addr});
+        else => |reg| {
+            gdrom_log.warn("Unhandled Read({}) to {t} ({X:0>8})", .{ T, reg, addr });
             return 0;
         },
     }
 }
 
-fn non_data_command(self: *@This()) void {
+fn ata_non_data_command(self: *@This()) void {
     // The device sets the BSY bit to "1" and executes the command.
     self.status_register.bsy = 1;
     // If an error has occurred during execution of the command, the device sets an appropriate status
@@ -461,19 +504,19 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
             self.error_register.ili = 0;
             self.error_register.abrt = 0;
 
-            switch (@as(Command, @enumFromInt(value))) {
+            switch (@as(ATACommand, @enumFromInt(value))) {
                 .SoftReset => {
-                    gdrom_log.info("  Command: SoftReset", .{});
+                    gdrom_log.info("ATA Command: SoftReset", .{});
                     self.reset();
-                    self.non_data_command();
+                    self.ata_non_data_command();
                 },
                 .ExecuteDeviceDiagnostic => {
-                    gdrom_log.info("  Command: ExecuteDeviceDiagnostic", .{});
+                    gdrom_log.info("ATA Command: ExecuteDeviceDiagnostic", .{});
                     self.status_register.drq = 0;
-                    self.non_data_command();
+                    self.ata_non_data_command();
                 },
-                .PacketCommand => {
-                    gdrom_log.debug("  Command: PacketCommand", .{});
+                .Packet => {
+                    gdrom_log.debug("ATA Command: Packet", .{});
                     self.status_register.bsy = 1;
 
                     self.packet_command_idx = 0;
@@ -485,7 +528,7 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
                     });
                 },
                 .IdentifyDevice => {
-                    gdrom_log.warn(termcolor.yellow("  Command: IdentifyDevice - TODO!"), .{});
+                    gdrom_log.warn("ATA Command IdentifyDevice", .{});
                     self.status_register.bsy = 1;
                     self.status_register.drq = 0;
 
@@ -510,46 +553,47 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
                 .IdentifyDevice2 => {
                     // This command is issued by KallistiOS (g1_ata_scan), apparently to "check for a slave device".
                     // My guess is that this does nothing on a stock DC, but I have no way to test it...
-                    gdrom_log.warn(termcolor.yellow("  Unhandled GDROM command 'IdentifyDevice2'."), .{});
-                    self.nop();
+                    gdrom_log.warn("ATA command IdentifyDevice2: Unimplemented", .{});
+                    self.ata_nop();
                 },
                 .SetFeatures => {
-                    gdrom_log.warn(termcolor.yellow("  Command: SetFeatures"), .{});
-                    self.non_data_command();
+                    gdrom_log.warn("ATA Command SetFeatures: Unimplemented", .{});
+                    self.ata_non_data_command();
                 },
                 .NOP => {
-                    self.nop();
+                    gdrom_log.info("ATA Command NOP", .{});
+                    self.ata_nop();
                 },
                 _ => {
-                    gdrom_log.warn(termcolor.yellow("  Unhandled GDROM command {X:0>8}."), .{value});
-                    self.nop();
+                    gdrom_log.warn("Unhandled ATA command {X:0>8}.", .{value});
+                    self.ata_nop();
                 },
             }
         },
         .GD_Error_Features => {
-            gdrom_log.debug("  GDROM Write to Features @{X:0>8} = 0x{X:0>8}", .{ addr, value });
             if (T == u8) {
+                gdrom_log.debug("Write({}) to Features @{X:0>8} = 0x{X:0>8}", .{ T, addr, value });
                 self.features = @bitCast(value);
             } else {
-                gdrom_log.warn(termcolor.yellow("  Unhandled GDROM Write({s}) to Features @{X:0>8} = 0x{X:0>8}"), .{ @typeName(T), addr, value });
+                gdrom_log.warn("Unhandled Write({}) to Features @{X:0>8} = 0x{X:0>8}", .{ T, addr, value });
             }
         },
         .GD_InterruptReason_SectorCount => {
-            gdrom_log.warn(termcolor.yellow("  Unhandled GDROM Write to SectorCount @{X:0>8} = 0x{X:0>8}"), .{ addr, value });
+            gdrom_log.warn("Unhandled Write({}) to SectorCount @{X:0>8} = 0x{X:0>8}", .{ T, addr, value });
         },
         .GD_SectorNumber => {
-            gdrom_log.warn(termcolor.yellow("  Unhandled GDROM Write to SectorNumber @{X:0>8} = 0x{X:0>8}"), .{ addr, value });
+            gdrom_log.warn("Unhandled write({}) to SectorNumber @{X:0>8} = 0x{X:0>8}", .{ T, addr, value });
         },
         .GD_ByteCountLow => {
-            gdrom_log.debug("  GDROM Write to ByteCountLow @{X:0>8} = 0x{X:0>8}", .{ addr, value });
+            gdrom_log.debug("Write({}) to ByteCountLow @{X:0>8} = 0x{X:0>8}", .{ T, addr, value });
             self.byte_count = (self.byte_count & 0xFF00) | value;
         },
         .GD_ByteCountHigh => {
-            gdrom_log.debug("  GDROM Write to ByteCountHigh @{X:0>8} = 0x{X:0>8}", .{ addr, value });
+            gdrom_log.debug("Write({}) to ByteCountHigh @{X:0>8} = 0x{X:0>8}", .{ T, addr, value });
             self.byte_count = (self.byte_count & 0x00FF) | (@as(u16, @intCast(value)) << @intCast(8));
         },
         .GD_DriveSelect => {
-            gdrom_log.warn(termcolor.yellow("  Unhandled GDROM Write to DriveSelect @{X:0>8} = 0x{X:0>8}"), .{ addr, value });
+            gdrom_log.warn("Unhandled write({}) to DriveSelect @{X:0>8} = 0x{X:0>8}", .{ T, addr, value });
         },
         .GD_Data => {
             gdrom_log.debug("  Data Write @{X:0>8} = 0x{X:0>8}", .{ addr, value });
@@ -566,16 +610,23 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
             if (self.packet_command_idx >= 12) {
                 self.packet_command_idx = 0;
 
+                // Report an error when drive shouldn't be able to handle the command.
+                // FIXME: Helps with disc swapping, but probably not correct.
+                switch (self.error_register.sense_key) {
+                    .NoSense => self.status_register.check = 0,
+                    else => self.status_register.check = 1,
+                }
+
                 self.status_register.drdy = 0;
                 self.status_register.bsy = 1;
                 self.status_register.drq = 0;
-                gdrom_log.debug("  Received full SPI Command Packet!", .{});
 
+                gdrom_log.debug("  Received full SPI Command Packet!", .{});
                 for (0..6) |i| {
                     gdrom_log.debug("      {X:0>2} {X:0>2}", .{ self.packet_command[2 * i + 0], self.packet_command[2 * i + 1] });
                 }
 
-                (switch (@as(SPIPacketCommandCode, @enumFromInt(self.packet_command[0]))) {
+                (switch (@as(SPIPacketCommand, @enumFromInt(self.packet_command[0]))) {
                     .TestUnit => self.test_unit(),
                     .ReqStat => self.req_stat(),
                     .ReqMode => self.req_mode(),
@@ -584,29 +635,29 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
                     .GetToC => self.get_toc(),
                     .ReqSes => self.req_ses(),
                     .CDOpen => {
-                        gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDOpen: {X}"), .{self.packet_command});
+                        gdrom_log.warn("Unimplemented GDROM SPI Packet CDOpen: {X}", .{self.packet_command});
                         self.spi_non_data_command();
                     },
                     .CDPlay => self.cd_play(),
                     .CDSeek => self.cd_seek(),
                     .CDScan => {
-                        gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDScan: {X}"), .{self.packet_command});
+                        gdrom_log.warn("Unimplemented GDROM SPI Packet CDScan: {X}", .{self.packet_command});
                         self.state = .Scanning;
                         self.state = .Paused; // FIXME: Do not resolve immediatly?
                         self.spi_non_data_command();
                     },
                     .CDRead => self.cd_read(),
-                    .CDRead2 => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDRead2: {X}"), .{self.packet_command}),
+                    .CDRead2 => gdrom_log.warn("Unimplemented GDROM SPI Packet CDRead2: {X}", .{self.packet_command}),
                     .GetSCD => self.get_subcode(),
                     .SYS_CHK_SECU => self.chk_secu(),
                     .SYS_REQ_SECU => self.req_secu(),
-                    else => gdrom_log.warn(termcolor.yellow("  Unhandled GDROM PacketCommand 0x{X:0>2}"), .{self.packet_command[0]}),
+                    else => gdrom_log.warn("Unhandled GDROM SPI Packet 0x{X:0>2}", .{self.packet_command[0]}),
                 } catch |err| {
-                    gdrom_log.err("Error in handling GDROM SPI Packet Command: {}\n{X}\n", .{ err, self.packet_command });
+                    gdrom_log.err("Error in handling GDROM SPI Packet: {}\n{X}\n", .{ err, self.packet_command });
                 });
             }
         },
-        else => gdrom_log.warn(termcolor.yellow("  Unhandled GDROM Write to @{X:0>8} = 0x{X:0>8}"), .{ addr, value }),
+        else => gdrom_log.warn("Unhandled GDROM Write to @{X:0>8} = 0x{X:0>8}", .{ addr, value }),
     }
 }
 
@@ -642,8 +693,7 @@ pub fn on_dma_end(self: *@This(), dc: *Dreamcast) void {
     }
 }
 
-fn nop(self: *@This()) void {
-    gdrom_log.info("  NOP Packet command", .{});
+fn ata_nop(self: *@This()) void {
     //   Setting "abort" in the error register
     self.error_register.abrt = 1;
     //   Setting "error" in the status register
@@ -653,13 +703,13 @@ fn nop(self: *@This()) void {
     //   Asserting the INTRQ signal
     self.schedule_event(.{
         .cycles = 0,
-        .status = .{ .bsy = 0, .drdy = 1 },
+        .status = .{ .drq = 0, .bsy = 0, .drdy = 1 },
         .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
     });
 }
 
 fn test_unit(self: *@This()) void {
-    gdrom_log.debug("  GDROM PacketCommand TestUnit: {X}", .{self.packet_command});
+    gdrom_log.debug("SPI Packet TestUnit: {X}", .{self.packet_command});
     self.spi_non_data_command();
 }
 
@@ -667,11 +717,11 @@ fn req_stat(self: *@This()) !void {
     const start_addr = self.packet_command[2];
     const alloc_length = self.packet_command[4];
 
-    gdrom_log.info("  GDROM PacketCommand ReqStat - {X:0>2} {X:0>2}", .{ start_addr, alloc_length });
+    gdrom_log.info("SPI Packet ReqStat - {X:0>2} {X:0>2}", .{ start_addr, alloc_length });
     if (start_addr != 0)
-        gdrom_log.warn(termcolor.yellow("                      ReqStat - Start Addr isn't 0! ({X:0>2})"), .{start_addr});
+        gdrom_log.warn("  ReqStat - Start Addr isn't 0! ({X:0>2})", .{start_addr});
     if (alloc_length != 0x0A)
-        gdrom_log.warn(termcolor.yellow("                      ReqStat - Alloc Length isn't 0x0A! ({X:0>2})"), .{alloc_length});
+        gdrom_log.warn("  ReqStat - Alloc Length isn't 0x0A! ({X:0>2})", .{alloc_length});
 
     // 0 |  0 0 0 0 STATUS
     // 1 |  Disc Format - Repeat Count
@@ -723,7 +773,7 @@ fn req_stat(self: *@This()) !void {
 }
 
 fn req_mode(self: *@This()) !void {
-    gdrom_log.info(" GDROM PacketCommand ReqMode", .{});
+    gdrom_log.info("SPI Packet ReqMode", .{});
     const start_addr = self.packet_command[2];
     const alloc_length = self.packet_command[4];
 
@@ -749,7 +799,7 @@ fn req_mode(self: *@This()) !void {
 }
 
 fn set_mode(self: *@This()) !void {
-    gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand SetMode: {X}"), .{self.packet_command});
+    gdrom_log.warn("Unimplemented SPI Packet SetMode: {X}", .{self.packet_command});
     // TODO: Set some stuff?
     // See "Transfer Packet Command Flow For PIO Data from Host"
 
@@ -764,16 +814,20 @@ fn set_mode(self: *@This()) !void {
 }
 
 fn req_error(self: *@This()) !void {
-    gdrom_log.info("GDROM PacketCommand ReqError", .{});
+    gdrom_log.info("SPI Packet ReqError", .{});
     const alloc_length = self.packet_command[4];
 
     const response = [_]u8{
-        0xF0,                                        0x00,
-        @intFromEnum(self.error_register.sense_key), 0x00,
-        0x00, 0x00, 0x00, // Command Specific Information
-        0x00, // Additional Sense Code (ASC)
-        0x00, // Additional Sense Code Qualifier (ASCQ)
+        0xF0,
+        0x00,
+        @intFromEnum(self.error_register.sense_key),
+        0x00,
+        0x00, 0x00, 0x00, // Command Specific Information (If not defined by a command, the FAD where the error occurred is reported)
+        self.asc, // Additional Sense Code (ASC)
+        self.ascq, // Additional Sense Code Qualifier (ASCQ)
     };
+    self.set_sense_data(.NoError);
+    self.status_register.check = 0;
 
     if (alloc_length > 0) {
         try self.pio_data_queue.write(response[0..@min(response.len, alloc_length)]);
@@ -806,7 +860,7 @@ fn get_toc(self: *@This()) !void {
     const select = self.packet_command[1] & 1;
     const alloc_length = @as(u16, self.packet_command[3]) << 8 | self.packet_command[4];
 
-    gdrom_log.warn(" GDROM PacketCommand GetToC - {s} (alloc_length: 0x{X:0>4})", .{ if (select == 0) "Single Density" else "Double Density", alloc_length });
+    gdrom_log.warn("SPI Packet GetToC - {s} (alloc_length: 0x{X:0>4})", .{ if (select == 0) "Single Density" else "Double Density", alloc_length });
 
     if (alloc_length > 0) {
         const bytes_written = self.write_toc(try self.pio_data_queue.writableWithSize(408), if (select == 1) .DoubleDensity else .SingleDensity);
@@ -822,12 +876,12 @@ fn get_toc(self: *@This()) !void {
 }
 
 fn req_ses(self: *@This()) !void {
-    std.debug.assert(self.packet_command[0] == @intFromEnum(SPIPacketCommandCode.ReqSes));
+    std.debug.assert(self.packet_command[0] == @intFromEnum(SPIPacketCommand.ReqSes));
 
     const session_number = self.packet_command[2];
     const alloc_length = self.packet_command[4];
 
-    gdrom_log.warn(" GDROM PacketCommand ReqSes - Session Number: {d} (alloc_length: 0x{X:0>4})", .{ session_number, alloc_length });
+    gdrom_log.warn("SPI Packet ReqSes - Session Number: {d} (alloc_length: 0x{X:0>4})", .{ session_number, alloc_length });
 
     if (self.disc) |disc| {
         try self.pio_data_queue.writeItem(@intFromEnum(self.state));
@@ -848,7 +902,7 @@ fn req_ses(self: *@This()) !void {
 }
 
 fn cd_play(self: *@This()) !void {
-    gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand CDPlay: {X}"), .{self.packet_command});
+    gdrom_log.warn("SPI Packet CDPlay: {X}", .{self.packet_command});
 
     const parameter_type = self.packet_command[1] & 0x7;
 
@@ -871,7 +925,7 @@ fn cd_play(self: *@This()) !void {
             // (Re)Start playing without changing position.
         },
         else => {
-            gdrom_log.err(termcolor.red("  GDROM CDPlay: Unrecognized parameter type {X:0>1}"), .{parameter_type});
+            gdrom_log.err("SPI Packet CDPlay: Unrecognized parameter type {X:0>1}", .{parameter_type});
         },
     }
 
@@ -879,7 +933,7 @@ fn cd_play(self: *@This()) !void {
 }
 
 fn cd_seek(self: *@This()) !void {
-    gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand CDSeek: {X}"), .{self.packet_command});
+    gdrom_log.warn("SPI Packet CDSeek: {X}", .{self.packet_command});
 
     self.audio_state.status = .Paused;
     self.state = .Seeking;
@@ -941,7 +995,7 @@ fn cd_read_fetch(self: *@This(), data_queue: *fifo.LinearFifo(u8, .Dynamic), dat
         } else {
             // FIXME: Everything else isn't implemented
             if (data_select != 0b0010) // Data (no header or subheader)
-                gdrom_log.err(termcolor.red("  Unimplemented data_select: {b:0>4}"), .{data_select});
+                gdrom_log.err("Unimplemented data_select: {b:0>4}", .{data_select});
 
             var expected_sector_size: u32 = 2352;
 
@@ -1015,7 +1069,7 @@ fn cd_read(self: *@This()) !void {
     const transfer_type: enum { PIO, DMA } = if (self.features.DMA == 1) .DMA else .PIO;
 
     if (transfer_type == .PIO) {
-        gdrom_log.debug("  GDROM CDRead PIO mode: start_addr: {X:0>8}, transfer_length: {X:0>4}", .{ start_addr, transfer_length });
+        gdrom_log.debug("SPI Packet CDRead PIO mode: start_addr: {X:0>8}, transfer_length: {X:0>4}", .{ start_addr, transfer_length });
         self.cd_read_state = .{
             .fad = start_addr,
             .remaining_sectors = transfer_length,
@@ -1035,6 +1089,7 @@ fn get_subcode(self: *@This()) !void {
     try self.pio_data_queue.writeItem(@intFromEnum(self.audio_state.status)); // Audio Status
     switch (data_format) {
         1 => {
+            gdrom_log.debug("SPI Packet GetSCD - Format: {X:0>1}, AllocLength: {X:0>4}", .{ data_format, alloc_length });
             // Subcode Q data only
             const fad: u32 = switch (self.state) {
                 .Busy => 0x00, // Undefined
@@ -1080,14 +1135,14 @@ fn get_subcode(self: *@This()) !void {
         2, // Media catalog number (UPC/bar code)
         3, // International standard recording code (ISRC)
         => {
-            gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand GetSCD - Format: {X:0>1}, AllocLength: {X:0>4}"), .{ data_format, alloc_length });
+            gdrom_log.warn("Unimplemented SPI Packet GetSCD - Format: {X:0>1}, AllocLength: {X:0>4}", .{ data_format, alloc_length });
             for (0..alloc_length - 2) |_| {
                 try self.pio_data_queue.writeItem(0);
             }
         },
         else => {
             // Reserved
-            gdrom_log.err(termcolor.red("  GDROM PacketCommand GetSCD - Format: {X:0>1}, AllocLength: {X:0>4}"), .{ data_format, alloc_length });
+            gdrom_log.err("Invalid SPI Packet GetSCD - Format: {X:0>1}, AllocLength: {X:0>4}", .{ data_format, alloc_length });
         },
     }
 
@@ -1110,7 +1165,7 @@ fn chk_secu(self: *@This()) !void {
 }
 
 fn req_secu(self: *@This()) !void {
-    gdrom_log.info(" GDROM PacketCommand ReqSecu: {X}", .{self.packet_command});
+    gdrom_log.info("SPI Packet ReqSecu: {X}", .{self.packet_command});
     const parameter = self.packet_command[1];
     _ = parameter;
     try self.pio_data_queue.write(&GDROMCommand71Reply);

@@ -8,7 +8,7 @@ pub extern "kernel32" fn timeEndPeriod(
     uPeriod: std.os.windows.UINT,
 ) callconv(.winapi) std.os.windows.UINT; // MMRESULT
 
-next_deadline: i128,
+next_deadline: i96,
 
 pub fn init(io: std.Io) @This() {
     // Request 1ms timer resolution on Windows.
@@ -27,15 +27,16 @@ pub fn wait_for_interval(self: *@This(), io: std.Io, ns: u64) void {
     if (now < self.next_deadline) {
         // Sleep until we're close to the deadline.
         if (self.next_deadline - now > 1_000_000)
-            std.Io.sleep(io, .fromNanoseconds(@intCast(self.next_deadline - now - 1_000_000)), .awake) catch {};
+            std.Io.sleep(io, .fromNanoseconds(self.next_deadline - now - 1_000_000), .awake) catch {};
         // Spin for the last millisecond.
-        while (nano_timestamp(io) < self.next_deadline) {}
+        while (nano_timestamp(io) < self.next_deadline)
+            std.atomic.spinLoopHint();
     } else if (self.next_deadline < now - ns) {
         // We are very late, push the deadline forward to give us a chance to catch up.
         self.next_deadline = now;
     }
 }
 
-fn nano_timestamp(io: std.Io) i128 {
+fn nano_timestamp(io: std.Io) i96 {
     return std.Io.Timestamp.now(io, .awake).toNanoseconds();
 }
