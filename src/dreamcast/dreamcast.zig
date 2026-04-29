@@ -506,25 +506,41 @@ pub const Dreamcast = struct {
         }
     }
 
-    const RefreshRate = enum(u8) {
-        @"50Hz" = 50,
-        @"60Hz" = 60,
+    const RefreshRate = enum(u16) {
+        /// Uninitialized state.
+        None = 0,
+        @"49.92Hz" = 4992,
+        @"50Hz" = 5000,
+        @"59.82Hz" = 5982,
+        @"59.94Hz" = 5994,
+        @"60Hz" = 6000,
+        _,
 
-        pub fn as_u64(s: @This()) u64 {
-            return @intFromEnum(s);
+        pub fn cycles_per_frame(s: @This()) u64 {
+            return @as(u64, 100) * SH4Clock / @intFromEnum(s);
         }
+
         pub fn ns_per_frame(s: @This()) u64 {
-            return switch (s) {
-                .@"50Hz" => 20_000_000,
-                .@"60Hz" => 16_666_666,
-            };
+            return @as(u64, 100) * std.time.ns_per_s / @intFromEnum(s);
         }
     };
 
     pub fn target_refresh_rate(self: *const @This()) RefreshRate {
+        const fb_r_ctrl = self.gpu.read_register(HollyModule.FB_R_CTRL, .FB_R_CTRL);
+        const spg_load = self.gpu.read_register(HollyModule.SPG_LOAD, .SPG_LOAD);
         const spg_control = self.gpu.read_register(HollyModule.SPG_CONTROL, .SPG_CONTROL);
-        // TODO: What about PAL games with a 60Hz mode?
-        return if (spg_control.PAL == 1) .@"50Hz" else .@"60Hz";
+        const pixel_clock: u64 = if (fb_r_ctrl.vclk_div == 0) 27_000 / 2 else 27_000; // KHz
+        const hz = pixel_clock / ((@as(u64, spg_load.hcount) + 1) * (@as(u64, spg_load.vcount) + 1)) / 10; // 100 * Hz
+        const refresh_rate: RefreshRate = @enumFromInt(hz);
+        switch (refresh_rate) {
+            .None => return .@"60Hz",
+            else => return if (spg_control.PAL == 1 or spg_control.NTSC == 1) refresh_rate else .@"60Hz",
+            _ => {
+                if (Once(@src())) log.info("Unusual refresh rate: {t}", .{refresh_rate});
+                return if (spg_control.PAL == 1) .@"50Hz" else if (spg_control.NTSC == 1) .@"59.94Hz" else .@"60Hz";
+            },
+        }
+        return .@"60Hz";
     }
 
     pub inline fn hw_register(self: *@This(), comptime T: type, r: HardwareRegister) *T {
