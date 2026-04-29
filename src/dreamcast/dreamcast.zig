@@ -507,6 +507,11 @@ pub const Dreamcast = struct {
     }
 
     const RefreshRate = enum(u16) {
+<<<<<<< HEAD
+=======
+        /// Uninitialized state.
+        None = 0,
+>>>>>>> d2dc425... More precise frame timing (#264)
         @"49.92Hz" = 4992,
         @"50Hz" = 5000,
         @"59.82Hz" = 5982,
@@ -524,6 +529,8 @@ pub const Dreamcast = struct {
     };
 
     pub fn target_refresh_rate(self: *const @This()) RefreshRate {
+        const fb_r_ctrl = self.gpu.read_register(HollyModule.FB_R_CTRL, .FB_R_CTRL);
+        const spg_load = self.gpu.read_register(HollyModule.SPG_LOAD, .SPG_LOAD);
         const spg_control = self.gpu.read_register(HollyModule.SPG_CONTROL, .SPG_CONTROL);
         if (spg_control.PAL == 0 and spg_control.NTSC == 0) return .@"60Hz"; // VGA
 
