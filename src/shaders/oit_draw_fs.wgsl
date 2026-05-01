@@ -8,7 +8,7 @@ struct Heads {
 @group(2) @binding(0) var<uniform> oit_uniforms: OITUniforms;
 @group(2) @binding(1) var<storage, read_write> heads: Heads;
 @group(2) @binding(2) var<storage, read_write> linked_list: LinkedList;
-@group(2) @binding(3) var opaque_depth_texture: texture_depth_2d;
+@group(2) @binding(3) var opaque_depth_texture: texture_depth_multisampled_2d;
 @group(2) @binding(4) var<storage, read_write> modvols: array<VolumesInterfaces>;
 
 @fragment

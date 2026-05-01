@@ -740,7 +740,7 @@ const BlitBindGroupLayout = [_]wgpu.BindGroupLayoutEntry{
 };
 
 const ModifierVolumeApplyBindGroupLayout = [_]wgpu.BindGroupLayoutEntry{
-    zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
+    zgpu.textureEntry(0, .{ .fragment = true }, .unfilterable_float, .tvdim_2d, true),
     zgpu.bufferEntry(2, .{ .vertex = true }, .uniform, true, 0),
 };
 
@@ -917,6 +917,8 @@ pub const Renderer = struct {
     /// Framebuffer at target resolution to draw on
     resized_framebuffer: TextureAndView = .{},
     resized_framebuffer_area1: TextureAndView = .{},
+    opaque_result_area0: TextureAndView = .{},
+    opaque_result_area1: TextureAndView = .{},
 
     // NOTE: This should not be needed, but WGPU doesn't handle reading from a storage texture yet.
     resized_framebuffer_copy: TextureAndView = .{},
@@ -1173,14 +1175,14 @@ pub const Renderer = struct {
 
         // Translucent pipeline
 
-        const translucent_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl.translucent_fs(), "fs");
+        const translucent_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl.translucent_fs(), "translucent_fs");
         defer translucent_fragment_shader_module.release();
 
         const translucent_bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.bufferEntry(0, .{ .fragment = true }, .uniform, true, 0),
             zgpu.bufferEntry(1, .{ .fragment = true }, .storage, false, 0),
             zgpu.bufferEntry(2, .{ .fragment = true }, .storage, false, 0),
-            zgpu.textureEntry(3, .{ .fragment = true }, .depth, .tvdim_2d, false),
+            zgpu.textureEntry(3, .{ .fragment = true }, .depth, .tvdim_2d, true),
             zgpu.bufferEntry(4, .{ .fragment = true }, .storage, false, 0),
         }, .{ .label = "TranslucentBindGroupLayout" });
 
@@ -1189,7 +1191,7 @@ pub const Renderer = struct {
             zgpu.bufferEntry(1, .{ .fragment = true }, .storage, false, 0),
             zgpu.bufferEntry(2, .{ .fragment = true }, .storage, false, 0),
             zgpu.bufferEntry(3, .{ .fragment = true }, .uniform, true, 0),
-            zgpu.textureEntry(4, .{ .fragment = true }, .depth, .tvdim_2d, false),
+            zgpu.textureEntry(4, .{ .fragment = true }, .depth, .tvdim_2d, true),
         }, .{ .label = "TranslucentModVolBindGroupLayout" });
 
         const modifier_volume_vertex_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl.modifier_volume_vs(), "modvol_vs");
@@ -1526,7 +1528,7 @@ pub const Renderer = struct {
 
         // Modifier Volume Apply pipeline - Use the stencil from the previous pass to apply modifier volume effects.
         {
-            const mv_apply_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl.modifier_volume_apply_fs(), "fs");
+            const mv_apply_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl.modifier_volume_apply_fs(), "modifier_volume_apply_fs");
             defer mv_apply_fragment_shader_module.release();
 
             const mv_apply_bind_group_layout = gctx.createBindGroupLayout(&ModifierVolumeApplyBindGroupLayout, .{ .label = "ModifierVolumeApplyBindGroupLayout" });
@@ -3201,6 +3203,9 @@ pub const Renderer = struct {
             .resized = self.resized_framebuffer.lookup(gctx),
         };
 
+        const opaque_area0 = gctx.lookupResource(self.opaque_result_area0.view).?;
+        const opaque_area1 = gctx.lookupResource(self.opaque_result_area1.view).?;
+
         const commands = commands: {
             const encoder = gctx.device.createCommandEncoder(null);
             defer encoder.release();
@@ -3231,12 +3236,12 @@ pub const Renderer = struct {
             if (gctx.lookupResource(self.get_or_put_pipeline(BackgroundPipelineKey, .Async))) |background_pipeline| {
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{
                     .{
-                        .view = target.resized.view,
+                        .view = opaque_area0,
                         .load_op = .load,
                         .store_op = .store,
                     },
                     .{
-                        .view = gctx.lookupResource(self.resized_framebuffer_area1.view).?,
+                        .view = opaque_area1,
                         .load_op = .clear,
                         .store_op = .store,
                     },
@@ -3281,14 +3286,16 @@ pub const Renderer = struct {
                     {
                         const color_attachments = [_]wgpu.RenderPassColorAttachment{
                             .{
-                                .view = target.resized.view,
+                                .view = opaque_area0,
                                 .load_op = .load,
                                 .store_op = .store,
+                                .resolve_target = target.resized.view,
                             },
                             .{
-                                .view = gctx.lookupResource(self.resized_framebuffer_area1.view).?,
+                                .view = opaque_area1,
                                 .load_op = .clear,
                                 .store_op = .store,
+                                .resolve_target = gctx.lookupResource(self.resized_framebuffer_area1.view).?,
                             },
                         };
                         const pass = encoder.beginRenderPass(.{
@@ -3480,14 +3487,18 @@ pub const Renderer = struct {
 
                         const color_attachments = [_]wgpu.RenderPassColorAttachment{
                             .{
-                                .view = target.resized.view,
+                                // .view = target.resized.view,
+                                .view = opaque_area0,
                                 .load_op = .load,
                                 .store_op = .store,
+                                .resolve_target = target.resized.view,
                             },
                             .{
-                                .view = gctx.lookupResource(self.resized_framebuffer_area1.view).?,
+                                // .view = gctx.lookupResource(self.resized_framebuffer_area1.view).?,
+                                .view = opaque_area1,
                                 .load_op = .clear,
                                 .store_op = .store,
+                                .resolve_target = gctx.lookupResource(self.resized_framebuffer_area1.view).?,
                             },
                         };
                         const pass = encoder.beginRenderPass(.{
@@ -4063,6 +4074,7 @@ pub const Renderer = struct {
                 .target_count = color_targets.len,
                 .targets = &color_targets,
             },
+            .multisample = .{ .count = 4 }, //if (key.translucent) .{} else .{ .count = 4 },
         };
 
         switch (sync) {
@@ -4142,13 +4154,17 @@ pub const Renderer = struct {
         // Intermediate buffer used when rendering to a texture. We don't want to override resized_framebuffer since it is used for blitting.
         self.resized_render_to_texture_target = create_resized_framebuffer_texture(self._gctx, self.resolution, true, false);
 
+        self.opaque_result_area0 = create_opaque_result_texture(self._gctx, self.resolution);
+        self.opaque_result_area1 = create_opaque_result_texture(self._gctx, self.resolution);
+
         self.create_blit_bind_groups(self.config.scaling_filter);
 
         const mv_apply_bind_group_layout = self._gctx.createBindGroupLayout(&ModifierVolumeApplyBindGroupLayout, .{ .label = "ModifierVolumeApplyBindGroupLayout" });
         defer self._gctx.releaseResource(mv_apply_bind_group_layout);
 
         self.modifier_volume_apply_bind_group = self._gctx.createBindGroup(mv_apply_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .texture_view_handle = self.resized_framebuffer_area1.view },
+            // .{ .binding = 0, .texture_view_handle = self.resized_framebuffer_area1.view },
+            .{ .binding = 0, .texture_view_handle = self.opaque_result_area0.view },
             .{ .binding = 2, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(BlitUniforms) },
         });
 
@@ -4308,7 +4324,7 @@ pub const Renderer = struct {
             },
             .format = .depth32_float_stencil8,
             .mip_level_count = 1,
-            .sample_count = 1,
+            .sample_count = 4,
             .label = .init("Depth Texture"),
         });
         const view = gctx.createTextureView(texture, .{});
@@ -4354,11 +4370,34 @@ pub const Renderer = struct {
             },
             .format = zgpu.GraphicsContext.surface_texture_format,
             .mip_level_count = 1,
+            .sample_count = 1,
             .label = .init("Resized Framebuffer Texture"),
         });
         const resized_framebuffer_texture_view = gctx.createTextureView(resized_framebuffer_texture, .{});
 
         return .{ .texture = resized_framebuffer_texture, .view = resized_framebuffer_texture_view };
+    }
+
+    fn create_opaque_result_texture(gctx: *zgpu.GraphicsContext, resolution: Resolution) TextureAndView {
+        const opaque_result_texture = gctx.createTexture(.{
+            .usage = .{
+                .render_attachment = true,
+                .texture_binding = true,
+                .copy_src = true,
+            },
+            .size = .{
+                .width = resolution.width,
+                .height = resolution.height,
+                .depth_or_array_layers = 1,
+            },
+            .format = zgpu.GraphicsContext.surface_texture_format,
+            .mip_level_count = 1,
+            .sample_count = 4,
+            .label = .init("Opaque Result Texture"),
+        });
+        const resized_framebuffer_texture_view = gctx.createTextureView(opaque_result_texture, .{});
+
+        return .{ .texture = opaque_result_texture, .view = resized_framebuffer_texture_view };
     }
 
     fn create_oit_buffers(self: *@This()) void {
