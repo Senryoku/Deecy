@@ -1034,13 +1034,6 @@ pub fn poll_controllers(self: *@This()) void {
             .emulated => |*e| {
                 switch (e.main) {
                     .Controller => |*c| {
-                        c.axis[0] = 0;
-                        c.axis[1] = 0;
-                        c.axis[2] = 128;
-                        c.axis[3] = 128;
-                        c.axis[4] = 128;
-                        c.axis[5] = 128;
-
                         var any_keyboard_key_pressed = false;
                         const keyboard_bindings = self.config.keyboard_bindings[controller_idx];
                         inline for ([_][]const u8{ "start", "up", "down", "left", "right", "a", "b", "x", "y" }) |button_name| {
@@ -1056,36 +1049,31 @@ pub fn poll_controllers(self: *@This()) void {
                                 }
                             }
                         }
+
+                        const DefaultAxisValues = [6]u8{ 0, 0, 0x80, 0x80, 0x80, 0x80 };
+                        c.axis = DefaultAxisValues;
+
                         if (keyboard_bindings.right_trigger) |key|
-                            c.axis[0] = if (self.window.getKey(key) == .press) 255 else 0;
+                            c.axis[0] = if (self.window.getKey(key) == .press) 0xFF else 0;
                         if (keyboard_bindings.left_trigger) |key|
-                            c.axis[1] = if (self.window.getKey(key) == .press) 255 else 0;
-                        if (keyboard_bindings.left_stick_left) |key| {
-                            if (self.window.getKey(key) == .press) c.axis[2] = 0;
-                        }
-                        if (keyboard_bindings.left_stick_right) |key| {
-                            if (self.window.getKey(key) == .press) c.axis[2] = 255;
-                        }
-                        if (keyboard_bindings.left_stick_up) |key| {
-                            if (self.window.getKey(key) == .press) c.axis[3] = 0;
-                        }
-                        if (keyboard_bindings.left_stick_down) |key| {
-                            if (self.window.getKey(key) == .press) c.axis[3] = 255;
-                        }
-                        if (keyboard_bindings.right_stick_left) |key| {
-                            if (self.window.getKey(key) == .press) c.axis[4] = 0;
-                        }
-                        if (keyboard_bindings.right_stick_right) |key| {
-                            if (self.window.getKey(key) == .press) c.axis[4] = 255;
-                        }
-                        if (keyboard_bindings.right_stick_up) |key| {
-                            if (self.window.getKey(key) == .press) c.axis[5] = 0;
-                        }
-                        if (keyboard_bindings.right_stick_down) |key| {
-                            if (self.window.getKey(key) == .press) c.axis[5] = 255;
+                            c.axis[1] = if (self.window.getKey(key) == .press) 0xFF else 0;
+
+                        inline for (.{
+                            .{ 2, keyboard_bindings.left_stick_left, keyboard_bindings.left_stick_right },
+                            .{ 3, keyboard_bindings.left_stick_up, keyboard_bindings.left_stick_down },
+                            .{ 4, keyboard_bindings.right_stick_left, keyboard_bindings.right_stick_right },
+                            .{ 5, keyboard_bindings.right_stick_up, keyboard_bindings.right_stick_down },
+                        }) |tuple| {
+                            const axis_idx, const binding_0, const binding_FF = tuple;
+                            if (binding_0) |key| {
+                                if (self.window.getKey(key) == .press) c.axis[axis_idx] = 0;
+                            }
+                            if (binding_FF) |key| {
+                                if (self.window.getKey(key) == .press) c.axis[axis_idx] = 0xFF;
+                            }
                         }
 
-                        if (c.axis[0] != 0 or c.axis[1] != 0 or c.axis[2] != 128 or c.axis[3] != 128 or c.axis[4] != 128 or c.axis[5] != 128)
+                        if (!std.mem.eql(u8, &c.axis, &DefaultAxisValues))
                             any_keyboard_key_pressed = true;
 
                         if (!any_keyboard_key_pressed) {
@@ -1225,9 +1213,8 @@ pub fn update_dc_keyboard(self: *@This(), key: zglfw.Key, action: zglfw.Action) 
 }
 
 pub fn load_and_start(self: *@This(), path: []const u8) !void {
-    self.pause();
+    try self.stop();
     try self.load_disc(path);
-    try self.dc.reset();
     self.start();
     self.set_display_ui(false);
 }
@@ -1286,6 +1273,8 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
     try title.append(self._allocator, ')');
     try title.append(self._allocator, 0);
     self.window.setTitle(title.items[0 .. title.items.len - 1 :0]);
+
+    self.ui.binary_loaded = false;
 }
 
 pub fn get_product_name(self: *const @This()) []const u8 {
@@ -1632,7 +1621,7 @@ pub fn submit_ui(self: *@This()) void {
     self.gctx.submit(&.{commands});
 }
 
-// Display an error message and wait for the user to close the window.
+/// Display an error message and wait for the user to close the window.
 fn display_unrecoverable_error(self: *@This(), comptime fmt: []const u8, args: anytype) void {
     while (!self.window.shouldClose()) {
         zglfw.pollEvents();
@@ -1656,7 +1645,7 @@ fn display_unrecoverable_error(self: *@This(), comptime fmt: []const u8, args: a
     }
 }
 
-// Display an error message for missing bios or flash files.
+/// Display an error message for missing bios or flash files.
 fn display_missing_file_error(self: *@This(), comptime fmt: []const u8, args: anytype) !enum { retry, exit } {
     var retry = false;
     while (!self.window.shouldClose()) {

@@ -276,7 +276,7 @@ pub fn main(init: std.process.Init) !void {
         // Framebuffer has been written to by the CPU.
         // Update the host texture and blit it to our render target.
         // FIXME: Hackishly forced on for .bin files
-        if (binary_path != null or d.dc.gpu.dirty_framebuffer) {
+        if (d.ui.binary_loaded or d.dc.gpu.dirty_framebuffer) {
             d.dc.gpu.dirty_framebuffer = false;
             d.renderer.update_framebuffer_texture(&d.dc.gpu);
             // FIXME: Yet another framebuffer hack.
