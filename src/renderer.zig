@@ -1013,46 +1013,6 @@ pub const Renderer = struct {
     _allocator: std.mem.Allocator,
     io: std.Io,
 
-    fn create_textures_bind_group_layout(gctx: *zgpu.GraphicsContext) zgpu.BindGroupLayoutHandle {
-        return gctx.createBindGroupLayout(&.{
-            zgpu.bufferEntry(0, .{ .vertex = true, .fragment = true }, .uniform, true, 0),
-            zgpu.textureEntry(1, .{ .fragment = true }, .float, .tvdim_2d_array, false),
-            zgpu.textureEntry(2, .{ .fragment = true }, .float, .tvdim_2d_array, false),
-            zgpu.textureEntry(3, .{ .fragment = true }, .float, .tvdim_2d_array, false),
-            zgpu.textureEntry(4, .{ .fragment = true }, .float, .tvdim_2d_array, false),
-            zgpu.textureEntry(5, .{ .fragment = true }, .float, .tvdim_2d_array, false),
-            zgpu.textureEntry(6, .{ .fragment = true }, .float, .tvdim_2d_array, false),
-            zgpu.textureEntry(7, .{ .fragment = true }, .float, .tvdim_2d_array, false),
-            zgpu.textureEntry(8, .{ .fragment = true }, .float, .tvdim_2d_array, false),
-            zgpu.bufferEntry(9, .{ .vertex = true }, .read_only_storage, false, 0),
-            zgpu.bufferEntry(10, .{ .fragment = true }, .read_only_storage, false, 0),
-        }, .{ .label = "Textures Bind Group Layout" });
-    }
-
-    fn create_textures_bind_group(self: *@This()) void {
-        const bind_group_layout = create_textures_bind_group_layout(self._gctx);
-        defer self._gctx.releaseResource(bind_group_layout);
-
-        if (self.textures_bind_group.id != 0) {
-            self._gctx.releaseResource(self.textures_bind_group);
-            self.textures_bind_group = .nil;
-        }
-
-        self.textures_bind_group = self._gctx.createBindGroup(bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(Uniforms) },
-            .{ .binding = 1, .texture_view_handle = self.texture_arrays[0].view },
-            .{ .binding = 2, .texture_view_handle = self.texture_arrays[1].view },
-            .{ .binding = 3, .texture_view_handle = self.texture_arrays[2].view },
-            .{ .binding = 4, .texture_view_handle = self.texture_arrays[3].view },
-            .{ .binding = 5, .texture_view_handle = self.texture_arrays[4].view },
-            .{ .binding = 6, .texture_view_handle = self.texture_arrays[5].view },
-            .{ .binding = 7, .texture_view_handle = self.texture_arrays[6].view },
-            .{ .binding = 8, .texture_view_handle = self.texture_arrays[7].view },
-            .{ .binding = 9, .buffer_handle = self.strips_metadata_buffer, .offset = 0, .size = StripMetadataSize },
-            .{ .binding = 10, .buffer_handle = self.palette_buffer, .offset = 0, .size = 4 * 1024 },
-        });
-    }
-
     pub fn create(allocator: std.mem.Allocator, io: std.Io, gctx: *zgpu.GraphicsContext, gctx_queue_mutex: *std.Io.Mutex, config: *const Configuration) !*Renderer {
         const start = std.Io.Clock.awake.now(io);
         defer log.info("Renderer initialized in {f}", .{start.durationTo(std.Io.Clock.awake.now(io))});
@@ -1268,6 +1228,7 @@ pub const Renderer = struct {
             }};
 
             const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+                .label = .init("Blit Pipeline"),
                 .vertex = .{
                     .module = blit_vs_module,
                     .entry_point = .init("main"),
@@ -1292,7 +1253,8 @@ pub const Renderer = struct {
 
             const blit_opaque_fs_module = zgpu.createWgslShaderModule(gctx.device, wgsl.blit_opaque_fs(), "blit_opaque_fs");
             defer blit_opaque_fs_module.release();
-            const opaque_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+            const blit_opaque_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+                .label = .init("Blit Opaque Pipeline"),
                 .vertex = .{
                     .module = blit_vs_module,
                     .entry_point = .init("main"),
@@ -1313,7 +1275,7 @@ pub const Renderer = struct {
                     .targets = &blit_color_targets,
                 },
             };
-            _ = try gctx.createRenderPipelineAsync(allocator, blit_pipeline_layout, opaque_pipeline_descriptor, &renderer.blit_opaque_pipeline);
+            _ = try gctx.createRenderPipelineAsync(allocator, blit_pipeline_layout, blit_opaque_pipeline_descriptor, &renderer.blit_opaque_pipeline);
         }
 
         // Translucent modifier volume merge pipeline
@@ -3746,6 +3708,7 @@ pub const Renderer = struct {
         };
 
         const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+            .label = .init("Opaque Pipeline"),
             .vertex = .{
                 .module = self.opaque_vertex_shader_module,
                 .entry_point = .init("main"),
@@ -3834,50 +3797,6 @@ pub const Renderer = struct {
 
         self._gctx.releaseResource(self.blend_bind_group);
         self._gctx.releaseResource(self.blend_bind_group_render_to_texture);
-    }
-
-    /// Creates all resources that depends on the render size
-    pub fn on_inner_resolution_change(self: *@This()) void {
-        self.deinit_screen_textures();
-
-        // This is currently the largest buffer whose size is dependent on the resolution. Make sure we can allocate it.
-        if (self.translucent_modvol_dimensions().fragment_list_buffer_size > self.get_max_storage_buffer_binding_size()) {
-            self.oit_horizontal_slices = 1;
-            // Vertical resolution has to be divisible by 8 * horizontal slices because of the compute shaders workgroup sizes.
-            while (self.translucent_modvol_dimensions().fragment_list_buffer_size > self.get_max_storage_buffer_binding_size() or self.resolution.height % (8 * self.oit_horizontal_slices) != 0) {
-                self.oit_horizontal_slices += 1;
-            }
-        }
-
-        // Create a new depth texture to match the new render size.
-        const depth = create_depth_texture(self._gctx, self.resolution, switch (self.config.msaa) {
-            .Off => 1,
-            .x4 => 4,
-        });
-        self.depth.texture = depth.texture;
-        self.depth.view = depth.view;
-        self.depth.depth_only_view = depth.depth_only_view;
-
-        // Same thing for our screen size framebuffer.
-        self.resized_framebuffer = create_resized_framebuffer_texture(self._gctx, self.resolution, true, false);
-        self.resized_framebuffer_area1 = create_resized_framebuffer_texture(self._gctx, self.resolution, false, false);
-        self.resized_framebuffer_copy = create_resized_framebuffer_texture(self._gctx, self.resolution, false, true);
-        // Intermediate buffer used when rendering to a texture. We don't want to override resized_framebuffer since it is used for blitting.
-        self.resized_render_to_texture_target = create_resized_framebuffer_texture(self._gctx, self.resolution, true, false);
-
-        if (self.config.msaa != .Off) {
-            self.opaque_result_area0 = create_multisampled_texture_attachment(self._gctx, self.resolution);
-            self.opaque_result_area1 = create_multisampled_texture_attachment(self._gctx, self.resolution);
-        }
-
-        self.create_blit_bind_groups(self.config.scaling_filter);
-
-        self.create_modifier_volume_apply_bind_group();
-        self.create_oit_buffers();
-        self.create_translucent_bind_group();
-        self.create_translucent_modvol_bind_group();
-        self.create_translucent_modvol_merge_bind_group();
-        self.create_blend_bind_groups();
     }
 
     /// Returns the rendered frame as RGBA pixels.
@@ -4009,6 +3928,67 @@ pub const Renderer = struct {
             blit_vertex_data[i * 4 + 1] -= 2.0 * pixel_shifts[1] / native_vertical_resolution; // Coordinates are [-1, 1], with -1 being up.
         }
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.blit_to_window_vertex_buffer).?, 0, f32, blit_vertex_data[0..]);
+    }
+
+    /// Creates all resources that depends on the render size (and sample count)
+    pub fn on_inner_resolution_change(self: *@This()) void {
+        self.deinit_screen_textures();
+
+        // This is currently the largest buffer whose size is dependent on the resolution. Make sure we can allocate it.
+        if (self.translucent_modvol_dimensions().fragment_list_buffer_size > self.get_max_storage_buffer_binding_size()) {
+            self.oit_horizontal_slices = 1;
+            // Vertical resolution has to be divisible by 8 * horizontal slices because of the compute shaders workgroup sizes.
+            while (self.translucent_modvol_dimensions().fragment_list_buffer_size > self.get_max_storage_buffer_binding_size() or self.resolution.height % (8 * self.oit_horizontal_slices) != 0) {
+                self.oit_horizontal_slices += 1;
+            }
+        }
+
+        // Create a new depth texture to match the new render size.
+        const depth = create_depth_texture(self._gctx, self.resolution, switch (self.config.msaa) {
+            .Off => 1,
+            .x4 => 4,
+        });
+        self.depth.texture = depth.texture;
+        self.depth.view = depth.view;
+        self.depth.depth_only_view = depth.depth_only_view;
+
+        // Same thing for our screen size framebuffer.
+        self.resized_framebuffer = create_resized_framebuffer_texture(self._gctx, self.resolution, true, false);
+        self.resized_framebuffer_area1 = create_resized_framebuffer_texture(self._gctx, self.resolution, false, false);
+        self.resized_framebuffer_copy = create_resized_framebuffer_texture(self._gctx, self.resolution, false, true);
+        // Intermediate buffer used when rendering to a texture. We don't want to override resized_framebuffer since it is used for blitting.
+        self.resized_render_to_texture_target = create_resized_framebuffer_texture(self._gctx, self.resolution, true, false);
+
+        if (self.config.msaa != .Off) {
+            self.opaque_result_area0 = create_multisampled_texture_attachment(self._gctx, self.resolution);
+            self.opaque_result_area1 = create_multisampled_texture_attachment(self._gctx, self.resolution);
+        }
+
+        self.create_blit_bind_groups(self.config.scaling_filter);
+
+        self.create_modifier_volume_apply_bind_group();
+        self.create_oit_buffers();
+        self.create_translucent_bind_group();
+        self.create_translucent_modvol_bind_group();
+        self.create_translucent_modvol_merge_bind_group();
+        self.create_blend_bind_groups();
+    }
+
+    pub fn on_scaling_filter_change(self: *@This()) void {
+        self.create_blit_bind_groups(self.config.scaling_filter);
+    }
+
+    pub fn on_msaa_change(self: *@This()) !void {
+        var opaque_pipelines = self.opaque_pipelines.iterator();
+        while (opaque_pipelines.next()) |opaque_pipeline|
+            self._gctx.releaseResource(opaque_pipeline.value_ptr.*);
+        self.opaque_pipelines.clearRetainingCapacity();
+
+        try self.create_modifier_volume_pipelines(.Sync);
+        try self.create_modifier_volume_apply_pipeline(.Sync);
+        try self.create_translucent_modifier_volume_pipeline(.Sync);
+        try self.create_translucent_pipelines(.Sync);
+        self.on_inner_resolution_change();
     }
 
     fn create_depth_texture(gctx: *zgpu.GraphicsContext, resolution: Resolution, sample_count: u32) struct {
@@ -4156,21 +4136,44 @@ pub const Renderer = struct {
         }
     }
 
-    pub fn on_scaling_filter_change(self: *@This()) void {
-        self.create_blit_bind_groups(self.config.scaling_filter);
+    fn create_textures_bind_group_layout(gctx: *zgpu.GraphicsContext) zgpu.BindGroupLayoutHandle {
+        return gctx.createBindGroupLayout(&.{
+            zgpu.bufferEntry(0, .{ .vertex = true, .fragment = true }, .uniform, true, 0),
+            zgpu.textureEntry(1, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.textureEntry(2, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.textureEntry(3, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.textureEntry(4, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.textureEntry(5, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.textureEntry(6, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.textureEntry(7, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.textureEntry(8, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.bufferEntry(9, .{ .vertex = true }, .read_only_storage, false, 0),
+            zgpu.bufferEntry(10, .{ .fragment = true }, .read_only_storage, false, 0),
+        }, .{ .label = "Textures Bind Group Layout" });
     }
 
-    pub fn on_msaa_change(self: *@This()) !void {
-        var opaque_pipelines = self.opaque_pipelines.iterator();
-        while (opaque_pipelines.next()) |opaque_pipeline| {
-            self._gctx.releaseResource(opaque_pipeline.value_ptr.*);
+    fn create_textures_bind_group(self: *@This()) void {
+        const bind_group_layout = create_textures_bind_group_layout(self._gctx);
+        defer self._gctx.releaseResource(bind_group_layout);
+
+        if (self.textures_bind_group.id != 0) {
+            self._gctx.releaseResource(self.textures_bind_group);
+            self.textures_bind_group = .nil;
         }
-        self.opaque_pipelines.clearRetainingCapacity();
-        try self.create_modifier_volume_pipelines(.Sync);
-        try self.create_modifier_volume_apply_pipeline(.Sync);
-        try self.create_translucent_modifier_volume_pipeline(.Sync);
-        try self.create_translucent_pipelines(.Sync);
-        self.on_inner_resolution_change();
+
+        self.textures_bind_group = self._gctx.createBindGroup(bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
+            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(Uniforms) },
+            .{ .binding = 1, .texture_view_handle = self.texture_arrays[0].view },
+            .{ .binding = 2, .texture_view_handle = self.texture_arrays[1].view },
+            .{ .binding = 3, .texture_view_handle = self.texture_arrays[2].view },
+            .{ .binding = 4, .texture_view_handle = self.texture_arrays[3].view },
+            .{ .binding = 5, .texture_view_handle = self.texture_arrays[4].view },
+            .{ .binding = 6, .texture_view_handle = self.texture_arrays[5].view },
+            .{ .binding = 7, .texture_view_handle = self.texture_arrays[6].view },
+            .{ .binding = 8, .texture_view_handle = self.texture_arrays[7].view },
+            .{ .binding = 9, .buffer_handle = self.strips_metadata_buffer, .offset = 0, .size = StripMetadataSize },
+            .{ .binding = 10, .buffer_handle = self.palette_buffer, .offset = 0, .size = 4 * 1024 },
+        });
     }
 
     fn create_blit_bind_groups(self: *@This(), scaling_filter: Filter) void {
@@ -4178,7 +4181,7 @@ pub const Renderer = struct {
         if (self.blit_bind_group.id != 0) self._gctx.releaseResource(self.blit_bind_group);
         if (self.blit_bind_group_render_to_texture.id != 0) self._gctx.releaseResource(self.blit_bind_group_render_to_texture);
 
-        const blit_bind_group_layout = self._gctx.createBindGroupLayout(&BlitBindGroupLayout, .{ .label = "BlitBindGroupLayout" });
+        const blit_bind_group_layout = self._gctx.createBindGroupLayout(&BlitBindGroupLayout, .{ .label = "Blit Bind Group Layout" });
         defer self._gctx.releaseResource(blit_bind_group_layout);
 
         const sampler = switch (scaling_filter) {
@@ -4249,95 +4252,6 @@ pub const Renderer = struct {
         });
     }
 
-    fn get_linked_list_heads_size(self: *const @This()) u64 {
-        return (1 + self.resolution.width * self.resolution.height / self.oit_horizontal_slices) * @sizeOf(u32);
-    }
-
-    fn get_fragments_list_size(self: *const @This()) u64 {
-        return self.get_max_storage_buffer_binding_size();
-    }
-
-    inline fn translucent_modvol_dimensions(self: *const @This()) struct { square_size: u64, square_count: u64, pixels_per_slice: u64, fragment_counts_buffer_size: u64, fragment_list_buffer_size: u64, volumes_buffer_size: u64 } {
-        std.debug.assert(self.resolution.width >= self.resolution.height / self.oit_horizontal_slices); // This is dealt with on the Zig size, but the shaders assumes slices are wider than they are tall.
-        const square_size = std.math.ceilPowerOfTwo(u64, @min(self.resolution.width, self.resolution.height / self.oit_horizontal_slices)) catch unreachable;
-        const large_side = @max(self.resolution.width, self.resolution.height / self.oit_horizontal_slices);
-        const square_count = if (large_side % square_size == 0) large_side / square_size else 1 + large_side / square_size;
-        return .{
-            .square_size = square_size,
-            .square_count = square_count,
-            .pixels_per_slice = square_size * square_size * square_count,
-            .fragment_counts_buffer_size = @sizeOf(u32) * square_count * square_size * square_size,
-            .fragment_list_buffer_size = VolumeFragmentSize * square_count * square_size * square_size * MaxVolumeFragmentsPerPixel,
-            .volumes_buffer_size = VolumePixelSize * (self.resolution.width * self.resolution.height / self.oit_horizontal_slices),
-        };
-    }
-
-    fn get_max_storage_buffer_binding_size(self: *const @This()) u64 {
-        var limits: zgpu.wgpu.Limits = .{};
-        if (!self._gctx.device.getLimits(&limits)) {
-            log.err("get_max_storage_buffer_binding_size: Failed to get device limits.", .{});
-            return 134217728; // Min WebGPU spec.
-        }
-        return limits.max_storage_buffer_binding_size;
-    }
-
-    /// Assumes gctx_queue_mutex is locked.
-    fn increase_texture_slot_count(self: *@This(), size_index: u32, new_count: u64) void {
-        const slot_count = self.texture_metadata[size_index].len;
-        std.debug.assert(new_count > slot_count);
-
-        const size = @as(u32, 8) << @intCast(size_index);
-        const mip_level_count = 4 + @as(u32, size_index);
-        const arr = create_texture_cache_array(self._gctx, size_index, new_count);
-
-        // Copy previous textures
-        const commands = commands: {
-            const encoder = self._gctx.device.createCommandEncoder(null);
-            defer encoder.release();
-            const source = self.texture_arrays[size_index].lookup(self._gctx).texture;
-            const destination = arr.lookup(self._gctx).texture;
-            for (0..mip_level_count) |mip_level_u64| {
-                const mip_level: u32 = @intCast(mip_level_u64);
-                encoder.copyTextureToTexture(
-                    .{
-                        .texture = source,
-                        .mip_level = mip_level,
-                        .origin = .{},
-                        .aspect = .all,
-                    },
-                    .{
-                        .texture = destination,
-                        .mip_level = mip_level,
-                        .origin = .{},
-                        .aspect = .all,
-                    },
-                    .{
-                        .width = size / std.math.pow(u32, 2, mip_level),
-                        .height = size / std.math.pow(u32, 2, mip_level),
-                        .depth_or_array_layers = @intCast(slot_count),
-                    },
-                );
-            }
-            break :commands encoder.finish(null);
-        };
-        defer commands.release();
-
-        self._gctx.submit(&.{commands});
-
-        const prev_texture = self.texture_arrays[size_index];
-        self.texture_arrays[size_index] = arr;
-        defer prev_texture.release(self._gctx);
-
-        const tmp = self._allocator.alloc(TextureMetadata, new_count) catch std.debug.panic("Out of memory.", .{});
-        for (0..slot_count) |i| tmp[i] = self.texture_metadata[size_index][i];
-        for (slot_count..new_count) |i| tmp[i] = .{};
-        const prev_metadata = self.texture_metadata[size_index];
-        self.texture_metadata[size_index] = tmp;
-        defer self._allocator.free(prev_metadata);
-
-        self.create_textures_bind_group();
-    }
-
     /// Modifier Volumes
     /// Implemented using a stencil buffer and the shadow volume algorithm.
     /// This first pipeline takes the previous depth buffer and the modifier volume to generate the stencil buffer.
@@ -4355,6 +4269,7 @@ pub const Renderer = struct {
         const modifier_volume_pipeline_layout = self._gctx.createPipelineLayout(&.{modifier_volume_group_layout});
 
         const closed_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+            .label = .init("Closed Modifier Volume Pipeline"),
             .vertex = .{
                 .module = modifier_volume_vertex_shader_module,
                 .entry_point = .init("main"),
@@ -4398,6 +4313,7 @@ pub const Renderer = struct {
         };
 
         const shift_stencil_buffer_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+            .label = .init("Shift Stencil Buffer Modifier Volume Pipeline"),
             .vertex = .{
                 .module = modifier_volume_vertex_shader_module,
                 .entry_point = .init("main"),
@@ -4441,6 +4357,7 @@ pub const Renderer = struct {
         };
 
         const open_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+            .label = .init("Open Modifier Volume Pipeline"),
             .vertex = .{
                 .module = modifier_volume_vertex_shader_module,
                 .entry_point = .init("main"),
@@ -4538,6 +4455,7 @@ pub const Renderer = struct {
 
         const mv_apply_pipeline_layout = self._gctx.createPipelineLayout(&.{self.modifier_volume_apply_bind_group_layout});
         const mv_apply_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+            .label = .init("Modifier Volume Apply Pipeline"),
             .vertex = .{
                 .module = blit_vs_module,
                 .entry_point = .init("main"),
@@ -4623,7 +4541,7 @@ pub const Renderer = struct {
             zgpu.bufferEntry(2, .{ .fragment = true }, .storage, false, 0),
             zgpu.bufferEntry(3, .{ .fragment = true }, .uniform, true, 0),
             zgpu.textureEntry(4, .{ .fragment = true }, .depth, .tvdim_2d, self.config.msaa != .Off),
-        }, .{ .label = "Translucent ModVol Bind Group Layout" });
+        }, .{ .label = "Translucent Modifier Volume Bind Group Layout" });
 
         const translucent_modvol_pipeline_layout = self._gctx.createPipelineLayout(&.{
             modifier_volume_group_layout,
@@ -4631,6 +4549,7 @@ pub const Renderer = struct {
         });
 
         const translucent_modvol_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+            .label = .init("Translucent Modifier Volume Pipeline"),
             .vertex = .{
                 .module = modifier_volume_vertex_shader_module,
                 .entry_point = .init("main"),
@@ -4739,6 +4658,7 @@ pub const Renderer = struct {
         });
         defer self._gctx.releaseResource(translucent_pipeline_layout);
         const translucent_pipeline_descriptor_no_culling = wgpu.RenderPipelineDescriptor{
+            .label = .init("Translucent Pipeline"),
             .vertex = .{
                 .module = self.opaque_vertex_shader_module,
                 .entry_point = .init("main"),
@@ -4800,5 +4720,94 @@ pub const Renderer = struct {
                 self.translucent_pipeline_back_culling = self._gctx.createRenderPipeline(translucent_pipeline_layout, translucent_pipeline_descriptor_back_culling);
             },
         }
+    }
+
+    /// Assumes gctx_queue_mutex is locked.
+    fn increase_texture_slot_count(self: *@This(), size_index: u32, new_count: u64) void {
+        const slot_count = self.texture_metadata[size_index].len;
+        std.debug.assert(new_count > slot_count);
+
+        const size = @as(u32, 8) << @intCast(size_index);
+        const mip_level_count = 4 + @as(u32, size_index);
+        const arr = create_texture_cache_array(self._gctx, size_index, new_count);
+
+        // Copy previous textures
+        const commands = commands: {
+            const encoder = self._gctx.device.createCommandEncoder(null);
+            defer encoder.release();
+            const source = self.texture_arrays[size_index].lookup(self._gctx).texture;
+            const destination = arr.lookup(self._gctx).texture;
+            for (0..mip_level_count) |mip_level_u64| {
+                const mip_level: u32 = @intCast(mip_level_u64);
+                encoder.copyTextureToTexture(
+                    .{
+                        .texture = source,
+                        .mip_level = mip_level,
+                        .origin = .{},
+                        .aspect = .all,
+                    },
+                    .{
+                        .texture = destination,
+                        .mip_level = mip_level,
+                        .origin = .{},
+                        .aspect = .all,
+                    },
+                    .{
+                        .width = size / std.math.pow(u32, 2, mip_level),
+                        .height = size / std.math.pow(u32, 2, mip_level),
+                        .depth_or_array_layers = @intCast(slot_count),
+                    },
+                );
+            }
+            break :commands encoder.finish(null);
+        };
+        defer commands.release();
+
+        self._gctx.submit(&.{commands});
+
+        const prev_texture = self.texture_arrays[size_index];
+        self.texture_arrays[size_index] = arr;
+        defer prev_texture.release(self._gctx);
+
+        const tmp = self._allocator.alloc(TextureMetadata, new_count) catch std.debug.panic("Out of memory.", .{});
+        for (0..slot_count) |i| tmp[i] = self.texture_metadata[size_index][i];
+        for (slot_count..new_count) |i| tmp[i] = .{};
+        const prev_metadata = self.texture_metadata[size_index];
+        self.texture_metadata[size_index] = tmp;
+        defer self._allocator.free(prev_metadata);
+
+        self.create_textures_bind_group();
+    }
+
+    fn get_linked_list_heads_size(self: *const @This()) u64 {
+        return (1 + self.resolution.width * self.resolution.height / self.oit_horizontal_slices) * @sizeOf(u32);
+    }
+
+    fn get_fragments_list_size(self: *const @This()) u64 {
+        return self.get_max_storage_buffer_binding_size();
+    }
+
+    inline fn translucent_modvol_dimensions(self: *const @This()) struct { square_size: u64, square_count: u64, pixels_per_slice: u64, fragment_counts_buffer_size: u64, fragment_list_buffer_size: u64, volumes_buffer_size: u64 } {
+        std.debug.assert(self.resolution.width >= self.resolution.height / self.oit_horizontal_slices); // This is dealt with on the Zig size, but the shaders assumes slices are wider than they are tall.
+        const square_size = std.math.ceilPowerOfTwo(u64, @min(self.resolution.width, self.resolution.height / self.oit_horizontal_slices)) catch unreachable;
+        const large_side = @max(self.resolution.width, self.resolution.height / self.oit_horizontal_slices);
+        const square_count = if (large_side % square_size == 0) large_side / square_size else 1 + large_side / square_size;
+        return .{
+            .square_size = square_size,
+            .square_count = square_count,
+            .pixels_per_slice = square_size * square_size * square_count,
+            .fragment_counts_buffer_size = @sizeOf(u32) * square_count * square_size * square_size,
+            .fragment_list_buffer_size = VolumeFragmentSize * square_count * square_size * square_size * MaxVolumeFragmentsPerPixel,
+            .volumes_buffer_size = VolumePixelSize * (self.resolution.width * self.resolution.height / self.oit_horizontal_slices),
+        };
+    }
+
+    fn get_max_storage_buffer_binding_size(self: *const @This()) u64 {
+        var limits: zgpu.wgpu.Limits = .{};
+        if (!self._gctx.device.getLimits(&limits)) {
+            log.err("get_max_storage_buffer_binding_size: Failed to get device limits.", .{});
+            return 134217728; // Min WebGPU spec.
+        }
+        return limits.max_storage_buffer_binding_size;
     }
 };
