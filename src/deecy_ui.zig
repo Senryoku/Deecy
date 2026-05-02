@@ -857,6 +857,10 @@ pub fn draw(self: *@This()) !void {
                     }
                     zgui.setNextItemWidth(dropdown_size);
                     _ = zgui.comboFromEnum("Texture Filter", &d.config.renderer.texture_filter);
+                    zgui.setNextItemWidth(dropdown_size);
+                    if (zgui.comboFromEnum("MSAA", &d.config.renderer.msaa)) {
+                        try d.renderer.on_msaa_change();
+                    }
                     zgui.separator();
 
                     {
