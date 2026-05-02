@@ -898,6 +898,7 @@ pub const Renderer = struct {
     blend_bind_group_layout: zgpu.BindGroupLayoutHandle = .nil,
     modifier_volume_apply_bind_group_layout: zgpu.BindGroupLayoutHandle = .nil,
 
+    // These ones will be reused each type a new type of pipeline is encountered. Keeping them around.
     opaque_pipeline_layout: zgpu.PipelineLayoutHandle,
     opaque_vertex_shader_module: wgpu.ShaderModule,
     opaque_fragment_shader_module: wgpu.ShaderModule,
@@ -1031,7 +1032,6 @@ pub const Renderer = struct {
             .mip_level_count = 1,
             .label = .init("Framebuffer Texture"),
         });
-        const framebuffer_texture_view = gctx.createTextureView(framebuffer_texture, .{});
 
         const render_to_texture_target = gctx.createTexture(.{
             .usage = .{ .render_attachment = true, .texture_binding = true, .copy_dst = true, .copy_src = true },
@@ -1060,9 +1060,6 @@ pub const Renderer = struct {
 
         const blit_bind_group_layout = gctx.createBindGroupLayout(&BlitBindGroupLayout, .{ .label = "Blit Bind Group Layout" });
         defer gctx.releaseResource(blit_bind_group_layout);
-
-        const blit_vs_module = zgpu.createWgslShaderModule(gctx.device, wgsl.blit_vs(), "blit_vs");
-        defer blit_vs_module.release();
 
         const blit_vertex_data = [_]f32{
             // x    y     u    v
@@ -1169,8 +1166,8 @@ pub const Renderer = struct {
             .blit_index_buffer = blit_index_buffer,
             .blit_to_window_vertex_buffer = blit_to_window_vertex_buffer,
 
-            .framebuffer = .{ .texture = framebuffer_texture, .view = framebuffer_texture_view },
-            .render_to_texture_target = .{ .texture = render_to_texture_target, .view = gctx.createTextureView(render_to_texture_target, .{}) },
+            .framebuffer = .init(gctx, framebuffer_texture),
+            .render_to_texture_target = .init(gctx, render_to_texture_target),
             .framebuffer_copy_buffer = framebuffer_copy_buffer,
 
             .opaque_pipelines = .init(allocator),
@@ -1218,6 +1215,8 @@ pub const Renderer = struct {
         MipMap.init(gctx);
         // Blit pipeline
         {
+            const blit_vs_module = zgpu.createWgslShaderModule(gctx.device, wgsl.blit_vs(), "blit_vs");
+            defer blit_vs_module.release();
             const blit_fs_module = zgpu.createWgslShaderModule(gctx.device, wgsl.blit_fs(), "blit_fs");
             defer blit_fs_module.release();
             const blit_pipeline_layout = gctx.createPipelineLayout(&.{blit_bind_group_layout});
@@ -4256,6 +4255,10 @@ pub const Renderer = struct {
     /// Implemented using a stencil buffer and the shadow volume algorithm.
     /// This first pipeline takes the previous depth buffer and the modifier volume to generate the stencil buffer.
     fn create_modifier_volume_pipelines(self: *@This(), async: enum { Async, Sync }) !void {
+        self._gctx.releaseResource(self.closed_modifier_volume_pipeline);
+        self._gctx.releaseResource(self.shift_stencil_buffer_modifier_volume_pipeline);
+        self._gctx.releaseResource(self.open_modifier_volume_pipeline);
+
         const modifier_volume_vertex_shader_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.modifier_volume_vs(), "Modifier Volume VS");
         defer modifier_volume_vertex_shader_module.release();
 
@@ -4267,6 +4270,7 @@ pub const Renderer = struct {
         }, .{ .label = "Modifier Volume Bind Group Layout" });
         defer self._gctx.releaseResource(modifier_volume_group_layout);
         const modifier_volume_pipeline_layout = self._gctx.createPipelineLayout(&.{modifier_volume_group_layout});
+        defer self._gctx.releaseResource(modifier_volume_pipeline_layout);
 
         const closed_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
             .label = .init("Closed Modifier Volume Pipeline"),
@@ -4416,14 +4420,8 @@ pub const Renderer = struct {
     /// Modifier Volume Apply pipeline - Use the stencil from the previous pass to apply modifier volume effects.
     /// Depends on MSAA configuration.
     fn create_modifier_volume_apply_pipeline(self: *@This(), async: enum { Async, Sync }) !void {
-        if (self.modifier_volume_apply_pipeline.id != 0) {
-            self._gctx.releaseResource(self.modifier_volume_apply_pipeline);
-            self.modifier_volume_apply_pipeline = .nil;
-        }
-        if (self.modifier_volume_apply_bind_group_layout.id != 0) {
-            self._gctx.releaseResource(self.modifier_volume_apply_bind_group_layout);
-            self.modifier_volume_apply_bind_group_layout = .nil;
-        }
+        self._gctx.releaseResource(self.modifier_volume_apply_pipeline);
+        self._gctx.releaseResource(self.modifier_volume_apply_bind_group_layout);
 
         const mv_apply_fragment_shader_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.modifier_volume_apply_fs(self.config.msaa != .Off), "modifier_volume_apply_fs");
         defer mv_apply_fragment_shader_module.release();
@@ -4505,10 +4503,7 @@ pub const Renderer = struct {
 
     /// Depends on MSAA configuration.
     fn create_modifier_volume_apply_bind_group(self: *@This()) void {
-        if (self.modifier_volume_apply_bind_group.id != 0) {
-            self._gctx.releaseResource(self.modifier_volume_apply_bind_group);
-            self.modifier_volume_apply_bind_group = .nil;
-        }
+        self._gctx.releaseResource(self.modifier_volume_apply_bind_group);
         self.modifier_volume_apply_bind_group = self._gctx.createBindGroup(self.modifier_volume_apply_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .texture_view_handle = if (self.config.msaa == .Off) self.resized_framebuffer_area1.view else self.opaque_result_area1.view },
             .{ .binding = 2, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(BlitUniforms) },
@@ -4516,14 +4511,8 @@ pub const Renderer = struct {
     }
 
     fn create_translucent_modifier_volume_pipeline(self: *@This(), async: enum { Async, Sync }) !void {
-        if (self.translucent_modvol_bind_group_layout.id != 0) {
-            self._gctx.releaseResource(self.translucent_modvol_bind_group_layout);
-            self.translucent_modvol_bind_group_layout = .nil;
-        }
-        if (self.translucent_modvol_pipeline.id != 0) {
-            self._gctx.releaseResource(self.translucent_modvol_pipeline);
-            self.translucent_modvol_pipeline = .nil;
-        }
+        self._gctx.releaseResource(self.translucent_modvol_bind_group_layout);
+        self._gctx.releaseResource(self.translucent_modvol_pipeline);
 
         const modifier_volume_vertex_shader_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.modifier_volume_vs(), "modvol_vs");
         defer modifier_volume_vertex_shader_module.release();
@@ -4599,26 +4588,11 @@ pub const Renderer = struct {
 
     /// Depends on MSAA configuration.
     fn create_translucent_pipelines(self: *@This(), async: enum { Async, Sync }) !void {
-        if (self.blend_bind_group_layout.id != 0) {
-            self._gctx.releaseResource(self.blend_bind_group_layout);
-            self.blend_bind_group_layout = .nil;
-        }
-        if (self.translucent_bind_group_layout.id != 0) {
-            self._gctx.releaseResource(self.translucent_bind_group_layout);
-            self.translucent_bind_group_layout = .nil;
-        }
-        if (self.translucent_pipeline_no_culling.id != 0) {
-            self._gctx.releaseResource(self.translucent_pipeline_no_culling);
-            self.translucent_pipeline_no_culling = .nil;
-        }
-        if (self.translucent_pipeline_front_culling.id != 0) {
-            self._gctx.releaseResource(self.translucent_pipeline_front_culling);
-            self.translucent_pipeline_front_culling = .nil;
-        }
-        if (self.translucent_pipeline_back_culling.id != 0) {
-            self._gctx.releaseResource(self.translucent_pipeline_back_culling);
-            self.translucent_pipeline_back_culling = .nil;
-        }
+        self._gctx.releaseResource(self.blend_bind_group_layout);
+        self._gctx.releaseResource(self.translucent_bind_group_layout);
+        self._gctx.releaseResource(self.translucent_pipeline_no_culling);
+        self._gctx.releaseResource(self.translucent_pipeline_front_culling);
+        self._gctx.releaseResource(self.translucent_pipeline_back_culling);
 
         const translucent_fragment_shader_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.translucent_fs(self.config.msaa != .Off), "translucent_fs");
         defer translucent_fragment_shader_module.release();
