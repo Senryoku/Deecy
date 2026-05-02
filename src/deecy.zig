@@ -494,20 +494,44 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
             // IDK, prevents device lost crash on Linux. See https://github.com/zig-gamedev/zig-gamedev/commit/9bd4cf860c8e295f4f0db9ec4357905e090b5b98
             zglfw.windowHint(.client_api, .no_api);
 
-            // Hide window until the first frame is drawn to avoid a white flash. Don't forget to .show() it eventually!
+            const start_fullscreen = self.config.fullscreen;
+
+            // Hide windowed windows until the first frame is drawn to avoid a white flash.
+            // Fullscreen windows are created directly on the monitor and should be visible from
+            // creation: creating a hidden window and immediately switching it to fullscreen can
+            // leave Windows/Steam/VRR in a bad presentation/input state on some setups.
             // NOTE: Crashes on Kubuntu 25.04. From what I could gather, Wayland forbid using a window before making it visible.
             //       Not sure if this is the correct fix, or the correct way to detect Wayland either.
-            if (!flags.wayland)
+            if (!flags.wayland and !start_fullscreen)
                 zglfw.windowHint(.visible, false);
 
-            self.window = try zglfw.Window.create(@intCast(config.window_size.width), @intCast(config.window_size.height), "Deecy", null, null);
+            var initial_width: i32 = @intCast(config.window_size.width);
+            var initial_height: i32 = @intCast(config.window_size.height);
+            var initial_monitor: ?*zglfw.Monitor = null;
+
+            if (start_fullscreen) {
+                const monitors = zglfw.Monitor.getAll();
+                const monitor = zglfw.Monitor.getPrimary() orelse monitors[0];
+                const mode = monitor.getVideoMode() catch |err| {
+                    deecy_log.err(termcolor.red("Failed to get video mode: {}"), .{err});
+                    return err;
+                };
+
+                initial_width = mode.width;
+                initial_height = mode.height;
+                initial_monitor = monitor;
+                self.previous_window_position = .{
+                    .x = 0,
+                    .y = 0,
+                    .w = @intCast(config.window_size.width),
+                    .h = @intCast(config.window_size.height),
+                };
+            }
+
+            self.window = try zglfw.Window.create(initial_width, initial_height, "Deecy", initial_monitor, null);
             glfwSetWindowIcon(self.window, icons.len, &icons);
             if (builtin.os.tag == .windows)
                 @import("dwmapi.zig").allow_dark_mode(self.window, true);
-            if (self.config.fullscreen) {
-                self.config.fullscreen = false;
-                self.toggle_fullscreen();
-            }
 
             self.window.setUserPointer(self);
             _ = self.window.setKeyCallback(glfw_key_callback);
