@@ -342,8 +342,11 @@ const wgsl = struct {
     fn presort_fs() []const u8 {
         return shader.load("const Opaque = false;", .{ "uniforms", "fragment_color", "fs" });
     }
-    fn translucent_fs() []const u8 {
-        return shader.load("", .{ "uniforms", "morton", "tmv_structs", "oit_structs", "fragment_color", "oit_draw_fs" });
+    fn translucent_fs(msaa: bool) []const u8 {
+        switch (msaa) {
+            inline true => return shader.load("@group(2) @binding(3) var opaque_depth_texture: texture_depth_multisampled_2d;", .{ "uniforms", "morton", "tmv_structs", "oit_structs", "fragment_color", "oit_draw_fs" }),
+            inline false => return shader.load("@group(2) @binding(3) var opaque_depth_texture: texture_depth_2d;", .{ "uniforms", "morton", "tmv_structs", "oit_structs", "fragment_color", "oit_draw_fs" }),
+        }
     }
     fn modvol_translucent_fs(msaa: bool) []const u8 {
         switch (msaa) {
@@ -363,8 +366,11 @@ const wgsl = struct {
     fn modifier_volume_fs() []const u8 {
         return shader.load("", .{"modifier_volume_fs"});
     }
-    fn modifier_volume_apply_fs() []const u8 {
-        return shader.load("", .{"modifier_volume_apply_fs"});
+    fn modifier_volume_apply_fs(msaa: bool) []const u8 {
+        switch (msaa) {
+            inline true => return shader.load("@group(0) @binding(0) var area1: texture_multisampled_2d<f32>;", .{"modifier_volume_apply_fs"}),
+            inline false => return shader.load("@group(0) @binding(0) var area1: texture_2d<f32>;", .{"modifier_volume_apply_fs"}),
+        }
     }
     fn blit_vs() []const u8 {
         return shader.load("", .{"blit_vs"});
@@ -1179,140 +1185,10 @@ pub const Renderer = struct {
             .size = 64 * 4096 * @sizeOf([4]f32), // FIXME: Arbitrary size for testing
         });
 
-        // Modifier Volumes
-        // Implemented using a stencil buffer and the shadow volume algorithm.
-        // This first pipeline takes the previous depth buffer and the modifier volume to generate the stencil buffer.
-
-        const modifier_volume_vertex_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl.modifier_volume_vs(), "modvol_vs");
-        defer modifier_volume_vertex_shader_module.release();
-
-        const modifier_volume_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl.modifier_volume_fs(), "Modifier Volume FS");
-        defer modifier_volume_fragment_shader_module.release();
-
         const modifier_volume_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.bufferEntry(0, .{ .vertex = true }, .uniform, true, 0),
         }, .{ .label = "Modifier Volume Bind Group Layout" });
         defer gctx.releaseResource(modifier_volume_group_layout);
-
-        const modifier_volume_pipeline_layout = gctx.createPipelineLayout(&.{modifier_volume_group_layout});
-
-        const closed_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-            .vertex = .{
-                .module = modifier_volume_vertex_shader_module,
-                .entry_point = .init("main"),
-                .buffer_count = ModifierVolumeVertexBufferLayout.len,
-                .buffers = &ModifierVolumeVertexBufferLayout,
-            },
-            .primitive = .{
-                .front_face = .ccw,
-                .cull_mode = .none,
-                .topology = .triangle_list,
-            },
-            .depth_stencil = &.{
-                .format = .depth32_float_stencil8,
-                .depth_write_enabled = .false,
-                .depth_compare = DepthCompareFunction,
-                .stencil_read_mask = 0x01,
-                .stencil_write_mask = 0x01,
-                .stencil_front = .{
-                    .compare = .always,
-                    .fail_op = .keep,
-                    .pass_op = .increment_wrap,
-                    .depth_fail_op = .keep,
-                },
-                .stencil_back = .{
-                    .compare = .always,
-                    .fail_op = .keep,
-                    .pass_op = .increment_wrap,
-                    .depth_fail_op = .keep,
-                },
-            },
-            .fragment = &.{
-                .module = modifier_volume_fragment_shader_module,
-                .entry_point = .init("main"),
-                .target_count = 0,
-                .targets = null,
-            },
-        };
-
-        const shift_stencil_buffer_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-            .vertex = .{
-                .module = modifier_volume_vertex_shader_module,
-                .entry_point = .init("main"),
-                .buffer_count = ModifierVolumeVertexBufferLayout.len,
-                .buffers = &ModifierVolumeVertexBufferLayout,
-            },
-            .primitive = .{
-                .front_face = .ccw,
-                .cull_mode = .none,
-                .topology = .triangle_list,
-            },
-            .depth_stencil = &.{
-                .format = .depth32_float_stencil8,
-                .depth_write_enabled = .false,
-                .depth_compare = .always,
-                .stencil_read_mask = 0x03,
-                .stencil_write_mask = 0x03,
-                .stencil_front = .{
-                    .compare = .equal,
-                    .fail_op = .keep,
-                    .pass_op = .increment_wrap, // 0x01 -> 0x02
-                    .depth_fail_op = .keep,
-                },
-                .stencil_back = .{
-                    .compare = .equal,
-                    .fail_op = .keep,
-                    .pass_op = .increment_wrap,
-                    .depth_fail_op = .keep,
-                },
-            },
-            .fragment = &.{
-                .module = modifier_volume_fragment_shader_module,
-                .entry_point = .init("main"),
-                .target_count = 0,
-                .targets = null,
-            },
-        };
-
-        const open_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-            .vertex = .{
-                .module = modifier_volume_vertex_shader_module,
-                .entry_point = .init("main"),
-                .buffer_count = ModifierVolumeVertexBufferLayout.len,
-                .buffers = &ModifierVolumeVertexBufferLayout,
-            },
-            .primitive = .{
-                .front_face = .ccw,
-                .cull_mode = .none,
-                .topology = .triangle_list,
-            },
-            .depth_stencil = &.{
-                .format = .depth32_float_stencil8,
-                .depth_write_enabled = .false,
-                .depth_compare = DepthCompareFunction,
-                .stencil_read_mask = 0x02,
-                .stencil_write_mask = 0x03,
-                .stencil_front = .{
-                    .compare = .not_equal, // Only run if not already marked as area 1.
-                    .fail_op = .keep, // Action performed on samples that fail the stencil test
-                    .pass_op = .replace, // Action performed on samples that pass both the depth and stencil tests.
-                    .depth_fail_op = .keep, // Action performed on samples that pass the stencil test and fail the depth test.
-                },
-                .stencil_back = .{ // Same as front, I don't think the orientation matters for the hardware and games are not required to properly distinguish between front facing and back facing triangles.
-                    .compare = .not_equal,
-                    .fail_op = .keep,
-                    .pass_op = .replace,
-                    .depth_fail_op = .keep,
-                },
-            },
-            .fragment = &.{
-                .module = modifier_volume_fragment_shader_module,
-                .entry_point = .init("main"),
-                .target_count = 0,
-                .targets = null,
-            },
-        };
-
         const modifier_volume_bind_group = gctx.createBindGroup(modifier_volume_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(ModifierVolumeUniforms) },
         });
@@ -1440,10 +1316,6 @@ pub const Renderer = struct {
             _ = try gctx.createRenderPipelineAsync(allocator, blit_pipeline_layout, opaque_pipeline_descriptor, &renderer.blit_opaque_pipeline);
         }
 
-        _ = try gctx.createRenderPipelineAsync(allocator, modifier_volume_pipeline_layout, closed_modifier_volume_pipeline_descriptor, &renderer.closed_modifier_volume_pipeline);
-        _ = try gctx.createRenderPipelineAsync(allocator, modifier_volume_pipeline_layout, shift_stencil_buffer_modifier_volume_pipeline_descriptor, &renderer.shift_stencil_buffer_modifier_volume_pipeline);
-        _ = try gctx.createRenderPipelineAsync(allocator, modifier_volume_pipeline_layout, open_modifier_volume_pipeline_descriptor, &renderer.open_modifier_volume_pipeline);
-
         // Translucent modifier volume merge pipeline
         {
             const translucent_modvol_merge_pipeline_layout = gctx.createPipelineLayout(&.{renderer.translucent_modvol_merge_bind_group_layout});
@@ -1474,6 +1346,7 @@ pub const Renderer = struct {
 
         try renderer.create_translucent_pipelines(.Async);
         try renderer.create_translucent_modifier_volume_pipeline(.Async);
+        try renderer.create_modifier_volume_pipelines(.Async);
         try renderer.create_modifier_volume_apply_pipeline(.Async);
         renderer.on_inner_resolution_change();
 
@@ -3257,9 +3130,10 @@ pub const Renderer = struct {
                             const mva_bind_group = gctx.lookupResource(self.modifier_volume_apply_bind_group).?;
 
                             const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                                .view = target.resized.view,
+                                .view = opaque_area0,
                                 .load_op = .load,
                                 .store_op = .store,
+                                .resolve_target = if (self.config.msaa != .Off) target.resized.view else null,
                             }};
                             const pass = encoder.beginRenderPass(.{
                                 .label = .init("Modifier Volume Apply"),
@@ -4292,6 +4166,7 @@ pub const Renderer = struct {
             self._gctx.releaseResource(opaque_pipeline.value_ptr.*);
         }
         self.opaque_pipelines.clearRetainingCapacity();
+        try self.create_modifier_volume_pipelines(.Sync);
         try self.create_modifier_volume_apply_pipeline(.Sync);
         try self.create_translucent_modifier_volume_pipeline(.Sync);
         try self.create_translucent_pipelines(.Sync);
@@ -4463,6 +4338,164 @@ pub const Renderer = struct {
         self.create_textures_bind_group();
     }
 
+    /// Modifier Volumes
+    /// Implemented using a stencil buffer and the shadow volume algorithm.
+    /// This first pipeline takes the previous depth buffer and the modifier volume to generate the stencil buffer.
+    fn create_modifier_volume_pipelines(self: *@This(), async: enum { Async, Sync }) !void {
+        const modifier_volume_vertex_shader_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.modifier_volume_vs(), "Modifier Volume VS");
+        defer modifier_volume_vertex_shader_module.release();
+
+        const modifier_volume_fragment_shader_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.modifier_volume_fs(), "Modifier Volume FS");
+        defer modifier_volume_fragment_shader_module.release();
+
+        const modifier_volume_group_layout = self._gctx.createBindGroupLayout(&.{
+            zgpu.bufferEntry(0, .{ .vertex = true }, .uniform, true, 0),
+        }, .{ .label = "Modifier Volume Bind Group Layout" });
+        defer self._gctx.releaseResource(modifier_volume_group_layout);
+        const modifier_volume_pipeline_layout = self._gctx.createPipelineLayout(&.{modifier_volume_group_layout});
+
+        const closed_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+            .vertex = .{
+                .module = modifier_volume_vertex_shader_module,
+                .entry_point = .init("main"),
+                .buffer_count = ModifierVolumeVertexBufferLayout.len,
+                .buffers = &ModifierVolumeVertexBufferLayout,
+            },
+            .primitive = .{
+                .front_face = .ccw,
+                .cull_mode = .none,
+                .topology = .triangle_list,
+            },
+            .depth_stencil = &.{
+                .format = .depth32_float_stencil8,
+                .depth_write_enabled = .false,
+                .depth_compare = DepthCompareFunction,
+                .stencil_read_mask = 0x01,
+                .stencil_write_mask = 0x01,
+                .stencil_front = .{
+                    .compare = .always,
+                    .fail_op = .keep,
+                    .pass_op = .increment_wrap,
+                    .depth_fail_op = .keep,
+                },
+                .stencil_back = .{
+                    .compare = .always,
+                    .fail_op = .keep,
+                    .pass_op = .increment_wrap,
+                    .depth_fail_op = .keep,
+                },
+            },
+            .fragment = &.{
+                .module = modifier_volume_fragment_shader_module,
+                .entry_point = .init("main"),
+                .target_count = 0,
+                .targets = null,
+            },
+            .multisample = switch (self.config.msaa) {
+                .Off => .{},
+                .x4 => .{ .count = 4 },
+            },
+        };
+
+        const shift_stencil_buffer_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+            .vertex = .{
+                .module = modifier_volume_vertex_shader_module,
+                .entry_point = .init("main"),
+                .buffer_count = ModifierVolumeVertexBufferLayout.len,
+                .buffers = &ModifierVolumeVertexBufferLayout,
+            },
+            .primitive = .{
+                .front_face = .ccw,
+                .cull_mode = .none,
+                .topology = .triangle_list,
+            },
+            .depth_stencil = &.{
+                .format = .depth32_float_stencil8,
+                .depth_write_enabled = .false,
+                .depth_compare = .always,
+                .stencil_read_mask = 0x03,
+                .stencil_write_mask = 0x03,
+                .stencil_front = .{
+                    .compare = .equal,
+                    .fail_op = .keep,
+                    .pass_op = .increment_wrap, // 0x01 -> 0x02
+                    .depth_fail_op = .keep,
+                },
+                .stencil_back = .{
+                    .compare = .equal,
+                    .fail_op = .keep,
+                    .pass_op = .increment_wrap,
+                    .depth_fail_op = .keep,
+                },
+            },
+            .fragment = &.{
+                .module = modifier_volume_fragment_shader_module,
+                .entry_point = .init("main"),
+                .target_count = 0,
+                .targets = null,
+            },
+            .multisample = switch (self.config.msaa) {
+                .Off => .{},
+                .x4 => .{ .count = 4 },
+            },
+        };
+
+        const open_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+            .vertex = .{
+                .module = modifier_volume_vertex_shader_module,
+                .entry_point = .init("main"),
+                .buffer_count = ModifierVolumeVertexBufferLayout.len,
+                .buffers = &ModifierVolumeVertexBufferLayout,
+            },
+            .primitive = .{
+                .front_face = .ccw,
+                .cull_mode = .none,
+                .topology = .triangle_list,
+            },
+            .depth_stencil = &.{
+                .format = .depth32_float_stencil8,
+                .depth_write_enabled = .false,
+                .depth_compare = DepthCompareFunction,
+                .stencil_read_mask = 0x02,
+                .stencil_write_mask = 0x03,
+                .stencil_front = .{
+                    .compare = .not_equal, // Only run if not already marked as area 1.
+                    .fail_op = .keep, // Action performed on samples that fail the stencil test
+                    .pass_op = .replace, // Action performed on samples that pass both the depth and stencil tests.
+                    .depth_fail_op = .keep, // Action performed on samples that pass the stencil test and fail the depth test.
+                },
+                .stencil_back = .{ // Same as front, I don't think the orientation matters for the hardware and games are not required to properly distinguish between front facing and back facing triangles.
+                    .compare = .not_equal,
+                    .fail_op = .keep,
+                    .pass_op = .replace,
+                    .depth_fail_op = .keep,
+                },
+            },
+            .fragment = &.{
+                .module = modifier_volume_fragment_shader_module,
+                .entry_point = .init("main"),
+                .target_count = 0,
+                .targets = null,
+            },
+            .multisample = switch (self.config.msaa) {
+                .Off => .{},
+                .x4 => .{ .count = 4 },
+            },
+        };
+
+        switch (async) {
+            .Async => {
+                _ = try self._gctx.createRenderPipelineAsync(self._allocator, modifier_volume_pipeline_layout, closed_modifier_volume_pipeline_descriptor, &self.closed_modifier_volume_pipeline);
+                _ = try self._gctx.createRenderPipelineAsync(self._allocator, modifier_volume_pipeline_layout, shift_stencil_buffer_modifier_volume_pipeline_descriptor, &self.shift_stencil_buffer_modifier_volume_pipeline);
+                _ = try self._gctx.createRenderPipelineAsync(self._allocator, modifier_volume_pipeline_layout, open_modifier_volume_pipeline_descriptor, &self.open_modifier_volume_pipeline);
+            },
+            .Sync => {
+                self.closed_modifier_volume_pipeline = self._gctx.createRenderPipeline(modifier_volume_pipeline_layout, closed_modifier_volume_pipeline_descriptor);
+                self.shift_stencil_buffer_modifier_volume_pipeline = self._gctx.createRenderPipeline(modifier_volume_pipeline_layout, shift_stencil_buffer_modifier_volume_pipeline_descriptor);
+                self.open_modifier_volume_pipeline = self._gctx.createRenderPipeline(modifier_volume_pipeline_layout, open_modifier_volume_pipeline_descriptor);
+            },
+        }
+    }
     /// Modifier Volume Apply pipeline - Use the stencil from the previous pass to apply modifier volume effects.
     /// Depends on MSAA configuration.
     fn create_modifier_volume_apply_pipeline(self: *@This(), async: enum { Async, Sync }) !void {
@@ -4475,7 +4508,7 @@ pub const Renderer = struct {
             self.modifier_volume_apply_bind_group_layout = .nil;
         }
 
-        const mv_apply_fragment_shader_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.modifier_volume_apply_fs(), "modifier_volume_apply_fs");
+        const mv_apply_fragment_shader_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.modifier_volume_apply_fs(self.config.msaa != .Off), "modifier_volume_apply_fs");
         defer mv_apply_fragment_shader_module.release();
 
         const blit_vs_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.blit_vs(), "blit_vs");
@@ -4540,6 +4573,10 @@ pub const Renderer = struct {
                 .entry_point = .init("main"),
                 .target_count = mv_apply_color_targets.len,
                 .targets = &mv_apply_color_targets,
+            },
+            .multisample = switch (self.config.msaa) {
+                .Off => .{},
+                .x4 => .{ .count = 4 },
             },
         };
         switch (async) {
@@ -4630,6 +4667,10 @@ pub const Renderer = struct {
                 .target_count = 0,
                 .targets = null,
             },
+            .multisample = switch (self.config.msaa) {
+                .Off => .{},
+                .x4 => .{ .count = 4 },
+            },
         };
         switch (async) {
             .Async => _ = try self._gctx.createRenderPipelineAsync(self._allocator, translucent_modvol_pipeline_layout, translucent_modvol_pipeline_descriptor, &self.translucent_modvol_pipeline),
@@ -4660,7 +4701,7 @@ pub const Renderer = struct {
             self.translucent_pipeline_back_culling = .nil;
         }
 
-        const translucent_fragment_shader_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.translucent_fs(), "translucent_fs");
+        const translucent_fragment_shader_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.translucent_fs(self.config.msaa != .Off), "translucent_fs");
         defer translucent_fragment_shader_module.release();
 
         const textures_bind_group_layout = create_textures_bind_group_layout(self._gctx);

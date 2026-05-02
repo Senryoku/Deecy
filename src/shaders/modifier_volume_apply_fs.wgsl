@@ -1,4 +1,4 @@
-@group(0) @binding(0) var area1: texture_multisampled_2d<f32>;
+// @group(0) @binding(0) var area1: texture_multisampled_2d<f32>;
 
 @fragment
 fn main(
