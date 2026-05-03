@@ -829,6 +829,10 @@ pub fn draw(self: *@This()) !void {
                         d.config.renderer.internal_resolution_factor = @intFromEnum(resolution);
                     }
                     zgui.setNextItemWidth(dropdown_size);
+                    if (zgui.comboFromEnum("MSAA", &d.config.renderer.msaa))
+                        try d.renderer.on_msaa_change();
+                    zgui.setItemTooltip("Multisample anti-aliasing setting for the opaque pass.", .{});
+                    zgui.setNextItemWidth(dropdown_size);
                     if (zgui.comboFromEnum("Aspect Ratio", &d.config.renderer.aspect_ratio)) {
                         resolution_update = true;
                     }
@@ -857,10 +861,6 @@ pub fn draw(self: *@This()) !void {
                     }
                     zgui.setNextItemWidth(dropdown_size);
                     _ = zgui.comboFromEnum("Texture Filter", &d.config.renderer.texture_filter);
-                    zgui.setNextItemWidth(dropdown_size);
-                    if (zgui.comboFromEnum("MSAA", &d.config.renderer.msaa)) {
-                        try d.renderer.on_msaa_change();
-                    }
                     zgui.separator();
 
                     {

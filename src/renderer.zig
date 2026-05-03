@@ -965,8 +965,8 @@ pub const Renderer = struct {
     /// Framebuffer at target resolution to draw on
     resized_framebuffer: TextureAndView = .{},
     resized_framebuffer_area1: TextureAndView = .{},
-    opaque_result_area0: TextureAndView = .{},
-    opaque_result_area1: TextureAndView = .{},
+    opaque_multisampled_area0: TextureAndView = .{},
+    opaque_multisampled_area1: TextureAndView = .{},
 
     // NOTE: This should not be needed, but WGPU doesn't handle reading from a storage texture yet.
     resized_framebuffer_copy: TextureAndView = .{},
@@ -2869,26 +2869,36 @@ pub const Renderer = struct {
             .height = @min(self.render_size.height * self.resolution.height / NativeResolution.height, self.resolution.height),
         };
 
-        const Target = struct { native: TextureAndView.Resources, resized: TextureAndView.Resources };
+        const Target = struct { native: TextureAndView.Resources, resized: TextureAndView.Resources, resized_area1: TextureAndView.Resources };
         const target: Target = if (render_to_texture) .{
             .native = self.render_to_texture_target.lookup(gctx),
             .resized = self.resized_render_to_texture_target.lookup(gctx),
+            .resized_area1 = self.resized_framebuffer_area1.lookup(gctx), // NOTE: This should probably use its own temporary texture, but right now other ressources are shared wit the non-render-to-texture pipeline anyway.
         } else .{
             .native = self.framebuffer.lookup(gctx),
             .resized = self.resized_framebuffer.lookup(gctx),
+            .resized_area1 = self.resized_framebuffer_area1.lookup(gctx),
         };
 
-        const opaque_area0 = switch (self.config.msaa) {
-            .Off => target.resized.view,
-            .x4 => gctx.lookupResource(self.opaque_result_area0.view).?,
-        };
-        const opaque_area1 = switch (self.config.msaa) {
-            .Off => gctx.lookupResource(self.resized_framebuffer_area1.view).?,
-            .x4 => gctx.lookupResource(self.opaque_result_area1.view).?,
-        };
-        const opaque_depth = switch (self.config.msaa) {
-            .Off => gctx.lookupResource(self.depth.view).?,
-            .x4 => gctx.lookupResource(self.depth_multisampled.view).?,
+        const depth_view = gctx.lookupResource(self.depth.view).?;
+        const textures_bind_group = gctx.lookupResource(self.textures_bind_group).?;
+
+        // Use multisampled attachments when MSAA is enabled.
+        const opaque_attachements: struct { color_0: wgpu.TextureView, resolve_0: ?wgpu.TextureView, color_1: wgpu.TextureView, resolve_1: ?wgpu.TextureView, depth: wgpu.TextureView } = switch (self.config.msaa) {
+            .Off => .{
+                .color_0 = target.resized.view,
+                .resolve_0 = null,
+                .color_1 = target.resized_area1.view,
+                .resolve_1 = null,
+                .depth = depth_view,
+            },
+            .x4 => .{
+                .color_0 = gctx.lookupResource(self.opaque_multisampled_area0.view).?,
+                .resolve_0 = target.resized.view,
+                .color_1 = gctx.lookupResource(self.opaque_multisampled_area1.view).?,
+                .resolve_1 = target.resized_area1.view,
+                .depth = gctx.lookupResource(self.depth_multisampled.view).?,
+            },
         };
 
         const commands = commands: {
@@ -2914,23 +2924,20 @@ pub const Renderer = struct {
                 .fog_lut = self.fog_lut,
             };
 
-            const textures_bind_group = gctx.lookupResource(self.textures_bind_group).?;
-            const depth_view = gctx.lookupResource(self.depth.view).?;
-
             // Background
             if (gctx.lookupResource(self.get_or_put_pipeline(BackgroundPipelineKey, .Async))) |background_pipeline| {
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{
                     .{
-                        .view = opaque_area0,
+                        .view = opaque_attachements.color_0,
                         .load_op = .load,
                         .store_op = .store,
-                        .resolve_target = if (self.config.msaa != .Off) target.resized.view else null,
+                        .resolve_target = opaque_attachements.resolve_0,
                     },
                     .{
-                        .view = opaque_area1,
+                        .view = opaque_attachements.color_1,
                         .load_op = .clear,
                         .store_op = .store,
-                        .resolve_target = if (self.config.msaa != .Off) gctx.lookupResource(self.resized_framebuffer_area1.view).? else null,
+                        .resolve_target = opaque_attachements.resolve_1,
                     },
                 };
                 const pass = encoder.beginRenderPass(.{
@@ -2938,7 +2945,7 @@ pub const Renderer = struct {
                     .color_attachment_count = color_attachments.len,
                     .color_attachments = &color_attachments,
                     .depth_stencil_attachment = &.{
-                        .view = opaque_depth,
+                        .view = opaque_attachements.depth,
                         .depth_load_op = .clear,
                         .depth_store_op = .store,
                         .depth_clear_value = DepthClearValue,
@@ -2973,16 +2980,16 @@ pub const Renderer = struct {
                     {
                         const color_attachments = [_]wgpu.RenderPassColorAttachment{
                             .{
-                                .view = opaque_area0,
+                                .view = opaque_attachements.color_0,
                                 .load_op = .load,
                                 .store_op = .store,
-                                .resolve_target = if (self.config.msaa != .Off) target.resized.view else null,
+                                .resolve_target = opaque_attachements.resolve_0,
                             },
                             .{
-                                .view = opaque_area1,
+                                .view = opaque_attachements.color_1,
                                 .load_op = .clear,
                                 .store_op = .store,
-                                .resolve_target = if (self.config.msaa != .Off) gctx.lookupResource(self.resized_framebuffer_area1.view).? else null,
+                                .resolve_target = opaque_attachements.resolve_1,
                             },
                         };
                         const pass = encoder.beginRenderPass(.{
@@ -2990,7 +2997,7 @@ pub const Renderer = struct {
                             .color_attachment_count = color_attachments.len,
                             .color_attachments = &color_attachments,
                             .depth_stencil_attachment = &.{
-                                .view = opaque_depth,
+                                .view = opaque_attachements.depth,
                                 .depth_load_op = if (render_pass.z_clear) .clear else .load,
                                 .depth_store_op = .store,
                                 .depth_clear_value = DepthClearValue,
@@ -3210,7 +3217,7 @@ pub const Renderer = struct {
                                 .store_op = .store,
                             },
                             .{
-                                .view = gctx.lookupResource(self.resized_framebuffer_area1.view).?,
+                                .view = target.resized_area1.view,
                                 .load_op = .clear,
                                 .store_op = .store,
                             },
@@ -3827,10 +3834,10 @@ pub const Renderer = struct {
         self.resized_framebuffer_copy.release(self._gctx);
         self.resized_render_to_texture_target.release(self._gctx);
 
-        self.opaque_result_area0.release(self._gctx);
-        self.opaque_result_area1.release(self._gctx);
-        self.opaque_result_area0 = .{};
-        self.opaque_result_area1 = .{};
+        self.opaque_multisampled_area0.release(self._gctx);
+        self.opaque_multisampled_area1.release(self._gctx);
+        self.opaque_multisampled_area0 = .{};
+        self.opaque_multisampled_area1 = .{};
 
         self._gctx.releaseResource(self.blit_bind_group);
         self._gctx.releaseResource(self.blit_bind_group_render_to_texture);
@@ -4008,8 +4015,8 @@ pub const Renderer = struct {
             .Off => {},
             .x4 => {
                 self.depth_multisampled = create_depth_texture(self._gctx, self.resolution, 4);
-                self.opaque_result_area0 = create_multisampled_texture_attachment(self._gctx, self.resolution);
-                self.opaque_result_area1 = create_multisampled_texture_attachment(self._gctx, self.resolution);
+                self.opaque_multisampled_area0 = create_multisampled_texture_attachment(self._gctx, self.resolution);
+                self.opaque_multisampled_area1 = create_multisampled_texture_attachment(self._gctx, self.resolution);
                 self.create_depth_resolve_bind_group();
             },
         }
@@ -4034,10 +4041,6 @@ pub const Renderer = struct {
             self._gctx.releaseResource(opaque_pipeline.value_ptr.*);
         self.opaque_pipelines.clearRetainingCapacity();
 
-        try self.create_modifier_volume_pipelines(.Sync);
-        try self.create_modifier_volume_apply_pipeline(.Sync);
-        try self.create_translucent_modifier_volume_pipeline(.Sync);
-        try self.create_translucent_pipelines(.Sync);
         self.on_inner_resolution_change();
     }
 
@@ -4200,10 +4203,7 @@ pub const Renderer = struct {
         const bind_group_layout = create_textures_bind_group_layout(self._gctx);
         defer self._gctx.releaseResource(bind_group_layout);
 
-        if (self.textures_bind_group.id != 0) {
-            self._gctx.releaseResource(self.textures_bind_group);
-            self.textures_bind_group = .nil;
-        }
+        self._gctx.releaseResource(self.textures_bind_group);
 
         self.textures_bind_group = self._gctx.createBindGroup(bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(Uniforms) },
@@ -4221,9 +4221,9 @@ pub const Renderer = struct {
     }
 
     fn create_blit_bind_groups(self: *@This(), scaling_filter: Filter) void {
-        if (self.framebuffer_resize_bind_group.id != 0) self._gctx.releaseResource(self.framebuffer_resize_bind_group);
-        if (self.blit_bind_group.id != 0) self._gctx.releaseResource(self.blit_bind_group);
-        if (self.blit_bind_group_render_to_texture.id != 0) self._gctx.releaseResource(self.blit_bind_group_render_to_texture);
+        self._gctx.releaseResource(self.framebuffer_resize_bind_group);
+        self._gctx.releaseResource(self.blit_bind_group);
+        self._gctx.releaseResource(self.blit_bind_group_render_to_texture);
 
         const blit_bind_group_layout = self._gctx.createBindGroupLayout(&BlitBindGroupLayout, .{ .label = "Blit Bind Group Layout" });
         defer self._gctx.releaseResource(blit_bind_group_layout);
@@ -4472,19 +4472,14 @@ pub const Renderer = struct {
         const blit_vs_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.blit_vs(), "blit_vs");
         defer blit_vs_module.release();
 
-        const ModifierVolumeApplyBindGroupLayout = [_]wgpu.BindGroupLayoutEntry{
+        self.modifier_volume_apply_bind_group_layout = self._gctx.createBindGroupLayout(&.{
             zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
             zgpu.bufferEntry(2, .{ .vertex = true }, .uniform, true, 0),
+        }, .{ .label = "Modifier Volume Apply Bind Group Layout" });
+
+        const color_targets = [_]wgpu.ColorTargetState{
+            .{ .format = zgpu.GraphicsContext.surface_texture_format },
         };
-
-        self.modifier_volume_apply_bind_group_layout = self._gctx.createBindGroupLayout(
-            &ModifierVolumeApplyBindGroupLayout,
-            .{ .label = "Modifier Volume Apply Bind Group Layout" },
-        );
-
-        const mv_apply_color_targets = [_]wgpu.ColorTargetState{.{
-            .format = zgpu.GraphicsContext.surface_texture_format,
-        }};
 
         const mv_apply_pipeline_layout = self._gctx.createPipelineLayout(&.{self.modifier_volume_apply_bind_group_layout});
         const mv_apply_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
@@ -4522,8 +4517,8 @@ pub const Renderer = struct {
             .fragment = &.{
                 .module = mv_apply_fragment_shader_module,
                 .entry_point = .init("main"),
-                .target_count = mv_apply_color_targets.len,
-                .targets = &mv_apply_color_targets,
+                .target_count = color_targets.len,
+                .targets = &color_targets,
             },
         };
         switch (async) {
