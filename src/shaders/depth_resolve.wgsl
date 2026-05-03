@@ -1,0 +1,39 @@
+@group(0) @binding(0) var multisampled_depth: texture_depth_multisampled_2d;
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+    var out: VertexOutput;
+    const Vertices = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0),
+    );
+    out.position = vec4<f32>(Vertices[vertex_index], 0.0, 1.0);
+    return out;
+}
+
+struct FragmentOutput {
+    // Write directly to the depth buffer output
+    @builtin(frag_depth) depth: f32,
+};
+
+@fragment
+fn fs_main(in: VertexOutput) -> FragmentOutput {
+    let coords = vec2<i32>(in.position.xy);
+    let sampleCount = textureNumSamples(multisampled_depth);
+    
+    var resolved_depth = textureLoad(multisampled_depth, coords, 0);
+    
+    for (var i = 1u; i < sampleCount; i++) {
+        let sample_depth = textureLoad(multisampled_depth, coords, i);
+        resolved_depth = max(resolved_depth, sample_depth); 
+    }
+    
+    var out: FragmentOutput;
+    out.depth = resolved_depth;
+    return out;
+}

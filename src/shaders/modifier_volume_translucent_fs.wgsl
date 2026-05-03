@@ -6,7 +6,7 @@ struct OITFSUniforms {
 @group(1) @binding(1) var<storage, read_write> fragment_counts: array<atomic<u32>>;
 @group(1) @binding(2) var<storage, read_write> fragments: VolumeFragmentList;
 @group(1) @binding(3) var<uniform> oit_fs_uniforms: OITFSUniforms;
-// @group(1) @binding(4) var opaque_depth_texture: texture_depth_2d;  // NOTE: Real type injected from Zig. Depends on MSAA setting.
+@group(1) @binding(4) var opaque_depth_texture: texture_depth_2d;
 
 @fragment
 fn main(

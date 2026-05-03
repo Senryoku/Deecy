@@ -342,17 +342,11 @@ const wgsl = struct {
     fn presort_fs() []const u8 {
         return shader.load("const Opaque = false;", .{ "uniforms", "fragment_color", "fs" });
     }
-    fn translucent_fs(msaa: bool) []const u8 {
-        switch (msaa) {
-            inline true => return shader.load("@group(2) @binding(3) var opaque_depth_texture: texture_depth_multisampled_2d;", .{ "uniforms", "morton", "tmv_structs", "oit_structs", "fragment_color", "oit_draw_fs" }),
-            inline false => return shader.load("@group(2) @binding(3) var opaque_depth_texture: texture_depth_2d;", .{ "uniforms", "morton", "tmv_structs", "oit_structs", "fragment_color", "oit_draw_fs" }),
-        }
+    fn translucent_fs() []const u8 {
+        return shader.load("", .{ "uniforms", "morton", "tmv_structs", "oit_structs", "fragment_color", "oit_draw_fs" });
     }
-    fn modvol_translucent_fs(msaa: bool) []const u8 {
-        switch (msaa) {
-            inline true => return shader.load("@group(1) @binding(4) var opaque_depth_texture: texture_depth_multisampled_2d;", .{ "uniforms", "morton", "tmv_structs", "modifier_volume_translucent_fs" }),
-            inline false => return shader.load("@group(1) @binding(4) var opaque_depth_texture: texture_depth_2d;", .{ "uniforms", "morton", "tmv_structs", "modifier_volume_translucent_fs" }),
-        }
+    fn modvol_translucent_fs() []const u8 {
+        return shader.load("", .{ "uniforms", "morton", "tmv_structs", "modifier_volume_translucent_fs" });
     }
     fn modvol_merge_cs() []const u8 {
         return shader.load("", .{ "morton", "tmv_structs", "modifier_volume_translucent_merge" });
@@ -380,6 +374,9 @@ const wgsl = struct {
     }
     fn blit_opaque_fs() []const u8 {
         return shader.load("", .{"blit_opaque_fs"});
+    }
+    fn depth_resolve() []const u8 {
+        return shader.load("", .{"depth_resolve"});
     }
 };
 
@@ -783,6 +780,33 @@ const TextureAndView = struct {
     }
 };
 
+const DepthTextureAndView = struct {
+    texture: zgpu.TextureHandle = .nil,
+    view: zgpu.TextureViewHandle = .nil,
+    depth_only_view: zgpu.TextureViewHandle = .nil,
+
+    pub fn init(gctx: *zgpu.GraphicsContext, texture: zgpu.TextureHandle) @This() {
+        const view = gctx.createTextureView(texture, .{});
+        const depth_only_view = gctx.createTextureView(texture, .{ .aspect = .depth_only });
+        return .{ .texture = texture, .view = view, .depth_only_view = depth_only_view };
+    }
+
+    pub fn deinit(self: @This(), gctx: *zgpu.GraphicsContext) void {
+        gctx.releaseResource(self.view);
+        gctx.releaseResource(self.depth_only_view);
+        gctx.destroyResource(self.texture);
+    }
+
+    pub const Resources = struct { texture: wgpu.Texture, view: wgpu.TextureView, depth_only_view: wgpu.TextureView };
+    pub inline fn lookup(self: @This(), gctx: *zgpu.GraphicsContext) Resources {
+        return .{
+            .texture = gctx.lookupResource(self.texture).?,
+            .view = gctx.lookupResource(self.view).?,
+            .depth_only_view = gctx.lookupResource(self.depth_only_view).?,
+        };
+    }
+};
+
 pub const Filter = enum { Nearest, Linear };
 
 pub const Renderer = struct {
@@ -885,6 +909,7 @@ pub const Renderer = struct {
     shift_stencil_buffer_modifier_volume_pipeline: zgpu.RenderPipelineHandle = .{},
     open_modifier_volume_pipeline: zgpu.RenderPipelineHandle = .{},
     modifier_volume_apply_pipeline: zgpu.RenderPipelineHandle = .{},
+    depth_resolve_pipeline: zgpu.RenderPipelineHandle = .{},
     translucent_pipeline_no_culling: zgpu.RenderPipelineHandle = .{},
     translucent_pipeline_front_culling: zgpu.RenderPipelineHandle = .{},
     translucent_pipeline_back_culling: zgpu.RenderPipelineHandle = .{},
@@ -907,6 +932,7 @@ pub const Renderer = struct {
     textures_bind_group: zgpu.BindGroupHandle = .nil,
     modifier_volume_bind_group: zgpu.BindGroupHandle = .nil,
     modifier_volume_apply_bind_group: zgpu.BindGroupHandle = .nil,
+    depth_resolve_bind_group: zgpu.BindGroupHandle = .nil,
     translucent_bind_group: zgpu.BindGroupHandle = .nil,
     translucent_modvol_bind_group: zgpu.BindGroupHandle = .nil,
     translucent_modvol_merge_bind_group: zgpu.BindGroupHandle = .nil,
@@ -948,11 +974,8 @@ pub const Renderer = struct {
     // NOTE: This should not be needed, but WGPU doesn't handle reading from a storage texture yet.
     resized_framebuffer_copy: TextureAndView = .{},
 
-    depth: struct {
-        texture: zgpu.TextureHandle,
-        view: zgpu.TextureViewHandle,
-        depth_only_view: zgpu.TextureViewHandle,
-    } = undefined,
+    depth: DepthTextureAndView = .{},
+    depth_multisampled: DepthTextureAndView = .{},
 
     samplers: [256]zgpu.SamplerHandle,
     sampler_bind_groups: [256]zgpu.BindGroupHandle, // FIXME: Use a single one? (Dynamic uniform)
@@ -1305,6 +1328,7 @@ pub const Renderer = struct {
             for (renderer.texture_metadata[i]) |*tm| tm.* = .{};
         }
 
+        try renderer.create_depth_resolve_pipeline(.Async);
         try renderer.create_translucent_pipelines(.Async);
         try renderer.create_translucent_modifier_volume_pipeline(.Async);
         try renderer.create_modifier_volume_pipelines(.Async);
@@ -2865,6 +2889,10 @@ pub const Renderer = struct {
             .Off => gctx.lookupResource(self.resized_framebuffer_area1.view).?,
             .x4 => gctx.lookupResource(self.opaque_result_area1.view).?,
         };
+        const opaque_depth = switch (self.config.msaa) {
+            .Off => gctx.lookupResource(self.depth.view).?,
+            .x4 => gctx.lookupResource(self.depth_multisampled.view).?,
+        };
 
         const commands = commands: {
             const encoder = gctx.device.createCommandEncoder(null);
@@ -2913,7 +2941,7 @@ pub const Renderer = struct {
                     .color_attachment_count = color_attachments.len,
                     .color_attachments = &color_attachments,
                     .depth_stencil_attachment = &.{
-                        .view = depth_view,
+                        .view = opaque_depth,
                         .depth_load_op = .clear,
                         .depth_store_op = .store,
                         .depth_clear_value = DepthClearValue,
@@ -2965,7 +2993,7 @@ pub const Renderer = struct {
                             .color_attachment_count = color_attachments.len,
                             .color_attachments = &color_attachments,
                             .depth_stencil_attachment = &.{
-                                .view = depth_view,
+                                .view = opaque_depth,
                                 .depth_load_op = if (render_pass.z_clear) .clear else .load,
                                 .depth_store_op = .store,
                                 .depth_clear_value = DepthClearValue,
@@ -3040,7 +3068,7 @@ pub const Renderer = struct {
                                 .color_attachment_count = 0,
                                 .color_attachments = null,
                                 .depth_stencil_attachment = &.{
-                                    .view = depth_view,
+                                    .view = opaque_depth,
                                     .depth_load_op = .load,
                                     .depth_store_op = .store,
                                     .depth_clear_value = DepthClearValue,
@@ -3101,7 +3129,7 @@ pub const Renderer = struct {
                                 .color_attachment_count = color_attachments.len,
                                 .color_attachments = &color_attachments,
                                 .depth_stencil_attachment = &.{
-                                    .view = depth_view,
+                                    .view = opaque_depth,
                                     .depth_load_op = .undefined,
                                     .depth_store_op = .undefined,
                                     .depth_clear_value = DepthClearValue,
@@ -3167,7 +3195,7 @@ pub const Renderer = struct {
                             .color_attachment_count = color_attachments.len,
                             .color_attachments = &color_attachments,
                             .depth_stencil_attachment = &.{
-                                .view = depth_view,
+                                .view = opaque_depth,
                                 .depth_load_op = .load,
                                 .depth_store_op = .store,
                                 .stencil_load_op = .clear,
@@ -3211,6 +3239,36 @@ pub const Renderer = struct {
                         if (ta_lists.translucent_modifier_volumes.items.len > 0 and Once(@src()))
                             log.err(termcolor.red("Translucent modifier volumes cannot be used in Pre-sort mode."), .{});
                     } else if (render_pass.translucent_pass.steps.items.len > 0) skip_tmv: {
+                        // MSAA: Resolve the depth buffer to a single sampled depth texture used for the translucent pipeline.
+                        if (self.config.msaa != .Off) {
+                            const pass = encoder.beginRenderPass(.{
+                                .label = .init("Depth Resolve"),
+                                .color_attachment_count = 0,
+                                .color_attachments = null,
+                                .depth_stencil_attachment = &.{
+                                    .view = depth_view,
+                                    .depth_load_op = .clear,
+                                    .depth_store_op = .store,
+                                    .depth_clear_value = DepthClearValue,
+                                    .depth_read_only = .false,
+                                    .stencil_load_op = .clear,
+                                    .stencil_store_op = .store,
+                                    .stencil_clear_value = 0,
+                                    .stencil_read_only = .false,
+                                },
+                            });
+                            defer {
+                                pass.end();
+                                pass.release();
+                            }
+                            const pipeline = gctx.lookupResource(self.depth_resolve_pipeline) orelse break :skip_tmv;
+                            const depth_resolve_bind_group = gctx.lookupResource(self.depth_resolve_bind_group).?;
+                            pass.setPipeline(pipeline);
+                            pass.setBindGroup(0, depth_resolve_bind_group, &.{});
+
+                            pass.draw(3, 1, 0, 0);
+                        }
+
                         // Generate all translucent fragments
                         const translucent_bind_group = gctx.lookupResource(self.translucent_bind_group).?;
                         const blend_bind_group = if (render_to_texture) gctx.lookupResource(self.blend_bind_group_render_to_texture).? else gctx.lookupResource(self.blend_bind_group).?;
@@ -3767,9 +3825,8 @@ pub const Renderer = struct {
     }
 
     fn deinit_screen_textures(self: *@This()) void {
-        self._gctx.releaseResource(self.depth.depth_only_view);
-        self._gctx.releaseResource(self.depth.view);
-        self._gctx.destroyResource(self.depth.texture);
+        self.depth.deinit(self._gctx);
+        self.depth_multisampled.deinit(self._gctx);
 
         self.resized_framebuffer.release(self._gctx);
         self.resized_framebuffer_copy.release(self._gctx);
@@ -3943,13 +4000,7 @@ pub const Renderer = struct {
         }
 
         // Create a new depth texture to match the new render size.
-        const depth = create_depth_texture(self._gctx, self.resolution, switch (self.config.msaa) {
-            .Off => 1,
-            .x4 => 4,
-        });
-        self.depth.texture = depth.texture;
-        self.depth.view = depth.view;
-        self.depth.depth_only_view = depth.depth_only_view;
+        self.depth = create_depth_texture(self._gctx, self.resolution, 1);
 
         // Same thing for our screen size framebuffer.
         self.resized_framebuffer = create_resized_framebuffer_texture(self._gctx, self.resolution, true, false);
@@ -3958,9 +4009,14 @@ pub const Renderer = struct {
         // Intermediate buffer used when rendering to a texture. We don't want to override resized_framebuffer since it is used for blitting.
         self.resized_render_to_texture_target = create_resized_framebuffer_texture(self._gctx, self.resolution, true, false);
 
-        if (self.config.msaa != .Off) {
-            self.opaque_result_area0 = create_multisampled_texture_attachment(self._gctx, self.resolution);
-            self.opaque_result_area1 = create_multisampled_texture_attachment(self._gctx, self.resolution);
+        switch (self.config.msaa) {
+            .Off => {},
+            .x4 => {
+                self.depth_multisampled = create_depth_texture(self._gctx, self.resolution, 4);
+                self.opaque_result_area0 = create_multisampled_texture_attachment(self._gctx, self.resolution);
+                self.opaque_result_area1 = create_multisampled_texture_attachment(self._gctx, self.resolution);
+                self.create_depth_resolve_bind_group();
+            },
         }
 
         self.create_blit_bind_groups(self.config.scaling_filter);
@@ -3990,11 +4046,7 @@ pub const Renderer = struct {
         self.on_inner_resolution_change();
     }
 
-    fn create_depth_texture(gctx: *zgpu.GraphicsContext, resolution: Resolution, sample_count: u32) struct {
-        texture: zgpu.TextureHandle,
-        view: zgpu.TextureViewHandle,
-        depth_only_view: zgpu.TextureViewHandle,
-    } {
+    fn create_depth_texture(gctx: *zgpu.GraphicsContext, resolution: Resolution, sample_count: u32) DepthTextureAndView {
         const texture = gctx.createTexture(.{
             .usage = .{
                 .render_attachment = true,
@@ -4011,9 +4063,7 @@ pub const Renderer = struct {
             .sample_count = sample_count,
             .label = .init("Depth Texture"),
         });
-        const view = gctx.createTextureView(texture, .{});
-        const depth_only_view = gctx.createTextureView(texture, .{ .aspect = .depth_only });
-        return .{ .texture = texture, .view = view, .depth_only_view = depth_only_view };
+        return .init(gctx, texture);
     }
 
     fn create_texture_cache_array(gctx: *zgpu.GraphicsContext, size_index: u64, layer_count: u64) TextureAndView {
@@ -4203,6 +4253,17 @@ pub const Renderer = struct {
             .{ .binding = 0, .texture_view_handle = self.resized_render_to_texture_target.view },
             .{ .binding = 1, .sampler_handle = sampler },
             .{ .binding = 2, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(BlitUniforms) },
+        });
+    }
+
+    fn create_depth_resolve_bind_group(self: *@This()) void {
+        self._gctx.releaseResource(self.depth_resolve_bind_group);
+        const layout = self._gctx.createBindGroupLayout(&.{
+            zgpu.textureEntry(0, .{ .fragment = true }, .depth, .tvdim_2d, true),
+        }, .{ .label = "Depth Resolve Bind Group Layout" });
+        defer self._gctx.releaseResource(layout);
+        self.depth_resolve_bind_group = self._gctx.createBindGroup(layout, &[_]zgpu.BindGroupEntryInfo{
+            .{ .binding = 0, .texture_view_handle = self.depth_multisampled.depth_only_view },
         });
     }
 
@@ -4510,13 +4571,56 @@ pub const Renderer = struct {
         });
     }
 
+    fn create_depth_resolve_pipeline(self: *@This(), async: enum { Async, Sync }) !void {
+        self._gctx.releaseResource(self.depth_resolve_pipeline);
+        const shader_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.depth_resolve(), "Depth Resolve");
+        defer shader_module.release();
+
+        const bind_group_layout = self._gctx.createBindGroupLayout(&.{
+            zgpu.textureEntry(0, .{ .fragment = true }, .depth, .tvdim_2d, true),
+        }, .{ .label = "Depth Resolve Bind Group Layout" });
+        defer self._gctx.releaseResource(bind_group_layout);
+
+        const layout = self._gctx.createPipelineLayout(&.{bind_group_layout});
+        const descriptor = wgpu.RenderPipelineDescriptor{
+            .label = .init("Depth Resolve Pipeline"),
+            .vertex = .{
+                .module = shader_module,
+                .entry_point = .init("vs_main"),
+                .buffer_count = 0,
+                .buffers = null,
+            },
+            .primitive = .{
+                .front_face = .ccw,
+                .cull_mode = .none,
+                .topology = .triangle_list,
+            },
+            .depth_stencil = &.{
+                .format = .depth32_float_stencil8,
+                .depth_write_enabled = .true,
+                .depth_compare = .always,
+            },
+            .fragment = &.{
+                .module = shader_module,
+                .entry_point = .init("fs_main"),
+                .target_count = 0,
+                .targets = null,
+            },
+        };
+
+        switch (async) {
+            .Async => _ = try self._gctx.createRenderPipelineAsync(self._allocator, layout, descriptor, &self.depth_resolve_pipeline),
+            .Sync => self.translucent_modvol_pipeline = self._gctx.createRenderPipeline(layout, descriptor),
+        }
+    }
+
     fn create_translucent_modifier_volume_pipeline(self: *@This(), async: enum { Async, Sync }) !void {
         self._gctx.releaseResource(self.translucent_modvol_bind_group_layout);
         self._gctx.releaseResource(self.translucent_modvol_pipeline);
 
         const modifier_volume_vertex_shader_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.modifier_volume_vs(), "modvol_vs");
         defer modifier_volume_vertex_shader_module.release();
-        const translucent_modvol_fs_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.modvol_translucent_fs(self.config.msaa != .Off), "translucent_modvol_fs");
+        const translucent_modvol_fs_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.modvol_translucent_fs(), "translucent_modvol_fs");
         defer translucent_modvol_fs_module.release();
 
         const modifier_volume_group_layout = self._gctx.createBindGroupLayout(&.{
@@ -4529,7 +4633,7 @@ pub const Renderer = struct {
             zgpu.bufferEntry(1, .{ .fragment = true }, .storage, false, 0),
             zgpu.bufferEntry(2, .{ .fragment = true }, .storage, false, 0),
             zgpu.bufferEntry(3, .{ .fragment = true }, .uniform, true, 0),
-            zgpu.textureEntry(4, .{ .fragment = true }, .depth, .tvdim_2d, self.config.msaa != .Off),
+            zgpu.textureEntry(4, .{ .fragment = true }, .depth, .tvdim_2d, false),
         }, .{ .label = "Translucent Modifier Volume Bind Group Layout" });
 
         const translucent_modvol_pipeline_layout = self._gctx.createPipelineLayout(&.{
@@ -4575,10 +4679,6 @@ pub const Renderer = struct {
                 .target_count = 0,
                 .targets = null,
             },
-            .multisample = switch (self.config.msaa) {
-                .Off => .{},
-                .x4 => .{ .count = 4 },
-            },
         };
         switch (async) {
             .Async => _ = try self._gctx.createRenderPipelineAsync(self._allocator, translucent_modvol_pipeline_layout, translucent_modvol_pipeline_descriptor, &self.translucent_modvol_pipeline),
@@ -4594,7 +4694,7 @@ pub const Renderer = struct {
         self._gctx.releaseResource(self.translucent_pipeline_front_culling);
         self._gctx.releaseResource(self.translucent_pipeline_back_culling);
 
-        const translucent_fragment_shader_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.translucent_fs(self.config.msaa != .Off), "translucent_fs");
+        const translucent_fragment_shader_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.translucent_fs(), "translucent_fs");
         defer translucent_fragment_shader_module.release();
 
         const textures_bind_group_layout = create_textures_bind_group_layout(self._gctx);
@@ -4609,7 +4709,7 @@ pub const Renderer = struct {
             zgpu.bufferEntry(0, .{ .fragment = true }, .uniform, true, 0),
             zgpu.bufferEntry(1, .{ .fragment = true }, .storage, false, 0),
             zgpu.bufferEntry(2, .{ .fragment = true }, .storage, false, 0),
-            zgpu.textureEntry(3, .{ .fragment = true }, .depth, .tvdim_2d, self.config.msaa != .Off),
+            zgpu.textureEntry(3, .{ .fragment = true }, .depth, .tvdim_2d, false),
             zgpu.bufferEntry(4, .{ .fragment = true }, .storage, false, 0),
         }, .{ .label = "Translucent Bind Group Layout" });
 
