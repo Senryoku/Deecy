@@ -360,11 +360,8 @@ const wgsl = struct {
     fn modifier_volume_fs() []const u8 {
         return shader.load("", .{"modifier_volume_fs"});
     }
-    fn modifier_volume_apply_fs(msaa: bool) []const u8 {
-        switch (msaa) {
-            inline true => return shader.load("@group(0) @binding(0) var area1: texture_multisampled_2d<f32>;", .{"modifier_volume_apply_fs"}),
-            inline false => return shader.load("@group(0) @binding(0) var area1: texture_2d<f32>;", .{"modifier_volume_apply_fs"}),
-        }
+    fn modifier_volume_apply_fs() []const u8 {
+        return shader.load("", .{"modifier_volume_apply_fs"});
     }
     fn blit_vs() []const u8 {
         return shader.load("", .{"blit_vs"});
@@ -3039,6 +3036,37 @@ pub const Renderer = struct {
                         }
                     }
 
+                    // MSAA: Resolve the depth buffer to a single sampled depth texture used for the translucent pipeline.
+                    if (self.config.msaa != .Off) {
+                        if (gctx.lookupResource(self.depth_resolve_pipeline)) |pipeline| {
+                            const pass = encoder.beginRenderPass(.{
+                                .label = .init("Depth Resolve"),
+                                .color_attachment_count = 0,
+                                .color_attachments = null,
+                                .depth_stencil_attachment = &.{
+                                    .view = depth_view,
+                                    .depth_load_op = .clear,
+                                    .depth_store_op = .store,
+                                    .depth_clear_value = DepthClearValue,
+                                    .depth_read_only = .false,
+                                    .stencil_load_op = .clear,
+                                    .stencil_store_op = .store,
+                                    .stencil_clear_value = 0,
+                                    .stencil_read_only = .false,
+                                },
+                            });
+                            defer {
+                                pass.end();
+                                pass.release();
+                            }
+                            const depth_resolve_bind_group = gctx.lookupResource(self.depth_resolve_bind_group).?;
+                            pass.setPipeline(pipeline);
+                            pass.setBindGroup(0, depth_resolve_bind_group, &.{});
+
+                            pass.draw(3, 1, 0, 0);
+                        }
+                    }
+
                     // FIXME: WGPU doesn't support reading from storage textures... This is a bad workaround.
                     encoder.copyTextureToTexture(
                         .{ .texture = target.resized.texture },
@@ -3068,7 +3096,7 @@ pub const Renderer = struct {
                                 .color_attachment_count = 0,
                                 .color_attachments = null,
                                 .depth_stencil_attachment = &.{
-                                    .view = opaque_depth,
+                                    .view = depth_view,
                                     .depth_load_op = .load,
                                     .depth_store_op = .store,
                                     .depth_clear_value = DepthClearValue,
@@ -3119,17 +3147,16 @@ pub const Renderer = struct {
                             const mva_bind_group = gctx.lookupResource(self.modifier_volume_apply_bind_group).?;
 
                             const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                                .view = opaque_area0,
+                                .view = target.resized.view,
                                 .load_op = .load,
                                 .store_op = .store,
-                                .resolve_target = if (self.config.msaa != .Off) target.resized.view else null,
                             }};
                             const pass = encoder.beginRenderPass(.{
                                 .label = .init("Modifier Volume Apply"),
                                 .color_attachment_count = color_attachments.len,
                                 .color_attachments = &color_attachments,
                                 .depth_stencil_attachment = &.{
-                                    .view = opaque_depth,
+                                    .view = depth_view,
                                     .depth_load_op = .undefined,
                                     .depth_store_op = .undefined,
                                     .depth_clear_value = DepthClearValue,
@@ -3178,7 +3205,7 @@ pub const Renderer = struct {
 
                         const color_attachments = [_]wgpu.RenderPassColorAttachment{
                             .{
-                                .view = opaque_area0,
+                                .view = opaque_area0, // FIXME: Use resolved framebuffer
                                 .load_op = .load,
                                 .store_op = .store,
                                 .resolve_target = if (self.config.msaa != .Off) target.resized.view else null,
@@ -3239,36 +3266,6 @@ pub const Renderer = struct {
                         if (ta_lists.translucent_modifier_volumes.items.len > 0 and Once(@src()))
                             log.err(termcolor.red("Translucent modifier volumes cannot be used in Pre-sort mode."), .{});
                     } else if (render_pass.translucent_pass.steps.items.len > 0) skip_tmv: {
-                        // MSAA: Resolve the depth buffer to a single sampled depth texture used for the translucent pipeline.
-                        if (self.config.msaa != .Off) {
-                            const pass = encoder.beginRenderPass(.{
-                                .label = .init("Depth Resolve"),
-                                .color_attachment_count = 0,
-                                .color_attachments = null,
-                                .depth_stencil_attachment = &.{
-                                    .view = depth_view,
-                                    .depth_load_op = .clear,
-                                    .depth_store_op = .store,
-                                    .depth_clear_value = DepthClearValue,
-                                    .depth_read_only = .false,
-                                    .stencil_load_op = .clear,
-                                    .stencil_store_op = .store,
-                                    .stencil_clear_value = 0,
-                                    .stencil_read_only = .false,
-                                },
-                            });
-                            defer {
-                                pass.end();
-                                pass.release();
-                            }
-                            const pipeline = gctx.lookupResource(self.depth_resolve_pipeline) orelse break :skip_tmv;
-                            const depth_resolve_bind_group = gctx.lookupResource(self.depth_resolve_bind_group).?;
-                            pass.setPipeline(pipeline);
-                            pass.setBindGroup(0, depth_resolve_bind_group, &.{});
-
-                            pass.draw(3, 1, 0, 0);
-                        }
-
                         // Generate all translucent fragments
                         const translucent_bind_group = gctx.lookupResource(self.translucent_bind_group).?;
                         const blend_bind_group = if (render_to_texture) gctx.lookupResource(self.blend_bind_group_render_to_texture).? else gctx.lookupResource(self.blend_bind_group).?;
@@ -4371,10 +4368,6 @@ pub const Renderer = struct {
                 .target_count = 0,
                 .targets = null,
             },
-            .multisample = switch (self.config.msaa) {
-                .Off => .{},
-                .x4 => .{ .count = 4 },
-            },
         };
 
         const shift_stencil_buffer_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
@@ -4414,10 +4407,6 @@ pub const Renderer = struct {
                 .entry_point = .init("main"),
                 .target_count = 0,
                 .targets = null,
-            },
-            .multisample = switch (self.config.msaa) {
-                .Off => .{},
-                .x4 => .{ .count = 4 },
             },
         };
 
@@ -4459,10 +4448,6 @@ pub const Renderer = struct {
                 .target_count = 0,
                 .targets = null,
             },
-            .multisample = switch (self.config.msaa) {
-                .Off => .{},
-                .x4 => .{ .count = 4 },
-            },
         };
 
         switch (async) {
@@ -4479,12 +4464,11 @@ pub const Renderer = struct {
         }
     }
     /// Modifier Volume Apply pipeline - Use the stencil from the previous pass to apply modifier volume effects.
-    /// Depends on MSAA configuration.
     fn create_modifier_volume_apply_pipeline(self: *@This(), async: enum { Async, Sync }) !void {
         self._gctx.releaseResource(self.modifier_volume_apply_pipeline);
         self._gctx.releaseResource(self.modifier_volume_apply_bind_group_layout);
 
-        const mv_apply_fragment_shader_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.modifier_volume_apply_fs(self.config.msaa != .Off), "modifier_volume_apply_fs");
+        const mv_apply_fragment_shader_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.modifier_volume_apply_fs(), "modifier_volume_apply_fs");
         defer mv_apply_fragment_shader_module.release();
 
         const blit_vs_module = zgpu.createWgslShaderModule(self._gctx.device, wgsl.blit_vs(), "blit_vs");
@@ -4495,16 +4479,8 @@ pub const Renderer = struct {
             zgpu.bufferEntry(2, .{ .vertex = true }, .uniform, true, 0),
         };
 
-        const ModifierVolumeApplyMSAABindGroupLayout = [_]wgpu.BindGroupLayoutEntry{
-            zgpu.textureEntry(0, .{ .fragment = true }, .unfilterable_float, .tvdim_2d, true),
-            zgpu.bufferEntry(2, .{ .vertex = true }, .uniform, true, 0),
-        };
-
         self.modifier_volume_apply_bind_group_layout = self._gctx.createBindGroupLayout(
-            if (self.config.msaa == .Off)
-                &ModifierVolumeApplyBindGroupLayout
-            else
-                &ModifierVolumeApplyMSAABindGroupLayout,
+            &ModifierVolumeApplyBindGroupLayout,
             .{ .label = "Modifier Volume Apply Bind Group Layout" },
         );
 
@@ -4551,10 +4527,6 @@ pub const Renderer = struct {
                 .target_count = mv_apply_color_targets.len,
                 .targets = &mv_apply_color_targets,
             },
-            .multisample = switch (self.config.msaa) {
-                .Off => .{},
-                .x4 => .{ .count = 4 },
-            },
         };
         switch (async) {
             .Async => _ = try self._gctx.createRenderPipelineAsync(self._allocator, mv_apply_pipeline_layout, mv_apply_pipeline_descriptor, &self.modifier_volume_apply_pipeline),
@@ -4562,11 +4534,10 @@ pub const Renderer = struct {
         }
     }
 
-    /// Depends on MSAA configuration.
     fn create_modifier_volume_apply_bind_group(self: *@This()) void {
         self._gctx.releaseResource(self.modifier_volume_apply_bind_group);
         self.modifier_volume_apply_bind_group = self._gctx.createBindGroup(self.modifier_volume_apply_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .texture_view_handle = if (self.config.msaa == .Off) self.resized_framebuffer_area1.view else self.opaque_result_area1.view },
+            .{ .binding = 0, .texture_view_handle = self.resized_framebuffer_area1.view },
             .{ .binding = 2, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(BlitUniforms) },
         });
     }
@@ -4686,7 +4657,6 @@ pub const Renderer = struct {
         }
     }
 
-    /// Depends on MSAA configuration.
     fn create_translucent_pipelines(self: *@This(), async: enum { Async, Sync }) !void {
         self._gctx.releaseResource(self.blend_bind_group_layout);
         self._gctx.releaseResource(self.translucent_bind_group_layout);

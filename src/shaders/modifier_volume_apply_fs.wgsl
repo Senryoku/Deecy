@@ -1,4 +1,4 @@
-// @group(0) @binding(0) var area1: texture_2d<f32>;  // NOTE: Real type injected from Zig. Depends on MSAA setting.
+@group(0) @binding(0) var area1: texture_2d<f32>; 
 
 @fragment
 fn main(

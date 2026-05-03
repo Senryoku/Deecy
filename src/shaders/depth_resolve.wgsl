@@ -30,7 +30,7 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
     
     for (var i = 1u; i < sampleCount; i++) {
         let sample_depth = textureLoad(multisampled_depth, coords, i);
-        resolved_depth = max(resolved_depth, sample_depth); 
+        resolved_depth = min(resolved_depth, sample_depth); 
     }
     
     var out: FragmentOutput;
