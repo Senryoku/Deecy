@@ -3205,16 +3205,14 @@ pub const Renderer = struct {
 
                         const color_attachments = [_]wgpu.RenderPassColorAttachment{
                             .{
-                                .view = opaque_area0, // FIXME: Use resolved framebuffer
+                                .view = target.resized.view,
                                 .load_op = .load,
                                 .store_op = .store,
-                                .resolve_target = if (self.config.msaa != .Off) target.resized.view else null,
                             },
                             .{
-                                .view = opaque_area1,
+                                .view = gctx.lookupResource(self.resized_framebuffer_area1.view).?,
                                 .load_op = .clear,
                                 .store_op = .store,
-                                .resolve_target = if (self.config.msaa != .Off) gctx.lookupResource(self.resized_framebuffer_area1.view).? else null,
                             },
                         };
                         const pass = encoder.beginRenderPass(.{
@@ -3222,7 +3220,7 @@ pub const Renderer = struct {
                             .color_attachment_count = color_attachments.len,
                             .color_attachments = &color_attachments,
                             .depth_stencil_attachment = &.{
-                                .view = opaque_depth,
+                                .view = depth_view,
                                 .depth_load_op = .load,
                                 .depth_store_op = .store,
                                 .stencil_load_op = .clear,
@@ -3791,7 +3789,7 @@ pub const Renderer = struct {
                 .target_count = color_targets.len,
                 .targets = &color_targets,
             },
-            .multisample = switch (self.config.msaa) {
+            .multisample = if (key.translucent) .{} else switch (self.config.msaa) {
                 .Off => .{},
                 .x4 => .{ .count = 4 },
             },
