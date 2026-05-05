@@ -591,10 +591,8 @@ pub fn draw(self: *@This()) !void {
             }
             zgui.separator();
             // FIXME: Find a better name for both of these options (and maybe a better place too).
-            if (zgui.menuItem("Start Launcher", .{})) {
-                try d.load_launcher();
-                d.start();
-            }
+            if (zgui.menuItem("Start Launcher", .{}))
+                d.start_launcher();
             _ = zgui.checkbox("Auto Start", .{ .v = &d.config.auto_start_launcher });
             zgui.separator();
             if (zgui.beginMenu("Log Output", true)) {

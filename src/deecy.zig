@@ -1301,6 +1301,8 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
 }
 
 pub fn load_launcher(self: *@This()) !void {
+    try self.stop();
+    try self.reset();
     try self.dc.skip_bios(true);
     if (builtin.mode == .Debug) {
         _ = try std.Io.Dir.cwd().readFile(self.io, "./src/assets/launcher.bin", self.dc.ram[0x10000..]);
@@ -1311,6 +1313,14 @@ pub fn load_launcher(self: *@This()) !void {
     self.dc.cpu.pc = 0xAC010000;
     self.set_display_ui(false);
     self.ui.binary_loaded = true;
+}
+
+pub fn start_launcher(self: *@This()) void {
+    self.load_launcher() catch |err| {
+        deecy_log.err("Failed to load launcher: {t}", .{err});
+        return;
+    };
+    self.start();
 }
 
 pub fn load_binary(self: *@This(), path: []const u8, ip_bin_path: ?[]const u8) !void {
