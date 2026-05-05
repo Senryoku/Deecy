@@ -352,13 +352,14 @@ fn display_packed_color(comptime label: [:0]const u8, packed_color: Colors.Packe
 /// Locks gctx_queue_mutex.
 /// Accesses renderer.ta_lists. Might write a texture.
 pub fn draw(self: *@This(), d: *Deecy) !void {
-    d.gctx_queue_mutex.lockUncancelable(d.io);
-    defer d.gctx_queue_mutex.unlock(d.io);
-
     var dc = d.dc;
 
     self.reset_hover();
-    try self.init_texture_views(d); // Make sure these are up-to-date.
+    {
+        d.gctx_queue_mutex.lockUncancelable(d.io);
+        defer d.gctx_queue_mutex.unlock(d.io);
+        try self.init_texture_views(d); // Make sure these are up-to-date.
+    }
 
     if (zgui.begin("Scheduler", .{})) {
         zgui.text("Global Cycle: {d}", .{dc._global_cycles});
@@ -1025,6 +1026,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     zgui.end();
 
     if (zgui.begin("Holly", .{})) {
+        d.gctx_queue_mutex.lockUncancelable(d.io);
+        defer d.gctx_queue_mutex.unlock(d.io);
+
         if (zgui.collapsingHeader("SPG Registers", .{ .frame_padding = true })) {
             zgui.indent(.{});
             zgui.text("SPG_HBLANK_INT: {X:0>8}", .{dc.gpu._get_register(u32, .SPG_HBLANK_INT).*});
@@ -1417,6 +1421,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     zgui.end();
 
     if (zgui.begin("Renderer", .{})) {
+        d.gctx_queue_mutex.lockUncancelable(d.io);
+        defer d.gctx_queue_mutex.unlock(d.io);
+
         // Lower values won't always be functional for higher resolutions
         var oit_horizontal_slices: enum(u32) { @"1" = 1, @"2" = 2, @"3" = 3, @"4" = 4, @"5" = 5, @"6" = 6, @"7" = 7, @"8" = 8, @"9" = 9, @"10" = 10, @"11" = 11, @"12" = 12, @"13" = 13, @"14" = 14, @"15" = 15, @"16" = 16, @"17" = 17, @"18" = 18, @"19" = 19, @"20" = 20, @"21" = 21, @"22" = 22, @"23" = 23, @"24" = 24 } = @enumFromInt(d.renderer.oit_horizontal_slices);
         if (zgui.comboFromEnum("OIT Slices", &oit_horizontal_slices)) {

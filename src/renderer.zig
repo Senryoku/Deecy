@@ -1444,7 +1444,7 @@ pub const Renderer = struct {
         const render_to_texture = dc.gpu.render_to_texture();
 
         // NOTE: Here we also rely on this lock to protect access to `ta_lists` and `render_passes`.
-        self._gctx_queue_mutex.lockUncancelable(self.io);
+        self._gctx_queue_mutex.lock(self.io) catch return;
         defer self._gctx_queue_mutex.unlock(self.io);
 
         if (self.render_pending) {
