@@ -590,6 +590,11 @@ pub fn draw(self: *@This()) !void {
                 }
             }
             zgui.separator();
+            // FIXME: Find a better name for both of these options (and maybe a better place too).
+            if (zgui.menuItem("Start Launcher", .{}))
+                d.start_launcher();
+            _ = zgui.checkbox("Auto Start", .{ .v = &d.config.auto_start_launcher });
+            zgui.separator();
             if (zgui.beginMenu("Log Output", true)) {
                 const initial_value = d.config.log_output;
                 if (zgui.menuItem("None", .{ .selected = d.config.log_output == .None }))

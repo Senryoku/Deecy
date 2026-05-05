@@ -13,7 +13,6 @@ const PreciseSleep = @import("precise_sleep.zig");
 const zglfw = @import("zglfw");
 
 const Deecy = @import("deecy.zig");
-const ELF = @import("elf.zig");
 
 pub const std_options: std.Options = .{
     .log_level = .info,
@@ -108,6 +107,9 @@ pub fn main(init: std.process.Init) !void {
                     std.log.err(termcolor.red("Expected path to disc file after -g."), .{});
                     return error.InvalidArguments;
                 };
+            } else if (std.mem.eql(u8, arg, "--launcher")) {
+                try d.load_launcher();
+                start_immediately = true;
             } else if (std.mem.eql(u8, arg, "-i")) {
                 ip_bin_path = args_iterator.next() orelse {
                     std.log.err(termcolor.red("Expected path to IP.bin after -i."), .{});
@@ -164,51 +166,8 @@ pub fn main(init: std.process.Init) !void {
     }
 
     if (binary_path) |path| {
-        // FIXME: I'd rather be using LLE syscalls here,
-        //        but at least the ROM font one requires some initialization
-        //        and won't work if the boot ROM is skipped.
-        try dc.skip_bios(true);
-
-        var entry_point: u32 = 0xAC010000;
-
-        if (std.mem.endsWith(u8, path, ".elf")) {
-            var elf_file = try std.Io.Dir.cwd().openFile(io, path, .{});
-            defer elf_file.close(io);
-            const buffer = try allocator.alloc(u8, 8192);
-            defer allocator.free(buffer);
-            var file_reader = elf_file.reader(io, buffer);
-            var elf = try ELF.init(allocator, &file_reader);
-            defer elf.deinit();
-
-            entry_point = @intCast(elf.program_entry_offset);
-            for (elf.program_headers) |ph| {
-                if (ph.p_type == .Load) {
-                    try file_reader.seekTo(ph.p_offset);
-                    const offset = (ph.p_vaddr & 0x1FFF_FFFF) - 0x0C00_0000;
-                    var writer: std.Io.Writer = .fixed(dc.ram[offset..]);
-                    _ = try file_reader.streamMode(&writer, .limited(dc.ram.len - offset), .positional);
-                    try writer.flush();
-                } else {
-                    if (std.enums.tagName(ELF.SegmentType, ph.p_type)) |tag| {
-                        std.log.scoped(.elf).warn("Program header type {s} not supported", .{tag});
-                    } else {
-                        std.log.scoped(.elf).warn("Program header type {d} not supported", .{@intFromEnum(ph.p_type)});
-                    }
-                }
-            }
-        } else {
-            _ = try std.Io.Dir.cwd().readFile(io, path, dc.ram[0x10000..]);
-        }
-
-        if (ip_bin_path) |ipb_path| {
-            _ = try std.Io.Dir.cwd().readFile(io, ipb_path, dc.ram[0x8000..]);
-        } else {
-            // Skip IP.bin
-            dc.cpu.pc = entry_point;
-        }
+        try d.load_binary(path, ip_bin_path);
         start_immediately = true;
-        d.set_display_ui(false);
-        d.ui.binary_loaded = true;
     } else if (disc_path) |path| {
         std.log.info("Loading Disc: '{s}'...", .{path});
 

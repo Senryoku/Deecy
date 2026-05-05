@@ -22,10 +22,10 @@ pub const GDROM_HLE = @import("gdrom_hle.zig");
 pub const Flash = @import("flash.zig");
 
 const HardwareRegister = HardwareRegisters.HardwareRegister;
-const SH4 = SH4Module.SH4;
+pub const SH4 = SH4Module.SH4;
 const SH4JIT = SH4JITModule.SH4JIT;
 const Holly = HollyModule.Holly;
-const AICA = AICAModule.AICA;
+pub const AICA = AICAModule.AICA;
 const MapleHost = Maple.MapleHost;
 
 pub const Region = enum(u8) {

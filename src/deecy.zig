@@ -35,6 +35,7 @@ pub const Renderer = @import("./renderer.zig").Renderer;
 pub const UI = @import("./deecy_ui.zig");
 const DebugUI = @import("./debug_ui.zig");
 const Shortcuts = @import("./ui/shortcuts.zig");
+const ELF = @import("elf.zig");
 
 const Cheats = @import("./cheats.zig");
 
@@ -295,6 +296,7 @@ const Configuration = struct {
     game_directory: ?[]const u8 = null,
     library_display: enum { Grid, List } = .Grid,
     display_debug_ui: bool = false,
+    auto_start_launcher: bool = false,
 
     window_size: struct { width: u32 = 2 * @ceil((16.0 / 9.0 * @as(f32, @floatFromInt(Renderer.NativeResolution.height)))), height: u32 = 2 * Renderer.NativeResolution.height } = .{},
     present_mode: PresentMode = .Fifo,
@@ -384,6 +386,7 @@ shortcuts: Shortcuts,
 running: bool = false,
 _cycles_to_run: i64 = 0,
 _stop_request: bool = false,
+_on_stop_request: ?*const fn (*Self) void = null,
 realtime: bool = true, // Unlimited emulation speed when false.
 _dc_thread: ?std.Thread = null,
 
@@ -641,6 +644,7 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
         .function = @ptrCast(&Renderer.on_fb_r_sof1),
         .context = self.renderer,
     };
+    @import("launcher.zig").init(self);
 
     self.ui = try .create(self._allocator, self);
     self.debug_ui = try .init(self);
@@ -651,6 +655,11 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
     }
 
     try self.check_save_state_slots();
+
+    if (config.auto_start_launcher) {
+        try self.load_launcher();
+        self.start();
+    }
 
     return self;
 }
@@ -1023,6 +1032,7 @@ pub fn update(self: *@This(), delta_time: f32) void {
     if (self._stop_request) {
         self.pause();
         self._stop_request = false;
+        if (self._on_stop_request) |on_stop_request| on_stop_request(self);
     }
 }
 
@@ -1288,6 +1298,76 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
     self.window.setTitle(title.items[0 .. title.items.len - 1 :0]);
 
     self.ui.binary_loaded = false;
+}
+
+pub fn load_launcher(self: *@This()) !void {
+    try self.stop();
+    try self.reset();
+    try self.dc.skip_bios(true);
+    if (builtin.mode == .Debug) {
+        _ = try std.Io.Dir.cwd().readFile(self.io, "./src/assets/launcher.bin", self.dc.ram[0x10000..]);
+    } else {
+        const launcher = @embedFile("./assets/launcher.bin");
+        @memcpy(self.dc.ram[0x10000..][0..launcher.len], launcher);
+    }
+    self.dc.cpu.pc = 0xAC010000;
+    self.set_display_ui(false);
+    self.ui.binary_loaded = true;
+}
+
+pub fn start_launcher(self: *@This()) void {
+    self.load_launcher() catch |err| {
+        deecy_log.err("Failed to load launcher: {t}", .{err});
+        return;
+    };
+    self.start();
+}
+
+pub fn load_binary(self: *@This(), path: []const u8, ip_bin_path: ?[]const u8) !void {
+    // FIXME: I'd rather be using LLE syscalls here,
+    //        but at least the ROM font one requires some initialization
+    //        and won't work if the boot ROM is skipped.
+    try self.dc.skip_bios(true);
+
+    var entry_point: u32 = 0xAC010000;
+
+    if (std.mem.endsWith(u8, path, ".elf")) {
+        var elf_file = try std.Io.Dir.cwd().openFile(self.io, path, .{});
+        defer elf_file.close(self.io);
+        const buffer = try self._allocator.alloc(u8, 8192);
+        defer self._allocator.free(buffer);
+        var file_reader = elf_file.reader(self.io, buffer);
+        var elf = try ELF.init(self._allocator, &file_reader);
+        defer elf.deinit();
+
+        entry_point = @intCast(elf.program_entry_offset);
+        for (elf.program_headers) |ph| {
+            if (ph.p_type == .Load) {
+                try file_reader.seekTo(ph.p_offset);
+                const offset = (ph.p_vaddr & 0x1FFF_FFFF) - 0x0C00_0000;
+                var writer: std.Io.Writer = .fixed(self.dc.ram[offset..]);
+                _ = try file_reader.streamMode(&writer, .limited(self.dc.ram.len - offset), .positional);
+                try writer.flush();
+            } else {
+                if (std.enums.tagName(ELF.SegmentType, ph.p_type)) |tag| {
+                    std.log.scoped(.elf).warn("Program header type {s} not supported", .{tag});
+                } else {
+                    std.log.scoped(.elf).warn("Program header type {d} not supported", .{@intFromEnum(ph.p_type)});
+                }
+            }
+        }
+    } else {
+        _ = try std.Io.Dir.cwd().readFile(self.io, path, self.dc.ram[0x10000..]);
+    }
+
+    if (ip_bin_path) |ipb_path| {
+        _ = try std.Io.Dir.cwd().readFile(self.io, ipb_path, self.dc.ram[0x8000..]);
+    } else {
+        // Skip IP.bin
+        self.dc.cpu.pc = entry_point;
+    }
+    self.set_display_ui(false);
+    self.ui.binary_loaded = true;
 }
 
 pub fn get_product_name(self: *const @This()) []const u8 {
