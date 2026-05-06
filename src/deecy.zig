@@ -433,6 +433,14 @@ debug_ui: DebugUI = undefined,
 
 save_state_slots: [MaxSaveStates]bool = .{ false, false, false, false },
 
+rewind: struct {
+    enabled: bool = true,
+    tick: usize = 0,
+    period: usize = 60,
+    older: usize = 0,
+    states: std.ArrayList([]u8) = .empty,
+} = .{},
+
 io: std.Io,
 _allocator: std.mem.Allocator,
 
@@ -677,6 +685,9 @@ pub fn destroy(self: *@This()) void {
     self.renderer.destroy();
 
     self.dc.destroy();
+
+    for (self.rewind.states.items) |state| self._allocator.free(state);
+    self.rewind.states.deinit(self._allocator);
 
     self.debug_ui.deinit();
     self.ui_deinit();
@@ -1678,6 +1689,19 @@ pub fn draw_ui(self: *@This()) !void {
         zgui.end();
     }
 
+    if (!self.running and self.rewind.states.items.len > 0) {
+        if (zgui.begin("Rewind", .{})) {
+            const static = struct {
+                var frame_idx: i32 = 0;
+            };
+            if (zgui.sliderInt("Frame", .{ .min = 0, .max = @intCast(self.rewind.states.items.len - 1), .v = &static.frame_idx })) {}
+            if (zgui.button("Rewind", .{})) {
+                try self.rewind_to(@intCast(static.frame_idx));
+            }
+        }
+        zgui.end();
+    }
+
     self.ui.notifications.draw();
 }
 
@@ -1847,11 +1871,44 @@ pub fn run_for(self: *@This(), sh4_cycles: u64) void {
     }
 }
 
+fn rewind_to(self: *@This(), index: u32) !void {
+    var reader = std.Io.Reader.fixed(self.rewind.states.items[index]);
+    try self.reset();
+    try self.dc.deserialize(&reader);
+    try reader.readSliceAll(std.mem.asBytes(&self._cycles_to_run));
+}
+
+fn rewind_tick(self: *@This()) !void {
+    const MaxStates = 60;
+    if (self.rewind.enabled) {
+        if (self.rewind.tick % self.rewind.period == 0) {
+            var allocating_writer = if (self.rewind.states.items.len >= MaxStates) // Re-use oldest state memory
+                std.Io.Writer.Allocating.initOwnedSlice(self._allocator, self.rewind.states.items[self.rewind.older])
+            else
+                try std.Io.Writer.Allocating.initCapacity(self._allocator, 32 * 1024 * 1024);
+            defer allocating_writer.deinit();
+            var writer = &allocating_writer.writer;
+            _ = try self.dc.serialize(writer);
+            _ = try writer.write(std.mem.asBytes(&self._cycles_to_run));
+            try writer.flush();
+            if (self.rewind.states.items.len >= MaxStates) {
+                // self._allocator.free(self.rewind.states.items[self.rewind.older]); // Re-used
+                self.rewind.states.items[self.rewind.older] = try allocating_writer.toOwnedSlice();
+                self.rewind.older = (self.rewind.older + 1) % self.rewind.states.items.len;
+            } else {
+                try self.rewind.states.append(self._allocator, try allocating_writer.toOwnedSlice());
+            }
+        }
+        self.rewind.tick += 1;
+    }
+}
+
 // Used for uncapped framerate (no audio output)
 fn dc_thread_loop(self: *@This()) void {
     while (self.running) {
         const refresh_rate = self.dc.target_refresh_rate();
         self.run_for(refresh_rate.cycles_per_frame());
+        self.rewind_tick() catch |err| deecy_log.err("Error serializing state: {}", .{err});
     }
 }
 
@@ -1861,6 +1918,7 @@ fn dc_thread_loop_realtime(self: *@This()) void {
     while (self.running) {
         const refresh_rate = self.dc.target_refresh_rate();
         self.run_for(refresh_rate.cycles_per_frame());
+        self.rewind_tick() catch |err| deecy_log.err("Error serializing state: {}", .{err});
         precise_sleep.wait_for_interval(self.io, refresh_rate.ns_per_frame());
     }
 }
