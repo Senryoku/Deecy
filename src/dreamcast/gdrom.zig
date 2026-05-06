@@ -590,7 +590,7 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
         },
         .GD_ByteCountHigh => {
             gdrom_log.debug("Write({}) to ByteCountHigh @{X:0>8} = 0x{X:0>8}", .{ T, addr, value });
-            self.byte_count = (self.byte_count & 0x00FF) | (@as(u16, @intCast(value)) << @intCast(8));
+            self.byte_count = (self.byte_count & 0x00FF) | (@as(u16, @intCast(value)) << 8);
         },
         .GD_DriveSelect => {
             gdrom_log.warn("Unhandled write({}) to DriveSelect @{X:0>8} = 0x{X:0>8}", .{ T, addr, value });

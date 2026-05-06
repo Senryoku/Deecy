@@ -135,14 +135,21 @@ fn display(self: anytype) void {
     inline for (info.@"struct".fields) |field| {
         // Hide "private" (or hidden) fields - Meaning those starting with an underscore.
         if (!std.mem.startsWith(u8, field.name, "_")) {
+            const value = @field(self, field.name);
             switch (@typeInfo(field.type)) {
-                .@"enum" => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {t}", .{ field.name, @field(self, field.name) }),
+                .@"enum" => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {t}", .{ field.name, value }),
                 .@"struct" => {
                     if (zgui.collapsingHeader(field.name ++ " (" ++ @typeName(field.type) ++ ")", .{})) {
-                        display(@field(self, field.name));
+                        display(value);
                     }
                 },
-                else => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {any}", .{ field.name, @field(self, field.name) }),
+                .pointer => |p| {
+                    switch (p.size) {
+                        .slice => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} [{d}]{any}", .{ field.name, value.len, value[0..@min(8, value.len)] }),
+                        else => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {any}", .{ field.name, value }),
+                    }
+                },
+                else => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {any}", .{ field.name, value }),
             }
         }
     }
@@ -1510,6 +1517,28 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             const fb_tex_id = d.gctx.lookupResource(d.renderer.resized_render_to_texture_target.view).?;
             zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(fb_tex_id)) }, .{ .w = @floatFromInt(d.renderer.resolution.width), .h = @floatFromInt(d.renderer.resolution.height) });
         }
+    }
+    zgui.end();
+
+    if (zgui.begin("GDRom", .{})) {
+        zgui.text("State: {t}", .{d.dc.gdrom.state});
+        if (zgui.collapsingHeader("Status Register", .{ .default_open = true }))
+            display(d.dc.gdrom.status_register);
+        if (zgui.collapsingHeader("Control Register", .{ .default_open = true }))
+            display(d.dc.gdrom.control_register);
+        if (zgui.collapsingHeader("Error Register", .{ .default_open = true }))
+            display(d.dc.gdrom.error_register);
+        if (zgui.collapsingHeader("Interrupt Reason Register", .{ .default_open = true }))
+            display(d.dc.gdrom.interrupt_reason_register);
+        zgui.text("Features: DMA={d}", .{d.dc.gdrom.features.DMA});
+        zgui.text("ASC: {X}, ASCQ: {X}", .{ d.dc.gdrom.asc, d.dc.gdrom.ascq });
+        zgui.text("Byte Count: {d}", .{d.dc.gdrom.byte_count});
+        zgui.text("PIO Queue: {d}", .{d.dc.gdrom.pio_data_queue.count});
+        zgui.text("DMA Queue: {d}", .{d.dc.gdrom.dma_data_queue.count});
+        if (zgui.collapsingHeader("Audio State", .{ .default_open = true }))
+            display(d.dc.gdrom.audio_state);
+        if (zgui.collapsingHeader("CD Read State", .{ .default_open = true }))
+            display(d.dc.gdrom.cd_read_state);
     }
     zgui.end();
 
