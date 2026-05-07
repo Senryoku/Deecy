@@ -1539,6 +1539,18 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             display(d.dc.gdrom.audio_state);
         if (zgui.collapsingHeader("CD Read State", .{ .default_open = true }))
             display(d.dc.gdrom.cd_read_state);
+        if (zgui.collapsingHeader("GD DMA Registers", .{ .default_open = true })) {
+            zgui.indent(.{});
+            defer zgui.unindent(.{});
+            zgui.text("SB_GDSTAR:  {X: >8}", .{d.dc.read_hw_register(u32, .SB_GDSTAR)});
+            zgui.text("SB_GDLEN:   {X: >8}", .{d.dc.read_hw_register(u32, .SB_GDLEN)});
+            zgui.text("SB_GDDIR:   {X: >8}", .{d.dc.read_hw_register(u32, .SB_GDDIR)});
+            zgui.text("SB_GDEN:    {X: >8}", .{d.dc.read_hw_register(u32, .SB_GDEN)});
+            zgui.text("SB_GDST:    {X: >8}", .{d.dc.read_hw_register(u32, .SB_GDST)});
+            zgui.text("SB_GDAPRO:  {X: >8}", .{d.dc.read_hw_register(u32, .SB_GDAPRO)});
+            zgui.text("SB_GDSTARD: {X: >8}", .{d.dc.read_hw_register(u32, .SB_GDSTARD)});
+            zgui.text("SB_GDLEND:  {X: >8}", .{d.dc.read_hw_register(u32, .SB_GDLEND)});
+        }
     }
     zgui.end();
 
