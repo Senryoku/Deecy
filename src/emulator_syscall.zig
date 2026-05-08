@@ -1,4 +1,6 @@
-//! Fake syscall to allow program to communicate with the emulator
+//! Fake syscall to allow programs to communicate with the emulator
+
+var selected_game: u32 = 0;
 
 pub fn init(d: *Deecy) void {
     Dreamcast.SH4Module.instructions.EmulatorSyscall.set(@ptrCast(&deecy_syscall), d);
@@ -57,6 +59,7 @@ fn get_game_list(d: *Deecy, cpu: *Dreamcast.SH4) !void {
 
 fn launch_game(d: *Deecy, cpu: *Dreamcast.SH4) !void {
     const game_index = cpu.R(5).*;
+    log.info("LaunchGame({d})", .{game_index});
     if (game_index >= d.ui.disc_files.items.len) return error.InvalidParameter;
     selected_game = game_index;
     d._on_stop_request = launch_selected_game;
@@ -70,9 +73,9 @@ fn refresh_game_list(d: *Deecy, cpu: *Dreamcast.SH4) !void {
     cpu.R(0).* = 0;
 }
 
-var selected_game: u32 = 0;
 fn launch_selected_game(d: *Deecy) void {
     d._on_stop_request = null;
+    if (selected_game >= d.ui.disc_files.items.len) return;
     d.load_and_start(d.ui.disc_files.items[selected_game].path) catch |err| {
         log.err("Failed to launch game: {t}", .{err});
     };

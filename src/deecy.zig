@@ -384,10 +384,10 @@ previous_window_position: struct { x: i32 = 0, y: i32 = 0, w: i32 = 0, h: i32 = 
 shortcuts: Shortcuts,
 
 running: bool = false,
+realtime: bool = true, // Unlimited emulation speed when false.
 _cycles_to_run: i64 = 0,
 _stop_request: bool = false,
 _on_stop_request: ?*const fn (*Self) void = null,
-realtime: bool = true, // Unlimited emulation speed when false.
 _dc_thread: ?std.Thread = null,
 
 enable_jit: bool = true,
@@ -644,7 +644,7 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
         .function = @ptrCast(&Renderer.on_fb_r_sof1),
         .context = self.renderer,
     };
-    @import("launcher.zig").init(self);
+    @import("emulator_syscall.zig").init(self);
 
     self.ui = try .create(self._allocator, self);
     self.debug_ui = try .init(self);
@@ -655,11 +655,6 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
     }
 
     try self.check_save_state_slots();
-
-    if (config.auto_start_launcher) {
-        try self.load_launcher();
-        self.start();
-    }
 
     return self;
 }

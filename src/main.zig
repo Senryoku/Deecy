@@ -198,6 +198,9 @@ pub fn main(init: std.process.Init) !void {
 
         start_immediately = true;
         d.set_display_ui(false);
+    } else if (d.config.auto_start_launcher) {
+        try d.load_launcher();
+        start_immediately = true;
     } else {
         if (skip_bios) {
             // Boot to menu
