@@ -753,7 +753,7 @@ const BlitVertexBufferLayout = [_]wgpu.VertexBufferLayout{.{
     .attributes = &BlitVertexAttributes,
 }};
 
-const TextureAndView = struct {
+pub const TextureAndView = struct {
     texture: zgpu.TextureHandle = .nil,
     view: zgpu.TextureViewHandle = .nil,
 
@@ -4005,7 +4005,9 @@ pub const Renderer = struct {
         self.depth = create_depth_texture(self._gctx, self.resolution, 1);
 
         // Same thing for our screen size framebuffer.
-        self.resized_framebuffer = create_resized_framebuffer_texture(self._gctx, self.resolution, true, false);
+        // NOTE: Copy SRC is only needed by the renderer because wgpu doesn't support reading from storage textures (except for a handful of formats).
+        // NOTE: Copy SRC/DST are required by the rewind preview feature.
+        self.resized_framebuffer = create_resized_framebuffer_texture(self._gctx, self.resolution, true, true);
         self.resized_framebuffer_area1 = create_resized_framebuffer_texture(self._gctx, self.resolution, false, false);
         self.resized_framebuffer_copy = create_resized_framebuffer_texture(self._gctx, self.resolution, false, true);
         // Intermediate buffer used when rendering to a texture. We don't want to override resized_framebuffer since it is used for blitting.
@@ -4091,7 +4093,7 @@ pub const Renderer = struct {
                 .render_attachment = true,
                 .texture_binding = true,
                 .storage_binding = true,
-                .copy_src = copy_src, // FIXME: This should not be needed (wgpu doesn't support reading from storage textures...)
+                .copy_src = copy_src,
                 .copy_dst = copy_dst,
             },
             .size = .{

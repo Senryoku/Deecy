@@ -1432,7 +1432,7 @@ pub fn draw_game_library(self: *@This()) !void {
                             _ = zgui.tableNextColumn();
                             if (entry.view) |view| {
                                 const uv = 0.25 * RowHeight / ImageWidth;
-                                zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(((self.deecy.gctx.lookupResource(view).?)))) }, .{ .w = ImageWidth, .h = RowHeight, .uv0 = .{ 0.5, 0.5 - uv }, .uv1 = .{ 1.0, 0.5 + uv } });
+                                zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(self.deecy.gctx.lookupResource(view).?)) }, .{ .w = ImageWidth, .h = RowHeight, .uv0 = .{ 0.5, 0.5 - uv }, .uv1 = .{ 1.0, 0.5 + uv } });
                             }
                             _ = zgui.tableNextColumn();
                             zgui.alignTextToFramePadding();

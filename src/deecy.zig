@@ -30,7 +30,8 @@ const Disc = DreamcastModule.GDROM.Disc;
 pub const HostPaths = DreamcastModule.HostPaths;
 const PreciseSleep = @import("precise_sleep.zig");
 
-pub const Renderer = @import("./renderer.zig").Renderer;
+pub const RendererModule = @import("./renderer.zig");
+pub const Renderer = RendererModule.Renderer;
 
 pub const UI = @import("./deecy_ui.zig");
 const DebugUI = @import("./debug_ui.zig");
@@ -434,11 +435,20 @@ debug_ui: DebugUI = undefined,
 save_state_slots: [MaxSaveStates]bool = .{ false, false, false, false },
 
 rewind: struct {
+    const Snapshot = struct {
+        preview: RendererModule.TextureAndView,
+        data: []u8,
+
+        pub fn deinit(self: *@This(), allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) void {
+            self.preview.release(gctx);
+            allocator.free(self.data);
+        }
+    };
     enabled: bool = true,
     tick: usize = 0,
     period: usize = 60,
     older: usize = 0,
-    states: std.ArrayList([]u8) = .empty,
+    states: std.ArrayList(Snapshot) = .empty,
 } = .{},
 
 io: std.Io,
@@ -686,7 +696,7 @@ pub fn destroy(self: *@This()) void {
 
     self.dc.destroy();
 
-    for (self.rewind.states.items) |state| self._allocator.free(state);
+    for (self.rewind.states.items) |*snapshot| snapshot.deinit(self._allocator, self.gctx);
     self.rewind.states.deinit(self._allocator);
 
     self.debug_ui.deinit();
@@ -1567,7 +1577,7 @@ pub fn draw_ui(self: *@This()) !void {
     {
         // FIXME: Not sure if this is needed, but omitting it can cause a crash on the first frame when submitting the UI commands.
         //        Either newFrame creates some GPU resources on startup, or this just hides another issue by pure luck.
-        self.gctx_queue_mutex.lockUncancelable(self.io);
+        try self.gctx_queue_mutex.lock(self.io);
         defer self.gctx_queue_mutex.unlock(self.io);
         const fb_size = self.window.getFramebufferSize();
         zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
@@ -1694,7 +1704,32 @@ pub fn draw_ui(self: *@This()) !void {
             const static = struct {
                 var frame_idx: i32 = 0;
             };
-            if (zgui.sliderInt("Frame", .{ .min = 0, .max = @intCast(self.rewind.states.items.len - 1), .v = &static.frame_idx })) {}
+            const MaxPreviews = 5;
+
+            const stride = @as(f32, @floatFromInt(self.rewind.states.items.len - 1)) / (MaxPreviews - 1);
+            for (0..MaxPreviews) |idx| {
+                const i: u32 = @trunc(stride * @as(f32, @floatFromInt(idx)));
+                zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(self.gctx.lookupResource(self.rewind.states.items[i].preview.view).?)) }, .{ .w = 100, .h = 75, .uv0 = .{ 0.0, 0.0 }, .uv1 = .{ 1.0, 1.0 } });
+                if (idx < MaxPreviews - 1)
+                    zgui.sameLine(.{ .spacing = 0 });
+            }
+            if (zgui.sliderInt("Frame", .{ .min = 0, .max = @intCast(self.rewind.states.items.len - 1), .v = &static.frame_idx })) {
+                // Fullscreen preview. Re-uses the renderer framebuffer for simplicity.
+                const commands = commands: {
+                    try self.gctx_queue_mutex.lock(self.io);
+                    defer self.gctx_queue_mutex.unlock(self.io);
+                    const encoder = self.gctx.device.createCommandEncoder(null);
+                    defer encoder.release();
+                    encoder.copyTextureToTexture(
+                        .{ .texture = self.gctx.lookupResource(self.rewind.states.items[@intCast(static.frame_idx)].preview.texture).? },
+                        .{ .texture = self.gctx.lookupResource(self.renderer.resized_framebuffer.texture).? },
+                        .{ .width = self.renderer.resolution.width, .height = self.renderer.resolution.height },
+                    );
+                    break :commands encoder.finish(null);
+                };
+                defer commands.release();
+                self.gctx.submit(&.{commands});
+            }
             if (zgui.button("Rewind", .{})) {
                 try self.rewind_to(@intCast(static.frame_idx));
             }
@@ -1872,7 +1907,7 @@ pub fn run_for(self: *@This(), sh4_cycles: u64) void {
 }
 
 fn rewind_to(self: *@This(), index: u32) !void {
-    var reader = std.Io.Reader.fixed(self.rewind.states.items[index]);
+    var reader = std.Io.Reader.fixed(self.rewind.states.items[index].data);
     try self.reset();
     try self.dc.deserialize(&reader);
     try reader.readSliceAll(std.mem.asBytes(&self._cycles_to_run));
@@ -1883,7 +1918,7 @@ fn rewind_tick(self: *@This()) !void {
     if (self.rewind.enabled) {
         if (self.rewind.tick % self.rewind.period == 0) {
             var allocating_writer = if (self.rewind.states.items.len >= MaxStates) // Re-use oldest state memory
-                std.Io.Writer.Allocating.initOwnedSlice(self._allocator, self.rewind.states.items[self.rewind.older])
+                std.Io.Writer.Allocating.initOwnedSlice(self._allocator, self.rewind.states.items[self.rewind.older].data)
             else
                 try std.Io.Writer.Allocating.initCapacity(self._allocator, 32 * 1024 * 1024);
             defer allocating_writer.deinit();
@@ -1891,12 +1926,56 @@ fn rewind_tick(self: *@This()) !void {
             _ = try self.dc.serialize(writer);
             _ = try writer.write(std.mem.asBytes(&self._cycles_to_run));
             try writer.flush();
+            const preview = preview: {
+                try self.gctx_queue_mutex.lock(self.io);
+                defer self.gctx_queue_mutex.unlock(self.io);
+
+                // FIXME: Handle resolution changes.
+                const target: RendererModule.TextureAndView = if (self.rewind.states.items.len >= MaxStates)
+                    self.rewind.states.items[self.rewind.older].preview
+                else
+                    .init(self.gctx, self.gctx.createTexture(
+                        .{
+                            .usage = .{
+                                .texture_binding = true,
+                                .copy_src = true,
+                                .copy_dst = true,
+                            },
+                            .size = .{
+                                .width = self.renderer.resolution.width,
+                                .height = self.renderer.resolution.height,
+                                .depth_or_array_layers = 1,
+                            },
+                            .format = .bgra8_unorm,
+                            .mip_level_count = 1,
+                            .label = .init("Rewind Preview"),
+                        },
+                    ));
+
+                const commands = commands: {
+                    const encoder = self.gctx.device.createCommandEncoder(null);
+                    defer encoder.release();
+                    encoder.copyTextureToTexture(
+                        .{ .texture = self.gctx.lookupResource(self.renderer.resized_framebuffer.texture).? },
+                        .{ .texture = self.gctx.lookupResource(target.texture).? },
+                        .{ .width = self.renderer.resolution.width, .height = self.renderer.resolution.height },
+                    );
+                    break :commands encoder.finish(null);
+                };
+                defer commands.release();
+                self.gctx.submit(&.{commands});
+
+                break :preview target;
+            };
             if (self.rewind.states.items.len >= MaxStates) {
                 // self._allocator.free(self.rewind.states.items[self.rewind.older]); // Re-used
-                self.rewind.states.items[self.rewind.older] = try allocating_writer.toOwnedSlice();
+                self.rewind.states.items[self.rewind.older].data = try allocating_writer.toOwnedSlice();
                 self.rewind.older = (self.rewind.older + 1) % self.rewind.states.items.len;
             } else {
-                try self.rewind.states.append(self._allocator, try allocating_writer.toOwnedSlice());
+                try self.rewind.states.append(self._allocator, .{
+                    .data = try allocating_writer.toOwnedSlice(),
+                    .preview = preview,
+                });
             }
         }
         self.rewind.tick += 1;
