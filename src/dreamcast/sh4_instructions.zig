@@ -365,18 +365,20 @@ pub const EmulatorSyscall = struct {
     var _context: ?*anyopaque = null;
 
     pub fn set(function: *const fn (?*anyopaque, *sh4.SH4, sh4.Instr) void, context: ?*anyopaque) void {
-        EmulatorSyscall._function = function;
-        EmulatorSyscall._context = context;
+        std.debug.assert(_function == null);
+        std.debug.assert(_context == null);
+        _function = function;
+        _context = context;
     }
 
     pub fn clear() void {
-        EmulatorSyscall._function = null;
-        EmulatorSyscall._context = null;
+        _function = null;
+        _context = null;
     }
 
     pub fn call(cpu: *sh4.SH4, instr: sh4.Instr) !void {
-        if (EmulatorSyscall._function) |func| {
-            func(EmulatorSyscall._context, cpu, instr);
+        if (_function) |func| {
+            func(_context, cpu, instr);
         } else {
             std.log.warn("Emulator syscall instruction without callback (R4={X:0>8}, R5={X:0>8}, R6={X:0>8}, R7={X:0>8}).", .{ cpu.R(4).*, cpu.R(5).*, cpu.R(6).*, cpu.R(7).* });
             cpu.R(0).* = 0xFFFFFFFF;

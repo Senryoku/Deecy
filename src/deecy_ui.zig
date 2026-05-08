@@ -590,10 +590,8 @@ pub fn draw(self: *@This()) !void {
                 }
             }
             zgui.separator();
-            // FIXME: Find a better name for both of these options (and maybe a better place too).
-            if (zgui.menuItem("Start Launcher", .{}))
+            if (zgui.menuItem("Start Game Launcher", .{}))
                 d.start_launcher();
-            _ = zgui.checkbox("Auto Start", .{ .v = &d.config.auto_start_launcher });
             zgui.separator();
             if (zgui.beginMenu("Log Output", true)) {
                 const initial_value = d.config.log_output;
@@ -640,25 +638,6 @@ pub fn draw(self: *@This()) !void {
             var realtime = self.deecy.realtime;
             if (zgui.checkbox("Realtime", .{ .v = &realtime }))
                 self.deecy.set_realtime(realtime);
-            zgui.separator();
-
-            if (menu_from_enum("Region", &d.config.region, .{ .enabled = !d.running })) {
-                try d.dc.load_flash(d.io, d.config.region.to_dreamcast(), d.config.bios_config);
-            }
-            zgui.separator();
-
-            if (menu_from_enum("Cable", &d.config.video_cable, .{})) {
-                d.dc.cable_type = d.config.video_cable.to_dreamcast();
-            }
-            if (zgui.beginMenu("Bios Config", !d.running)) {
-                if (menu_from_enum("Language", &d.config.bios_config.language, .{}))
-                    try d.dc.load_flash(d.io, d.config.region.to_dreamcast(), d.config.bios_config);
-                if (menu_from_enum("Sound Mode", &d.config.bios_config.sound_mode, .{}))
-                    try d.dc.load_flash(d.io, d.config.region.to_dreamcast(), d.config.bios_config);
-                if (menu_from_enum("Auto Start", &d.config.bios_config.auto_start, .{}))
-                    try d.dc.load_flash(d.io, d.config.region.to_dreamcast(), d.config.bios_config);
-                zgui.endMenu();
-            }
             zgui.separator();
 
             if (zgui.beginMenu("Save States", true)) {
@@ -811,6 +790,30 @@ pub fn draw(self: *@This()) !void {
         zgui.setNextWindowPos(.{ .x = 1408, .y = 32, .cond = .first_use_ever });
         if (zgui.begin("Settings", .{ .popen = &self.deecy.config.display_settings, .flags = .{ .no_collapse = true } })) {
             if (zgui.beginTabBar("SettingsTabBar", .{})) {
+                if (zgui.beginTabItem("General", .{})) {
+                    _ = zgui.checkbox("Start in Game Launcher", .{ .v = &d.config.auto_start_launcher });
+                    zgui.separator();
+                    {
+                        zgui.beginDisabled(.{ .disabled = d.running and builtin.mode != .Debug });
+                        defer zgui.endDisabled();
+                        var flash_updated = false;
+                        zgui.textUnformatted("Dreamcast Configuration");
+                        flash_updated = zgui.comboFromEnum("Region", &d.config.region) or flash_updated;
+                        zgui.setItemTooltip("Auto: Uses the region of the currently loaded game.", .{});
+                        if (zgui.comboFromEnum("Cable", &d.config.video_cable))
+                            d.dc.cable_type = d.config.video_cable.to_dreamcast();
+                        zgui.setItemTooltip("Auto: VGA by default, unless the game does not support it.", .{});
+
+                        zgui.separator();
+                        zgui.textUnformatted("Bios Configuration");
+                        flash_updated = zgui.comboFromEnum("Language", &d.config.bios_config.language) or flash_updated;
+                        flash_updated = zgui.comboFromEnum("Sound Mode", &d.config.bios_config.sound_mode) or flash_updated;
+                        flash_updated = zgui.comboFromEnum("Auto Start", &d.config.bios_config.auto_start) or flash_updated;
+                        if (flash_updated)
+                            try d.dc.load_flash(d.io, d.config.region.to_dreamcast(), d.config.bios_config);
+                    }
+                    zgui.endTabItem();
+                }
                 if (zgui.beginTabItem("Renderer", .{})) {
                     const dropdown_size = 196.0;
                     var fullscreen = self.deecy.config.fullscreen;
@@ -1392,20 +1395,8 @@ pub fn draw_game_library(self: *@This()) !void {
             try self.deecy.launch_async(refresh_games, .{self});
         }
         zgui.sameLine(.{});
-        if (zgui.button(Icons.FolderOpen, .{}) or change_dir) {
-            // Workaround for fullscreen on Windows: The dialog appears behind the fullscreen window and can't be interacted with.
-            const exit_fullscreen = builtin.os.tag == .windows and self.deecy.config.fullscreen;
-            if (exit_fullscreen) self.deecy.toggle_fullscreen();
-            defer if (exit_fullscreen) self.deecy.toggle_fullscreen();
-
-            const open_path = try nfd.openFolderDialog(null);
-            if (open_path) |path| {
-                defer nfd.freePath(path);
-                if (d.config.game_directory) |old_dir| self.allocator.free(old_dir);
-                d.config.game_directory = try self.allocator.dupe(u8, path);
-                try self.deecy.launch_async(refresh_games, .{self});
-            }
-        }
+        if (zgui.button(Icons.FolderOpen, .{}) or change_dir)
+            try self.select_game_directory();
         zgui.sameLine(.{ .offset_from_start_x = zgui.getContentRegionAvail()[0] - 80.0 });
         zgui.setNextItemWidth(80.0);
         _ = zgui.comboFromEnum("##Display", &d.config.library_display);
@@ -1542,5 +1533,20 @@ pub fn draw_game_library(self: *@This()) !void {
         }
         if (open_game_settings) self.game_settings.open();
         try self.game_settings.draw(self.allocator, self.deecy.io);
+    }
+}
+
+fn select_game_directory(self: *@This()) !void {
+    // Workaround for fullscreen on Windows: The dialog appears behind the fullscreen window and can't be interacted with.
+    const exit_fullscreen = builtin.os.tag == .windows and self.deecy.config.fullscreen;
+    if (exit_fullscreen) self.deecy.toggle_fullscreen();
+    defer if (exit_fullscreen) self.deecy.toggle_fullscreen();
+
+    const open_path = try nfd.openFolderDialog(null);
+    if (open_path) |path| {
+        defer nfd.freePath(path);
+        if (self.deecy.config.game_directory) |old_dir| self.allocator.free(old_dir);
+        self.deecy.config.game_directory = try self.allocator.dupe(u8, path);
+        try self.deecy.launch_async(refresh_games, .{self});
     }
 }
