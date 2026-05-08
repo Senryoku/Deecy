@@ -71,6 +71,7 @@ pub const Action = struct {
         @"Toggle Fullscreen",
         @"Toggle Realtime",
         @"Toggle UI",
+        @"Start Launcher",
     };
     name: Name,
     callback: *const fn (*Deecy) void,
@@ -129,6 +130,7 @@ const Actions = actions_table: {
         .{ .@"Load State 2", Deecy.load_state_idx(1) },
         .{ .@"Load State 3", Deecy.load_state_idx(2) },
         .{ .@"Load State 4", Deecy.load_state_idx(3) },
+        .{ .@"Start Launcher", Deecy.start_launcher },
     }) |entry| {
         table[@intFromEnum(entry[0])] = .{ .name = entry[0], .callback = entry[1] };
     }
