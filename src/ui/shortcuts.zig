@@ -72,6 +72,10 @@ pub const Action = struct {
         @"Toggle Realtime",
         @"Toggle UI",
         @"Start Launcher",
+        @"Rewind - Previous Snapshot",
+        @"Rewind - Next Snapshot",
+        @"Rewind - Confirm",
+        @"Rewind - Cancel",
     };
     name: Name,
     callback: *const fn (*Deecy) void,
@@ -131,6 +135,10 @@ const Actions = actions_table: {
         .{ .@"Load State 3", Deecy.load_state_idx(2) },
         .{ .@"Load State 4", Deecy.load_state_idx(3) },
         .{ .@"Start Launcher", Deecy.start_launcher },
+        .{ .@"Rewind - Previous Snapshot", Deecy.previous_snapshot },
+        .{ .@"Rewind - Next Snapshot", Deecy.next_snapshot },
+        .{ .@"Rewind - Confirm", Deecy.rewind_confirm },
+        .{ .@"Rewind - Cancel", Deecy.rewind_cancel },
     }) |entry| {
         table[@intFromEnum(entry[0])] = .{ .name = entry[0], .callback = entry[1] };
     }
