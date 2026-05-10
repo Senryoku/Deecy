@@ -792,25 +792,39 @@ pub fn draw(self: *@This()) !void {
             if (zgui.beginTabBar("SettingsTabBar", .{})) {
                 if (zgui.beginTabItem("General", .{})) {
                     _ = zgui.checkbox("Start in Game Launcher", .{ .v = &d.config.auto_start_launcher });
-                    zgui.separator();
                     {
                         zgui.beginDisabled(.{ .disabled = d.running and builtin.mode != .Debug });
                         defer zgui.endDisabled();
                         var flash_updated = false;
-                        zgui.textUnformatted("Dreamcast Configuration");
+                        zgui.separatorText("Dreamcast Configuration");
                         flash_updated = zgui.comboFromEnum("Region", &d.config.region) or flash_updated;
                         zgui.setItemTooltip("Auto: Uses the region of the currently loaded game.", .{});
                         if (zgui.comboFromEnum("Cable", &d.config.video_cable))
                             d.dc.cable_type = d.config.video_cable.to_dreamcast();
                         zgui.setItemTooltip("Auto: VGA by default, unless the game does not support it.", .{});
 
-                        zgui.separator();
-                        zgui.textUnformatted("Bios Configuration");
+                        zgui.separatorText("Bios Configuration");
                         flash_updated = zgui.comboFromEnum("Language", &d.config.bios_config.language) or flash_updated;
                         flash_updated = zgui.comboFromEnum("Sound Mode", &d.config.bios_config.sound_mode) or flash_updated;
                         flash_updated = zgui.comboFromEnum("Auto Start", &d.config.bios_config.auto_start) or flash_updated;
                         if (flash_updated)
                             try d.dc.load_flash(d.io, d.config.region.to_dreamcast(), d.config.bios_config);
+                    }
+                    {
+                        zgui.separatorText("Rewind");
+                        _ = zgui.checkbox("Enabled", .{ .v = &d.config.rewind.enabled });
+                        zgui.beginDisabled(.{ .disabled = !d.config.rewind.enabled });
+                        defer zgui.endDisabled();
+                        var period: i32 = @intCast(d.config.rewind.period);
+                        if (zgui.inputInt("Period (s)", .{ .v = &period, .step = 1 })) {
+                            d.config.rewind.period = @intCast(@max(1, period));
+                        }
+                        var max_snapshots: i32 = @intCast(d.config.rewind.max_snapshots);
+                        if (zgui.inputInt("Max. Snapshots", .{ .v = &max_snapshots, .step = 1 })) {
+                            d.config.rewind.max_snapshots = @intCast(@max(1, max_snapshots));
+                        }
+                        _ = zgui.checkbox("Compress", .{ .v = &d.config.rewind.compress });
+                        _ = zgui.checkbox("Linear timeline", .{ .v = &d.config.rewind.linear_timeline });
                     }
                     zgui.endTabItem();
                 }
@@ -828,7 +842,7 @@ pub fn draw(self: *@This()) !void {
                         zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
                         return;
                     }
-                    zgui.text("Curent Resolution: {d}x{d}", .{ d.renderer.resolution.width, d.renderer.resolution.height });
+                    zgui.text("Current Resolution: {d}x{d}", .{ d.renderer.resolution.width, d.renderer.resolution.height });
                     var resolution_update = false;
                     var resolution: enum(u8) { Native = 1, x2 = 2, x3 = 3, x4 = 4, x5 = 5, x6 = 6 } = @enumFromInt(d.renderer.resolution.width / d.config.renderer.aspect_ratio.width());
                     zgui.setNextItemWidth(dropdown_size);
@@ -906,10 +920,9 @@ pub fn draw(self: *@This()) !void {
                             }
                             zgui.endCombo();
                         }
-                        zgui.separator();
                     }
 
-                    zgui.text("Experimental settings", .{});
+                    zgui.separatorText("Experimental settings");
                     zgui.setNextItemWidth(dropdown_size);
                     _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
                     _ = zgui.checkbox("Framebuffer Emulation", .{ .v = &d.config.renderer.framebuffer_emulation });
@@ -1266,9 +1279,8 @@ pub fn draw(self: *@This()) !void {
                         }
                         zgui.endTable();
                     }
-                    zgui.separator();
                     {
-                        zgui.textDisabled("Add shortcut:", .{});
+                        zgui.separatorText("Add shortcut");
                         const static = struct {
                             var action = Shortcuts.Action.Name.Screenshot;
                             var key: ?Shortcuts.Key = null;

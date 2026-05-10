@@ -2231,6 +2231,7 @@ pub fn zglfw_key_to_dc_key(key: zglfw.Key) ?DreamcastModule.Maple.Keyboard.KeySc
 }
 
 pub fn rewind_confirm(self: *@This()) void {
+    if (!self.config.rewind.enabled) return;
     self.rewind_confirm_impl() catch |err| {
         deecy_log.err("Failed to rewind: {}", .{err});
         return;
@@ -2238,100 +2239,117 @@ pub fn rewind_confirm(self: *@This()) void {
 }
 
 fn rewind_confirm_impl(self: *@This()) !void {
-    if (self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
-        try self.dc.reset();
-        self.renderer.reset();
-        var reader = std.Io.Reader.fixed(self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].data);
-        try self.dc.deserialize(&reader);
-        try reader.readSliceAll(std.mem.asBytes(&self._cycles_to_run));
-        try self.rewind.discard_after(self._allocator, self.gctx, self.rewind.selected_snapshot);
+    if (self.running) {
+        self.pause();
+    } else {
+        if (self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
+            try self.dc.reset();
+            self.renderer.reset();
+            var reader = std.Io.Reader.fixed(self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].data);
+            try self.dc.deserialize(&reader);
+            try reader.readSliceAll(std.mem.asBytes(&self._cycles_to_run));
+            try self.rewind.discard_after(self._allocator, self.gctx, self.rewind.selected_snapshot);
+        }
+        self.start();
     }
-    self.start();
 }
 
 pub fn rewind_cancel(self: *@This()) void {
-    self.start();
+    if (!self.config.rewind.enabled) return;
+    if (self.running) {
+        self.pause();
+    } else {
+        self.start();
+    }
 }
 
 pub fn rewind_tick(self: *@This()) !void {
-    if (self.config.rewind.enabled) {
-        if (self.rewind.snapshots.items.len > 0 and self.dc._global_cycles < self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1].cycle) {
-            // FIXME: Pretty sure I'm not reseting the history correctly in all cases yet, this should make it safe for now.
-            deecy_log.err("Inconsistent rewind state: {} < {}", .{ self.dc._global_cycles, self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1].cycle });
-            self.rewind.clear(self._allocator, self.gctx);
-        }
-        if (self.rewind.snapshots.items.len == 0 or (self.dc._global_cycles - self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1].cycle) / Dreamcast.SH4Clock >= self.config.rewind.period) {
-            var allocating_writer = if (self.rewind.snapshots.items.len >= self.config.rewind.max_snapshots) // Re-use oldest snapshot memory
-                std.Io.Writer.Allocating.initOwnedSlice(self._allocator, self.rewind.snapshots.items[0].data)
+    if (!self.config.rewind.enabled) return;
+
+    if (self.rewind.snapshots.items.len > 0 and self.dc._global_cycles < self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1].cycle) {
+        // FIXME: Pretty sure I'm not reseting the history correctly in all cases yet, this should make it safe for now.
+        deecy_log.err("Inconsistent rewind state: {} < {}", .{ self.dc._global_cycles, self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1].cycle });
+        self.rewind.clear(self._allocator, self.gctx);
+    }
+    if (self.rewind.snapshots.items.len == 0 or (self.dc._global_cycles - self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1].cycle) / Dreamcast.SH4Clock >= self.config.rewind.period) {
+        var allocating_writer = if (self.rewind.snapshots.items.len >= self.config.rewind.max_snapshots) // Re-use oldest snapshot memory
+            std.Io.Writer.Allocating.initOwnedSlice(self._allocator, self.rewind.snapshots.items[0].data)
+        else
+            try std.Io.Writer.Allocating.initCapacity(self._allocator, 32 * 1024 * 1024);
+        defer allocating_writer.deinit();
+        var writer = &allocating_writer.writer;
+        _ = try self.dc.serialize(writer);
+        _ = try writer.write(std.mem.asBytes(&self._cycles_to_run));
+        try writer.flush();
+        const preview = preview: {
+            try self.gctx_queue_mutex.lock(self.io);
+            defer self.gctx_queue_mutex.unlock(self.io);
+
+            var target: RendererModule.TextureAndView = if (self.rewind.snapshots.items.len >= self.config.rewind.max_snapshots)
+                self.rewind.snapshots.items[0].preview
             else
-                try std.Io.Writer.Allocating.initCapacity(self._allocator, 32 * 1024 * 1024);
-            defer allocating_writer.deinit();
-            var writer = &allocating_writer.writer;
-            _ = try self.dc.serialize(writer);
-            _ = try writer.write(std.mem.asBytes(&self._cycles_to_run));
-            try writer.flush();
-            const preview = preview: {
-                try self.gctx_queue_mutex.lock(self.io);
-                defer self.gctx_queue_mutex.unlock(self.io);
+                Rewind.create_preview_texture(self.gctx, self.renderer.resolution);
 
-                var target: RendererModule.TextureAndView = if (self.rewind.snapshots.items.len >= self.config.rewind.max_snapshots)
-                    self.rewind.snapshots.items[0].preview
-                else
-                    Rewind.create_preview_texture(self.gctx, self.renderer.resolution);
+            // Might have been invalidated by a resolution change.
+            if (target.texture.id == 0)
+                target = Rewind.create_preview_texture(self.gctx, self.renderer.resolution);
 
-                // Might have been invalidated by a resolution change.
-                if (target.texture.id == 0)
-                    target = Rewind.create_preview_texture(self.gctx, self.renderer.resolution);
+            Rewind.copy_texture(self.gctx, self.renderer.resized_framebuffer.texture, target.texture, self.renderer.resolution);
 
-                Rewind.copy_texture(self.gctx, self.renderer.resized_framebuffer.texture, target.texture, self.renderer.resolution);
-
-                break :preview target;
-            };
-            if (self.rewind.snapshots.items.len >= self.config.rewind.max_snapshots) {
-                // Shift all snapshots (loosing the oldest) and insert the new one in place.
-                // FIXME: Not ideal, but simplifies everything else.
-                for (0..self.rewind.snapshots.items.len - 1) |idx| {
-                    self.rewind.snapshots.items[idx] = self.rewind.snapshots.items[idx + 1];
-                }
-                self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1] = .{
-                    .preview = preview,
-                    .data = try allocating_writer.toOwnedSlice(),
-                    .cycle = self.dc._global_cycles,
-                };
-            } else {
-                try self.rewind.snapshots.append(self._allocator, .{
-                    .data = try allocating_writer.toOwnedSlice(),
-                    .preview = preview,
-                    .cycle = self.dc._global_cycles,
-                });
+            break :preview target;
+        };
+        if (self.rewind.snapshots.items.len >= self.config.rewind.max_snapshots) {
+            // Shift all snapshots (loosing the oldest) and insert the new one in place.
+            // FIXME: Not ideal, but simplifies everything else.
+            for (0..self.rewind.snapshots.items.len - 1) |idx| {
+                self.rewind.snapshots.items[idx] = self.rewind.snapshots.items[idx + 1];
             }
+            self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1] = .{
+                .preview = preview,
+                .data = try allocating_writer.toOwnedSlice(),
+                .cycle = self.dc._global_cycles,
+            };
+        } else {
+            try self.rewind.snapshots.append(self._allocator, .{
+                .data = try allocating_writer.toOwnedSlice(),
+                .preview = preview,
+                .cycle = self.dc._global_cycles,
+            });
         }
     }
 }
 
 pub fn previous_snapshot(self: *@This()) void {
+    if (!self.config.rewind.enabled) return;
     if (self.running) {
         self.pause();
+        if (self.rewind.snapshots.items.len > 0) {
+            self.rewind.selected_snapshot = @intCast(self.rewind.snapshots.items.len - 1);
+            // FIXME: Doesn't work as expected.
+            self.rewind.update_preview(self.gctx, self.renderer.resized_framebuffer.texture, self.renderer.resolution);
+        }
     } else {
         if (self.rewind.selected_snapshot > 0) {
             self.rewind.selected_snapshot -= 1;
-            self.rewind_update_preview();
+            self.rewind.update_preview(self.gctx, self.renderer.resized_framebuffer.texture, self.renderer.resolution);
         }
     }
 }
 
 pub fn next_snapshot(self: *@This()) void {
+    if (!self.config.rewind.enabled) return;
     if (self.running) {
         self.pause();
     } else {
         if (self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
             self.rewind.selected_snapshot += 1;
-            self.rewind_update_preview();
+            self.rewind.update_preview(self.gctx, self.renderer.resized_framebuffer.texture, self.renderer.resolution);
         }
     }
 }
 
 fn draw_rewind_ui(self: *@This()) !void {
+    if (!self.config.rewind.enabled) return;
     if (!self.running and self.rewind.snapshots.items.len > 0) {
         if (zgui.begin("Rewind", .{})) {
             const DisplayedPreviews = 5;
@@ -2361,7 +2379,7 @@ fn draw_rewind_ui(self: *@This()) !void {
             }
             zgui.setNextItemWidth(DisplayedPreviews * PreviewWidth);
             if (zgui.sliderInt("Frame", .{ .min = 0, .max = @intCast(self.rewind.snapshots.items.len - 1), .v = &self.rewind.selected_snapshot })) {
-                self.rewind_update_preview();
+                self.rewind.update_preview(self.gctx, self.renderer.resized_framebuffer.texture, self.renderer.resolution);
             }
             if (zgui.button("Cancel", .{})) {
                 self.rewind_cancel();
@@ -2372,16 +2390,5 @@ fn draw_rewind_ui(self: *@This()) !void {
             }
         }
         zgui.end();
-    }
-}
-
-fn rewind_update_preview(self: *@This()) void {
-    const texture = if (self.rewind.selected_snapshot < self.rewind.snapshots.items.len)
-        self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].preview.texture
-    else
-        self.rewind.current_frame.texture;
-    if (texture.id != 0) {
-        // Fullscreen preview. Re-uses the renderer framebuffer for simplicity.
-        Rewind.copy_texture(self.gctx, texture, self.renderer.resized_framebuffer.texture, self.renderer.resolution);
     }
 }

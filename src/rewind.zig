@@ -39,10 +39,21 @@ pub fn discard_after(self: *@This(), allocator: std.mem.Allocator, gctx: *zgpu.G
 
 /// Should be called every time the UI re-appears
 pub fn ui_init(self: *@This(), gctx: *zgpu.GraphicsContext, current_frame: zgpu.TextureHandle, resolution: Resolution) void {
-    self.selected_snapshot = @intCast(@max(1, self.snapshots.items.len) - 1);
+    self.selected_snapshot = @intCast(self.snapshots.items.len);
     if (self.current_frame.texture.id == 0)
         self.current_frame = create_preview_texture(gctx, resolution);
     copy_texture(gctx, current_frame, self.current_frame.texture, resolution);
+}
+
+pub fn update_preview(self: *@This(), gctx: *zgpu.GraphicsContext, current_frame: zgpu.TextureHandle, resolution: Resolution) void {
+    const texture = if (self.selected_snapshot < self.snapshots.items.len)
+        self.snapshots.items[@intCast(self.selected_snapshot)].preview.texture
+    else
+        self.current_frame.texture;
+    if (texture.id != 0) {
+        // Fullscreen preview. Re-uses the renderer framebuffer for simplicity.
+        copy_texture(gctx, texture, current_frame, resolution);
+    }
 }
 
 pub fn on_resolution_change(self: *@This(), gctx: *zgpu.GraphicsContext) !void {
