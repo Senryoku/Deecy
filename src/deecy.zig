@@ -2351,42 +2351,124 @@ pub fn next_snapshot(self: *@This()) void {
 fn draw_rewind_ui(self: *@This()) !void {
     if (!self.config.rewind.enabled) return;
     if (!self.running and self.rewind.snapshots.items.len > 0) {
-        if (zgui.begin("Rewind", .{})) {
-            const DisplayedPreviews = 5;
+        const window_size = self.window.getFramebufferSize();
+        zgui.setNextWindowPos(.{
+            .cond = .always,
+            .x = @as(f32, @floatFromInt(window_size[0])) / 2.0,
+            .pivot_x = 0.5,
+            .y = @as(f32, @floatFromInt(window_size[1])) - 20.0,
+            .pivot_y = 1.0,
+        });
+        zgui.pushStyleVar2f(.{ .idx = .window_padding, .v = .{ 32.0, 4.0 } });
+        zgui.pushStyleVar1f(.{ .idx = .window_border_size, .v = 0.0 });
+        defer zgui.popStyleVar(.{ .count = 2 });
+        zgui.pushStyleColor4f(.{ .idx = .window_bg, .c = .{ 0.0, 0.0, 0.0, 0.7 } });
+        defer zgui.popStyleColor(.{ .count = 1 });
+        if (zgui.begin("Rewind", .{ .flags = .{
+            .no_title_bar = true,
+            .no_resize = true,
+            .no_scrollbar = true,
+            .no_collapse = true,
+            .always_auto_resize = true,
+        } })) {
+            const DisplayedPreviews = 6;
             const PreviewWidth = 100;
-            const total_previews: f32 = @floatFromInt(self.rewind.snapshots.items.len); // The number of snapshots, plus the current frame.
-            const stride: f32 = total_previews / (DisplayedPreviews - 1);
-            for (0..DisplayedPreviews) |idx| {
-                const i: u32 = @trunc(stride * @as(f32, @floatFromInt(idx)));
-                const texture_view = if (i < self.rewind.snapshots.items.len) self.rewind.snapshots.items[i].preview.view else self.rewind.current_frame.view;
-                if (self.gctx.lookupResource(texture_view)) |tex_id| {
-                    zgui.image(
-                        .{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(tex_id)) },
-                        .{ .w = PreviewWidth, .h = PreviewWidth * (3.0 / 4.0), .uv0 = .{ 0.0, 0.0 }, .uv1 = .{ 1.0, 1.0 } },
-                    );
-                } else {
-                    zgui.dummy(.{ .w = PreviewWidth, .h = PreviewWidth * (3.0 / 4.0) });
+            const PreviewHeight = PreviewWidth * (3.0 / 4.0);
+            const timelime_position = zgui.getCursorScreenPos();
+            const total_positions: f32 = @floatFromInt(self.rewind.snapshots.items.len); // The number of snapshots, plus the current frame.
+            {
+                zgui.beginGroup();
+                defer zgui.endGroup();
+                const stride: f32 = total_positions / (DisplayedPreviews - 1);
+                for (0..DisplayedPreviews) |idx| {
+                    const i: u32 = @trunc(stride * @as(f32, @floatFromInt(idx)));
+                    const texture_view = if (i < self.rewind.snapshots.items.len) self.rewind.snapshots.items[i].preview.view else self.rewind.current_frame.view;
+                    if (self.gctx.lookupResource(texture_view)) |tex_id| {
+                        zgui.image(
+                            .{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(tex_id)) },
+                            .{ .w = PreviewWidth, .h = PreviewHeight, .uv0 = .{ 0.0, 0.0 }, .uv1 = .{ 1.0, 1.0 } },
+                        );
+                    } else {
+                        zgui.dummy(.{ .w = PreviewWidth, .h = PreviewHeight });
+                    }
+                    zgui.sameLine(.{ .spacing = 0 });
                 }
-                zgui.sameLine(.{ .spacing = 0 });
             }
-            if (self.rewind.selected_snapshot >= self.rewind.snapshots.items.len) {
-                zgui.textUnformatted("  0:00");
-            } else {
+            zgui.setCursorScreenPos(timelime_position);
+            _ = zgui.invisibleButton("##Timeline", .{ .w = PreviewWidth * DisplayedPreviews, .h = PreviewHeight });
+            if (zgui.isItemActive()) {
+                const mouse_pos = zgui.getMousePos();
+                const rel_x = @max(0.0, @min(mouse_pos[0] - timelime_position[0], PreviewWidth * DisplayedPreviews));
+                const percentage = rel_x / (PreviewWidth * DisplayedPreviews);
+                self.rewind.selected_snapshot = @intFromFloat(percentage * total_positions);
+                self.rewind.update_preview(self.gctx, self.renderer.resized_framebuffer.texture, self.renderer.resolution);
+            }
+
+            // Position indicator
+            const draw_list = zgui.getWindowDrawList();
+            const target_position_x = timelime_position[0] + (@as(f32, @floatFromInt(self.rewind.selected_snapshot)) / @as(f32, @floatFromInt(self.rewind.snapshots.items.len))) * (PreviewWidth * DisplayedPreviews);
+            self.rewind.indicator_visual_position += 0.5 * (target_position_x - self.rewind.indicator_visual_position);
+            if (@abs(self.rewind.indicator_visual_position - target_position_x) < 1.0) self.rewind.indicator_visual_position = target_position_x;
+            const x = self.rewind.indicator_visual_position;
+            const y = timelime_position[1];
+            draw_list.addLine(.{
+                .p1 = .{ x, y },
+                .p2 = .{ x, y + PreviewHeight + 2 },
+                .col = 0xFF000000,
+                .thickness = 4.0,
+            });
+            draw_list.addTriangleFilled(.{
+                .p1 = .{ x, y + 6 },
+                .p2 = .{ x - 6, y - 4 },
+                .p3 = .{ x + 6, y - 4 },
+                .col = 0xFF000000,
+            });
+            draw_list.addLine(.{
+                .p1 = .{ x, y },
+                .p2 = .{ x, y + PreviewHeight + 2 },
+                .col = 0xFFC2753B,
+                .thickness = 2.0,
+            });
+            draw_list.addTriangleFilled(.{
+                .p1 = .{ x, y + 5 },
+                .p2 = .{ x - 5, y - 4 },
+                .p3 = .{ x + 5, y - 4 },
+                .col = 0xFFC2753B,
+            });
+            const text_size = zgui.calcTextSize("-0:00", .{});
+            const label_position: [2]f32 = .{ x - (text_size[0] / 2), y + PreviewHeight + 4 };
+            // Label background
+            draw_list.addRectFilled(.{
+                .pmin = .{ label_position[0] - 4, label_position[1] - 2 },
+                .pmax = .{ label_position[0] + text_size[0] + 4, label_position[1] + text_size[1] + 2 },
+                .col = 0xAA000000,
+                .rounding = 4.0,
+            });
+            // Label text
+            if (self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
                 const cycle_diff = self.dc._global_cycles - self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].cycle;
                 const minutes = cycle_diff / Dreamcast.SH4Clock / 60;
                 const seconds = cycle_diff / Dreamcast.SH4Clock % 60;
-                zgui.text(" -{d: >2}:{d:0>2}", .{ minutes, seconds });
+                draw_list.addText(label_position, 0xFFFFFFFF, "-{d}:{d:0>2}", .{ minutes, seconds });
+            } else {
+                draw_list.addText(label_position, 0xFFFFFFFF, " 0:00", .{});
             }
-            zgui.setNextItemWidth(DisplayedPreviews * PreviewWidth);
-            if (zgui.sliderInt("Frame", .{ .min = 0, .max = @intCast(self.rewind.snapshots.items.len - 1), .v = &self.rewind.selected_snapshot })) {
-                self.rewind.update_preview(self.gctx, self.renderer.resized_framebuffer.texture, self.renderer.resolution);
-            }
+
+            zgui.dummy(.{ .w = 0.0, .h = text_size[1] });
+
             if (zgui.button("Cancel", .{})) {
                 self.rewind_cancel();
             }
             zgui.sameLine(.{});
-            if (zgui.button("Rewind", .{})) {
-                self.rewind_confirm();
+            const x_available = zgui.getCursorPosX() + zgui.getContentRegionAvail()[0] - 2 * zgui.getStyle().frame_padding[0];
+            if (self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
+                zgui.setCursorPosX(x_available - zgui.calcTextSize("Rewind", .{})[0]);
+                if (zgui.button("Rewind", .{}))
+                    self.rewind_confirm();
+            } else {
+                zgui.setCursorPosX(x_available - zgui.calcTextSize("Resume", .{})[0]);
+                if (zgui.button("Resume", .{}))
+                    self.rewind_confirm();
             }
         }
         zgui.end();

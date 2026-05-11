@@ -4,6 +4,8 @@ snapshots: std.ArrayList(Snapshot) = .empty,
 current_frame: TextureAndView = .{},
 /// selected_snapshot >= snapshots.len means the current state (no rewind)
 selected_snapshot: i32 = 0,
+/// Quick, dirty and framerate dependent animation.
+indicator_visual_position: f32 = 1.0,
 
 const Snapshot = struct {
     preview: TextureAndView = .{},
