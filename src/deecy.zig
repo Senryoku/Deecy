@@ -2257,7 +2257,7 @@ fn rewind_confirm_impl(self: *@This()) !void {
             var reader = std.Io.Reader.fixed(self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].data);
             try self.dc.deserialize(&reader);
             try reader.readSliceAll(std.mem.asBytes(&self._cycles_to_run));
-            try self.rewind.discard_after(self._allocator, self.gctx, self.rewind.selected_snapshot);
+            try self.rewind.discard_after(self.io, self._allocator, self.rewind.selected_snapshot);
         }
         self.start();
     }
@@ -2281,49 +2281,36 @@ pub fn rewind_tick(self: *@This()) !void {
         self.rewind.clear(self._allocator, self.gctx);
     }
     if (self.rewind.snapshots.items.len == 0 or (self.dc._global_cycles - self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1].cycle) / Dreamcast.SH4Clock >= self.config.rewind.period) {
-        var allocating_writer = if (self.rewind.snapshots.items.len >= self.config.rewind.max_snapshots) // Re-use oldest snapshot memory
-            std.Io.Writer.Allocating.initOwnedSlice(self._allocator, self.rewind.snapshots.items[0].data)
-        else
-            try std.Io.Writer.Allocating.initCapacity(self._allocator, 32 * 1024 * 1024);
+        var allocating_writer = std.Io.Writer.Allocating.initOwnedSlice(self._allocator, try self.rewind.get_memory(self.io, self._allocator));
         defer allocating_writer.deinit();
         var writer = &allocating_writer.writer;
         _ = try self.dc.serialize(writer);
         _ = try writer.write(std.mem.asBytes(&self._cycles_to_run));
         try writer.flush();
-        const preview = preview: {
+        const preview: RendererModule.TextureAndView = try self.rewind.get_preview_texture(self.io, self._allocator, self.gctx, self.renderer.resolution);
+        {
             try self.gctx_queue_mutex.lock(self.io);
             defer self.gctx_queue_mutex.unlock(self.io);
-
-            var target: RendererModule.TextureAndView = if (self.rewind.snapshots.items.len >= self.config.rewind.max_snapshots)
-                self.rewind.snapshots.items[0].preview
-            else
-                Rewind.create_preview_texture(self.gctx, self.renderer.resolution);
-
-            // Might have been invalidated by a resolution change.
-            if (target.texture.id == 0)
-                target = Rewind.create_preview_texture(self.gctx, self.renderer.resolution);
-
-            Rewind.copy_texture(self.gctx, self.renderer.resized_framebuffer.texture, target.texture, self.renderer.resolution);
-
-            break :preview target;
+            Rewind.copy_texture(self.gctx, self.renderer.resized_framebuffer.texture, preview.texture, self.renderer.resolution);
+        }
+        const array_list = allocating_writer.toArrayList();
+        const to_insert: Rewind.Snapshot = .{
+            .preview = preview,
+            .data = array_list.items,
+            .backing_memory = array_list.allocatedSlice(),
+            .cycle = self.dc._global_cycles,
         };
         if (self.rewind.snapshots.items.len >= self.config.rewind.max_snapshots) {
             // Shift all snapshots (loosing the oldest) and insert the new one in place.
             // FIXME: Not ideal, but simplifies everything else.
+            try self.rewind.release_memory(self.io, self._allocator, self.rewind.snapshots.items[0].backing_memory);
+            try self.rewind.release_preview_texture(self.io, self._allocator, self.rewind.snapshots.items[0].preview);
             for (0..self.rewind.snapshots.items.len - 1) |idx| {
                 self.rewind.snapshots.items[idx] = self.rewind.snapshots.items[idx + 1];
             }
-            self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1] = .{
-                .preview = preview,
-                .data = try allocating_writer.toOwnedSlice(),
-                .cycle = self.dc._global_cycles,
-            };
+            self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1] = to_insert;
         } else {
-            try self.rewind.snapshots.append(self._allocator, .{
-                .data = try allocating_writer.toOwnedSlice(),
-                .preview = preview,
-                .cycle = self.dc._global_cycles,
-            });
+            try self.rewind.snapshots.append(self._allocator, to_insert);
         }
     }
 }
@@ -2459,18 +2446,29 @@ fn draw_rewind_ui(self: *@This()) !void {
             });
             // Label text
             if (self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
-                const cycle_diff = self.dc._global_cycles - self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].cycle;
-                const minutes = cycle_diff / Dreamcast.SH4Clock / 60;
-                const seconds = @mod(@as(f32, @floatFromInt(cycle_diff)) / Dreamcast.SH4Clock, 60);
-                draw_list.addText(label_position, 0xFFFFFFFF, "-{d}:{d:0>6.3}", .{ minutes, seconds });
+                const cycles = self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].cycle;
+                if (cycles < self.dc._global_cycles) {
+                    const cycle_diff = self.dc._global_cycles - cycles;
+                    const minutes = cycle_diff / Dreamcast.SH4Clock / 60;
+                    const seconds = @mod(@as(f32, @floatFromInt(cycle_diff)) / Dreamcast.SH4Clock, 60);
+                    draw_list.addText(label_position, 0xFFFFFFFF, "-{d}:{d:0>6.3}", .{ minutes, seconds });
+                }
             } else {
                 draw_list.addText(label_position, 0xFFFFFFFF, " 0:00.000", .{});
             }
-
             zgui.dummy(.{ .w = 0.0, .h = text_size[1] });
 
             if (zgui.button("Cancel", .{})) {
                 self.rewind_cancel();
+            }
+            if (builtin.mode == .Debug and self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
+                zgui.sameLine(.{});
+                zgui.text("Size: {d: >4.1}/{d: >4.1}MB; Avail. Mem: {d}, Tex: {d}", .{
+                    @as(f32, @floatFromInt(self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].data.len)) / 1024 / 1024,
+                    @as(f32, @floatFromInt(self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].backing_memory.len)) / 1024 / 1024,
+                    self.rewind.memory_pool.items.len,
+                    self.rewind.texture_pool.items.len,
+                });
             }
             zgui.sameLine(.{});
             const x_available = zgui.getCursorPosX() + zgui.getContentRegionAvail()[0] - 2 * zgui.getStyle().frame_padding[0];
