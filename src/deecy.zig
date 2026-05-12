@@ -702,7 +702,7 @@ pub fn destroy(self: *@This()) void {
 
     self.dc.destroy();
 
-    self.rewind.deinit(self._allocator, self.gctx);
+    self.rewind.deinit(self.io, self._allocator, self.gctx);
 
     self.debug_ui.deinit();
     self.ui_deinit();
@@ -1037,7 +1037,7 @@ pub fn reset(self: *@This()) !void {
     self.renderer.reset();
     self._cycles_to_run = 0;
     try self.check_save_state_slots();
-    self.rewind.clear(self._allocator, self.gctx);
+    self.rewind.clear(self.io, self._allocator, self.gctx);
 }
 
 pub fn stop(self: *@This()) !void {
@@ -2254,9 +2254,18 @@ fn rewind_confirm_impl(self: *@This()) !void {
         if (self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
             try self.dc.reset();
             self.renderer.reset();
-            var reader = std.Io.Reader.fixed(self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].data);
-            try self.dc.deserialize(&reader);
-            try reader.readSliceAll(std.mem.asBytes(&self._cycles_to_run));
+            const snapshot = self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)];
+            if (snapshot.compressed.await(self.io)) {
+                const decompressed = try lz4.Standard.decompress(self._allocator, snapshot.data, 32 * 1024 * 1024);
+                defer self._allocator.free(decompressed);
+                var reader = std.Io.Reader.fixed(decompressed);
+                try self.dc.deserialize(&reader);
+                try reader.readSliceAll(std.mem.asBytes(&self._cycles_to_run));
+            } else {
+                var reader = std.Io.Reader.fixed(self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].data);
+                try self.dc.deserialize(&reader);
+                try reader.readSliceAll(std.mem.asBytes(&self._cycles_to_run));
+            }
             try self.rewind.discard_after(self.io, self._allocator, self.rewind.selected_snapshot);
         }
         self.start();
@@ -2278,7 +2287,7 @@ pub fn rewind_tick(self: *@This()) !void {
     if (self.rewind.snapshots.items.len > 0 and self.dc._global_cycles < self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1].cycle) {
         // FIXME: Pretty sure I'm not reseting the history correctly in all cases yet, this should make it safe for now.
         deecy_log.err("Inconsistent rewind state: {} < {}", .{ self.dc._global_cycles, self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1].cycle });
-        self.rewind.clear(self._allocator, self.gctx);
+        self.rewind.clear(self.io, self._allocator, self.gctx);
     }
     if (self.rewind.snapshots.items.len == 0 or (self.dc._global_cycles - self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1].cycle) / Dreamcast.SH4Clock >= self.config.rewind.period) {
         var allocating_writer = std.Io.Writer.Allocating.initOwnedSlice(self._allocator, try self.rewind.get_memory(self.io, self._allocator));
@@ -2294,17 +2303,27 @@ pub fn rewind_tick(self: *@This()) !void {
             Rewind.copy_texture(self.gctx, self.renderer.resized_framebuffer.texture, preview.texture, self.renderer.resolution);
         }
         const array_list = allocating_writer.toArrayList();
-        const to_insert: Rewind.Snapshot = .{
+        const to_insert = try self._allocator.create(Rewind.Snapshot);
+        to_insert.* = .{
             .preview = preview,
             .data = array_list.items,
             .backing_memory = array_list.allocatedSlice(),
             .cycle = self.dc._global_cycles,
         };
+        if (self.config.rewind.compress)
+            to_insert.compressed = try self.io.concurrent(Rewind.compress, .{ &self.rewind, self.io, self._allocator, to_insert });
+        try self.rewind.snapshots_array_mutex.lock(self.io);
+        defer self.rewind.snapshots_array_mutex.unlock(self.io);
         if (self.rewind.snapshots.items.len >= self.config.rewind.max_snapshots) {
             // Shift all snapshots (loosing the oldest) and insert the new one in place.
             // FIXME: Not ideal, but simplifies everything else.
-            try self.rewind.release_memory(self.io, self._allocator, self.rewind.snapshots.items[0].backing_memory);
+            if (self.rewind.snapshots.items[0].compressed.await(self.io)) {
+                self._allocator.free(self.rewind.snapshots.items[0].backing_memory);
+            } else {
+                try self.rewind.release_memory(self.io, self._allocator, self.rewind.snapshots.items[0].backing_memory);
+            }
             try self.rewind.release_preview_texture(self.io, self._allocator, self.rewind.snapshots.items[0].preview);
+            self._allocator.destroy(self.rewind.snapshots.items[0]);
             for (0..self.rewind.snapshots.items.len - 1) |idx| {
                 self.rewind.snapshots.items[idx] = self.rewind.snapshots.items[idx + 1];
             }
