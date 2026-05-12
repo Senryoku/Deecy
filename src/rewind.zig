@@ -1,8 +1,7 @@
 snapshots_array_mutex: std.Io.Mutex = .init,
 snapshots: std.ArrayList(*Snapshot) = .empty,
 
-pools_mutex: std.Io.Mutex = .init,
-memory_pool: std.ArrayList([]u8) = .empty,
+texture_pool_mutex: std.Io.Mutex = .init,
 texture_pool: std.ArrayList(TextureAndView) = .empty,
 
 // UI State
@@ -14,18 +13,14 @@ indicator_visual_position: f32 = 1.0,
 
 pub const Snapshot = struct {
     preview: TextureAndView = .{},
-    /// View into backing memory
     data: []const u8 = &.{},
     cycle: u64 = 0,
-
-    /// Actual allocated memory might be larger than the snapshot size, keep track of it.
-    backing_memory: []u8 = &.{},
 
     compressed: std.Io.Future(bool) = .{ .any_future = null, .result = false },
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) void {
         self.preview.release(gctx);
-        allocator.free(self.backing_memory);
+        allocator.free(self.data);
     }
 };
 
@@ -35,70 +30,44 @@ pub fn init(self: *@This()) void {
 
 pub fn deinit(self: *@This(), io: std.Io, allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) void {
     for (self.snapshots.items) |snapshot| {
-        _ = snapshot.compressed.await(io);
+        _ = snapshot.compressed.cancel(io);
         snapshot.deinit(allocator, gctx);
         allocator.destroy(snapshot);
     }
     self.snapshots.deinit(allocator);
-    for (self.memory_pool.items) |memory| allocator.free(memory);
-    self.memory_pool.deinit(allocator);
     for (self.texture_pool.items) |texture| texture.release(gctx);
     self.texture_pool.deinit(allocator);
 }
 
 pub fn clear(self: *@This(), io: std.Io, allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) void {
     for (self.snapshots.items) |snapshot| {
-        _ = snapshot.compressed.await(io);
+        _ = snapshot.compressed.cancel(io);
         snapshot.deinit(allocator, gctx);
         allocator.destroy(snapshot);
     }
     self.snapshots.clearRetainingCapacity();
-    for (self.memory_pool.items) |memory| allocator.free(memory);
-    self.memory_pool.clearRetainingCapacity();
     for (self.texture_pool.items) |texture| texture.release(gctx);
     self.texture_pool.clearRetainingCapacity();
 }
 
-pub fn get_memory(self: *@This(), io: std.Io, allocator: std.mem.Allocator) ![]u8 {
-    try self.pools_mutex.lock(io);
-    defer self.pools_mutex.unlock(io);
-    if (self.memory_pool.items.len == 0) {
-        try self.memory_pool.append(allocator, try allocator.alloc(u8, 32 * 1024 * 1024));
-    }
-    return self.memory_pool.pop().?;
-}
-
-pub fn release_memory(self: *@This(), io: std.Io, allocator: std.mem.Allocator, memory: []u8) !void {
-    try self.pools_mutex.lock(io);
-    defer self.pools_mutex.unlock(io);
-    if (self.memory_pool.items.len >= 3) {
-        allocator.free(memory);
-    } else {
-        try self.memory_pool.append(allocator, memory);
-    }
-}
-
 pub fn get_preview_texture(self: *@This(), io: std.Io, allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, resolution: Resolution) !TextureAndView {
-    try self.pools_mutex.lock(io);
-    defer self.pools_mutex.unlock(io);
+    try self.texture_pool_mutex.lock(io);
+    defer self.texture_pool_mutex.unlock(io);
     if (self.texture_pool.items.len == 0)
         try self.texture_pool.append(allocator, create_preview_texture(gctx, resolution));
     return self.texture_pool.pop().?;
 }
 
 pub fn release_preview_texture(self: *@This(), io: std.Io, allocator: std.mem.Allocator, texture: TextureAndView) !void {
-    try self.pools_mutex.lock(io);
-    defer self.pools_mutex.unlock(io);
+    try self.texture_pool_mutex.lock(io);
+    defer self.texture_pool_mutex.unlock(io);
     try self.texture_pool.append(allocator, texture);
 }
 
 pub fn discard_after(self: *@This(), io: std.Io, allocator: std.mem.Allocator, snapshot_idx: i32) !void {
     for (self.snapshots.items[@intCast(snapshot_idx + 1)..self.snapshots.items.len]) |snapshot| {
-        if (snapshot.compressed.await(io)) {
-            allocator.free(snapshot.backing_memory);
-        } else {
-            try self.release_memory(io, allocator, snapshot.backing_memory);
-        }
+        _ = snapshot.compressed.cancel(io);
+        allocator.free(snapshot.data);
         try self.release_preview_texture(io, allocator, snapshot.preview);
         allocator.destroy(snapshot);
     }
@@ -184,11 +153,10 @@ pub fn compress(self: *@This(), io: std.Io, allocator: std.mem.Allocator, snapsh
 fn compress_impl(self: *@This(), io: std.Io, allocator: std.mem.Allocator, snapshot: *Snapshot) !void {
     const compressed = try lz4.Standard.compress(allocator, snapshot.data);
     errdefer allocator.free(compressed);
-    try self.release_memory(io, allocator, snapshot.backing_memory);
     try self.snapshots_array_mutex.lock(io);
     defer self.snapshots_array_mutex.unlock(io);
+    allocator.free(snapshot.data);
     snapshot.data = compressed;
-    snapshot.backing_memory = @constCast(compressed);
 }
 
 const std = @import("std");

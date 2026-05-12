@@ -2255,7 +2255,7 @@ fn rewind_confirm_impl(self: *@This()) !void {
             try self.dc.reset();
             self.renderer.reset();
             const snapshot = self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)];
-            if (snapshot.compressed.await(self.io)) {
+            if (snapshot.compressed.cancel(self.io)) {
                 const decompressed = try lz4.Standard.decompress(self._allocator, snapshot.data, 32 * 1024 * 1024);
                 defer self._allocator.free(decompressed);
                 var reader = std.Io.Reader.fixed(decompressed);
@@ -2290,7 +2290,7 @@ pub fn rewind_tick(self: *@This()) !void {
         self.rewind.clear(self.io, self._allocator, self.gctx);
     }
     if (self.rewind.snapshots.items.len == 0 or (self.dc._global_cycles - self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1].cycle) / Dreamcast.SH4Clock >= self.config.rewind.period) {
-        var allocating_writer = std.Io.Writer.Allocating.initOwnedSlice(self._allocator, try self.rewind.get_memory(self.io, self._allocator));
+        var allocating_writer = try std.Io.Writer.Allocating.initCapacity(self._allocator, 32 * 1024 * 1024);
         defer allocating_writer.deinit();
         var writer = &allocating_writer.writer;
         _ = try self.dc.serialize(writer);
@@ -2302,12 +2302,10 @@ pub fn rewind_tick(self: *@This()) !void {
             defer self.gctx_queue_mutex.unlock(self.io);
             Rewind.copy_texture(self.gctx, self.renderer.resized_framebuffer.texture, preview.texture, self.renderer.resolution);
         }
-        const array_list = allocating_writer.toArrayList();
         const to_insert = try self._allocator.create(Rewind.Snapshot);
         to_insert.* = .{
             .preview = preview,
-            .data = array_list.items,
-            .backing_memory = array_list.allocatedSlice(),
+            .data = try allocating_writer.toOwnedSlice(),
             .cycle = self.dc._global_cycles,
         };
         if (self.config.rewind.compress)
@@ -2317,11 +2315,8 @@ pub fn rewind_tick(self: *@This()) !void {
         if (self.rewind.snapshots.items.len >= self.config.rewind.max_snapshots) {
             // Shift all snapshots (loosing the oldest) and insert the new one in place.
             // FIXME: Not ideal, but simplifies everything else.
-            if (self.rewind.snapshots.items[0].compressed.await(self.io)) {
-                self._allocator.free(self.rewind.snapshots.items[0].backing_memory);
-            } else {
-                try self.rewind.release_memory(self.io, self._allocator, self.rewind.snapshots.items[0].backing_memory);
-            }
+            _ = self.rewind.snapshots.items[0].compressed.cancel(self.io);
+            self._allocator.free(self.rewind.snapshots.items[0].data);
             try self.rewind.release_preview_texture(self.io, self._allocator, self.rewind.snapshots.items[0].preview);
             self._allocator.destroy(self.rewind.snapshots.items[0]);
             for (0..self.rewind.snapshots.items.len - 1) |idx| {
@@ -2482,10 +2477,8 @@ fn draw_rewind_ui(self: *@This()) !void {
             }
             if (builtin.mode == .Debug and self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
                 zgui.sameLine(.{});
-                zgui.text("Size: {d: >4.1}/{d: >4.1}MB; Avail. Mem: {d}, Tex: {d}", .{
+                zgui.text("Size: {d: >4.1}MB     Available preview texture: {d}", .{
                     @as(f32, @floatFromInt(self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].data.len)) / 1024 / 1024,
-                    @as(f32, @floatFromInt(self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].backing_memory.len)) / 1024 / 1024,
-                    self.rewind.memory_pool.items.len,
                     self.rewind.texture_pool.items.len,
                 });
             }
