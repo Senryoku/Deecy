@@ -61,11 +61,17 @@ fn glfw_key_callback(window: *zglfw.Window, key: zglfw.Key, scancode: i32, actio
         // This isn't ideal, but I'm not sure what's the best way to handle this yet.
         if (app.update_dc_keyboard(key, action) and key != .escape) return;
 
-        if (action == .press) {
-            // Escape is a special case in all "wait for input" functions. I'll keep it as the only non-modifiable shortcut.
-            if (key == .escape) {
-                app.toggle_ui();
-            } else app.shortcuts.on_key(.{ .keyboard = .{ .key = key, .mods = .from_glfw(mods) } });
+        switch (action) {
+            .press => {
+                // Escape is a special case in all "wait for input" functions. I'll keep it as the only non-modifiable shortcut.
+                if (key == .escape) {
+                    app.toggle_ui();
+                } else app.shortcuts.on_press(.{ .keyboard = .{ .key = key, .mods = .from_glfw(mods) } });
+            },
+            .repeat => {
+                app.shortcuts.on_repeat(.{ .keyboard = .{ .key = key, .mods = .from_glfw(mods) } });
+            },
+            .release => {},
         }
     }
 }
@@ -1123,8 +1129,13 @@ pub fn poll_controllers(self: *@This()) void {
                                         defer host_controller.last_state = gamepad_state;
 
                                         inline for (std.meta.fields(zglfw.Gamepad.Button)) |button| {
-                                            if (gamepad_state.buttons[button.value] == .press and host_controller.last_state.buttons[button.value] == .release)
-                                                self.shortcuts.on_key(.{ .controller = @enumFromInt(button.value) });
+                                            if (gamepad_state.buttons[button.value] == .press) {
+                                                if (host_controller.last_state.buttons[button.value] == .release) {
+                                                    self.shortcuts.on_press(.{ .controller = @enumFromInt(button.value) });
+                                                } else {
+                                                    self.shortcuts.on_hold(.{ .controller = @enumFromInt(button.value) });
+                                                }
+                                            }
                                         }
 
                                         const config = self.config.controllers_bindings[controller_idx];
@@ -1471,6 +1482,7 @@ pub fn next_vblankin(self: *@This()) void {
             if (event.event == .VBlankIn) {
                 const cycles = 1024 + (event.trigger_cycle -| self.dc._global_cycles);
                 self.run_for(cycles);
+                self.rewind_tick() catch |err| deecy_log.err("Error serializing state: {}", .{err});
                 return;
             }
         }
@@ -1480,7 +1492,7 @@ pub fn save_state_idx(comptime idx: u8) fn (*Self) void {
     std.debug.assert(idx < MaxSaveStates);
     return struct {
         pub fn save_state(self: *Self) void {
-            self.save_state(idx) catch |err| deecy_log.err(termcolor.red("Failed to save state: {}"), .{err});
+            self.save_state(idx) catch |err| deecy_log.err("Failed to save state: {}", .{err});
         }
     }.save_state;
 }
@@ -1488,7 +1500,7 @@ pub fn load_state_idx(comptime idx: u8) fn (*Self) void {
     std.debug.assert(idx < MaxSaveStates);
     return struct {
         pub fn load_state(self: *Self) void {
-            self.load_state(idx) catch |err| deecy_log.err(termcolor.red("Failed to load state: {}"), .{err});
+            self.load_state(idx) catch |err| deecy_log.err("Failed to load state: {}", .{err});
         }
     }.load_state;
 }
@@ -1499,7 +1511,7 @@ pub fn start(self: *@This()) void {
         if (!self.realtime) {
             self.running = true;
             self._dc_thread = std.Thread.spawn(.{}, dc_thread_loop, .{self}) catch |err| {
-                deecy_log.err(termcolor.red("Failed to spawn DC thread: {}"), .{err});
+                deecy_log.err("Failed to spawn DC thread: {}", .{err});
                 self.running = false;
                 return;
             };
@@ -1509,12 +1521,12 @@ pub fn start(self: *@This()) void {
 
             self.running = true;
             self._dc_thread = std.Thread.spawn(.{}, dc_thread_loop_realtime, .{self}) catch |err| {
-                deecy_log.err(termcolor.red("Failed to spawn DC thread: {}"), .{err});
+                deecy_log.err("Failed to spawn DC thread: {}", .{err});
                 self.running = false;
                 return;
             };
             self.audio_device.start() catch |err| {
-                deecy_log.err(termcolor.red("Failed to start audio device: {}"), .{err});
+                deecy_log.err("Failed to start audio device: {}", .{err});
                 return;
             };
         }

@@ -55,6 +55,9 @@ pub const Key = union(enum) {
 };
 
 pub const Action = struct {
+    /// Milliseconds
+    const InitialHoldTime = 300;
+    const RepeatInterval = 100;
     pub const Name = enum {
         @"Debug UI",
         @"Load State 1",
@@ -79,6 +82,48 @@ pub const Action = struct {
     };
     name: Name,
     callback: *const fn (*Deecy) void,
+    allow_repeat: bool = false,
+
+    /// In milliseconds
+    hold_start: ?i64 = null,
+    last_repeat: ?i64 = null,
+
+    pub fn call(self: *@This(), deecy: *Deecy) void {
+        self.hold_start = null;
+        self.last_repeat = null;
+        self.callback(deecy);
+    }
+
+    pub fn on_hold(self: *@This(), deecy: *Deecy) void {
+        if (self.allow_repeat) {
+            const now = std.Io.Timestamp.now(deecy.io, .awake).toMilliseconds();
+            if (self.hold_start) |hold_start| {
+                if (now < hold_start) {
+                    self.hold_start = null;
+                    return;
+                }
+                if (now - hold_start > InitialHoldTime) {
+                    if (self.last_repeat) |last_repeat| {
+                        if (now < last_repeat) {
+                            self.last_repeat = null;
+                            return;
+                        }
+                        if (now - last_repeat > RepeatInterval) {
+                            self.last_repeat = now;
+                            self.callback(deecy);
+                        }
+                    } else {
+                        self.last_repeat = now;
+                        self.callback(deecy);
+                    }
+                } else {
+                    self.last_repeat = null;
+                }
+            } else {
+                self.hold_start = now;
+            }
+        }
+    }
 };
 
 shortcuts: std.AutoHashMap(Key, Action),
@@ -101,10 +146,30 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator, io: std.Io) void {
     self.shortcuts.deinit();
 }
 
-pub fn on_key(self: *@This(), key: Key) void {
-    if (self.shortcuts.get(key)) |shortcut| {
+pub fn on_press(self: *@This(), key: Key) void {
+    if (self.shortcuts.getPtr(key)) |shortcut| {
         const deecy: *Deecy = @fieldParentPtr("shortcuts", self);
-        shortcut.callback(deecy);
+        shortcut.call(deecy);
+    }
+}
+
+/// Bypasses internal repeat timer. Intended to be used with the OS repeat logic.
+/// Do not mix on_repeat and on_hold with the same type of input device.
+pub fn on_repeat(self: *@This(), key: Key) void {
+    if (self.shortcuts.getPtr(key)) |shortcut| {
+        if (shortcut.allow_repeat) {
+            const deecy: *Deecy = @fieldParentPtr("shortcuts", self);
+            shortcut.call(deecy);
+        }
+    }
+}
+
+/// Intended to be used with input without OS repeat logic (e.g. controller).
+/// Do not mix on_repeat and on_hold with the same type of input device.
+pub fn on_hold(self: *@This(), key: Key) void {
+    if (self.shortcuts.getPtr(key)) |shortcut| {
+        const deecy: *Deecy = @fieldParentPtr("shortcuts", self);
+        shortcut.on_hold(deecy);
     }
 }
 
@@ -118,29 +183,31 @@ pub fn remove(self: *@This(), key: Key) void {
 
 const Actions = actions_table: {
     var table: [@typeInfo(Action.Name).@"enum".fields.len]Action = undefined;
-    for ([_]struct { Action.Name, *const fn (*Deecy) void }{
-        .{ .Screenshot, Deecy.save_screenshot },
-        .{ .@"Toggle UI", Deecy.toggle_ui },
-        .{ .@"Start/Pause", Deecy.start_pause },
-        .{ .@"Debug UI", Deecy.toggle_debug_ui },
-        .{ .@"Toggle Fullscreen", Deecy.toggle_fullscreen },
-        .{ .@"Toggle Realtime", Deecy.toggle_realtime },
-        .{ .@"Next VBlank In", Deecy.next_vblankin },
-        .{ .@"Save State 1", Deecy.save_state_idx(0) },
-        .{ .@"Save State 2", Deecy.save_state_idx(1) },
-        .{ .@"Save State 3", Deecy.save_state_idx(2) },
-        .{ .@"Save State 4", Deecy.save_state_idx(3) },
-        .{ .@"Load State 1", Deecy.load_state_idx(0) },
-        .{ .@"Load State 2", Deecy.load_state_idx(1) },
-        .{ .@"Load State 3", Deecy.load_state_idx(2) },
-        .{ .@"Load State 4", Deecy.load_state_idx(3) },
-        .{ .@"Start Launcher", Deecy.start_launcher },
-        .{ .@"Rewind - Previous Snapshot", Deecy.previous_snapshot },
-        .{ .@"Rewind - Next Snapshot", Deecy.next_snapshot },
-        .{ .@"Rewind - Confirm", Deecy.rewind_confirm },
-        .{ .@"Rewind - Cancel", Deecy.rewind_cancel },
+    for ([_]Action{
+        // zig fmt: off
+        .{ .name = .Screenshot,                    .callback = Deecy.save_screenshot   },
+        .{ .name = .@"Toggle UI",                  .callback = Deecy.toggle_ui         },
+        .{ .name = .@"Start/Pause",                .callback = Deecy.start_pause       },
+        .{ .name = .@"Debug UI",                   .callback = Deecy.toggle_debug_ui   },
+        .{ .name = .@"Toggle Fullscreen",          .callback = Deecy.toggle_fullscreen },
+        .{ .name = .@"Toggle Realtime",            .callback = Deecy.toggle_realtime   },
+        .{ .name = .@"Save State 1",               .callback = Deecy.save_state_idx(0) },
+        .{ .name = .@"Save State 2",               .callback = Deecy.save_state_idx(1) },
+        .{ .name = .@"Save State 3",               .callback = Deecy.save_state_idx(2) },
+        .{ .name = .@"Save State 4",               .callback = Deecy.save_state_idx(3) },
+        .{ .name = .@"Load State 1",               .callback = Deecy.load_state_idx(0) },
+        .{ .name = .@"Load State 2",               .callback = Deecy.load_state_idx(1) },
+        .{ .name = .@"Load State 3",               .callback = Deecy.load_state_idx(2) },
+        .{ .name = .@"Load State 4",               .callback = Deecy.load_state_idx(3) },
+        .{ .name = .@"Start Launcher",             .callback = Deecy.start_launcher    },
+        .{ .name = .@"Rewind - Confirm",           .callback = Deecy.rewind_confirm    },
+        .{ .name = .@"Rewind - Cancel",            .callback = Deecy.rewind_cancel     },
+        .{ .name = .@"Rewind - Previous Snapshot", .callback = Deecy.previous_snapshot, .allow_repeat = true },
+        .{ .name = .@"Rewind - Next Snapshot",     .callback = Deecy.next_snapshot,     .allow_repeat = true },
+        .{ .name = .@"Next VBlank In",             .callback = Deecy.next_vblankin,     .allow_repeat = true  },
+        // zig fmt: on
     }) |entry| {
-        table[@intFromEnum(entry[0])] = .{ .name = entry[0], .callback = entry[1] };
+        table[@intFromEnum(entry.name)] = entry;
     }
     break :actions_table table;
 };
