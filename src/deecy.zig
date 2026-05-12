@@ -1525,10 +1525,7 @@ pub fn start(self: *@This()) void {
                 self.running = false;
                 return;
             };
-            self.audio_device.start() catch |err| {
-                deecy_log.err("Failed to start audio device: {}", .{err});
-                return;
-            };
+            self.audio_device.start() catch |err| deecy_log.err("Failed to start audio device: {}", .{err});
         }
     }
 }
@@ -2371,7 +2368,7 @@ fn draw_rewind_ui(self: *@This()) !void {
             .y = @as(f32, @floatFromInt(window_size[1])) - 20.0,
             .pivot_y = 1.0,
         });
-        zgui.pushStyleVar2f(.{ .idx = .window_padding, .v = .{ 32.0, 4.0 } });
+        zgui.pushStyleVar2f(.{ .idx = .window_padding, .v = .{ 4.0, 4.0 } });
         zgui.pushStyleVar1f(.{ .idx = .window_border_size, .v = 0.0 });
         defer zgui.popStyleVar(.{ .count = 2 });
         zgui.pushStyleColor4f(.{ .idx = .window_bg, .c = .{ 0.0, 0.0, 0.0, 0.7 } });
@@ -2418,6 +2415,7 @@ fn draw_rewind_ui(self: *@This()) !void {
 
             // Position indicator
             const draw_list = zgui.getWindowDrawList();
+            const LabelPadding = .{ 4.0, 2.0 };
             const target_position_x = timelime_position[0] + (@as(f32, @floatFromInt(self.rewind.selected_snapshot)) / @as(f32, @floatFromInt(self.rewind.snapshots.items.len))) * (PreviewWidth * DisplayedPreviews);
             self.rewind.indicator_visual_position += 0.5 * (target_position_x - self.rewind.indicator_visual_position);
             if (@abs(self.rewind.indicator_visual_position - target_position_x) < 1.0) self.rewind.indicator_visual_position = target_position_x;
@@ -2425,7 +2423,7 @@ fn draw_rewind_ui(self: *@This()) !void {
             const y = timelime_position[1];
             draw_list.addLine(.{
                 .p1 = .{ x, y },
-                .p2 = .{ x, y + PreviewHeight + 2 },
+                .p2 = .{ x, y + PreviewHeight + (4 - LabelPadding[1]) },
                 .col = 0xFF000000,
                 .thickness = 4.0,
             });
@@ -2447,12 +2445,15 @@ fn draw_rewind_ui(self: *@This()) !void {
                 .p3 = .{ x + 5, y - 4 },
                 .col = 0xFFC2753B,
             });
-            const text_size = zgui.calcTextSize("-0:00", .{});
-            const label_position: [2]f32 = .{ x - (text_size[0] / 2), y + PreviewHeight + 4 };
+            const text_size = zgui.calcTextSize("-0:00.000", .{});
+            const label_position: [2]f32 = .{
+                std.math.clamp(x - (text_size[0] / 2), timelime_position[0] + LabelPadding[0], timelime_position[0] + PreviewWidth * DisplayedPreviews - text_size[0] - LabelPadding[0]),
+                y + PreviewHeight + 4,
+            };
             // Label background
             draw_list.addRectFilled(.{
-                .pmin = .{ label_position[0] - 4, label_position[1] - 2 },
-                .pmax = .{ label_position[0] + text_size[0] + 4, label_position[1] + text_size[1] + 2 },
+                .pmin = .{ label_position[0] - LabelPadding[0], label_position[1] - LabelPadding[1] },
+                .pmax = .{ label_position[0] + text_size[0] + LabelPadding[0], label_position[1] + text_size[1] + LabelPadding[1] },
                 .col = 0xAA000000,
                 .rounding = 4.0,
             });
@@ -2460,10 +2461,10 @@ fn draw_rewind_ui(self: *@This()) !void {
             if (self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
                 const cycle_diff = self.dc._global_cycles - self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].cycle;
                 const minutes = cycle_diff / Dreamcast.SH4Clock / 60;
-                const seconds = cycle_diff / Dreamcast.SH4Clock % 60;
-                draw_list.addText(label_position, 0xFFFFFFFF, "-{d}:{d:0>2}", .{ minutes, seconds });
+                const seconds = @mod(@as(f32, @floatFromInt(cycle_diff)) / Dreamcast.SH4Clock, 60);
+                draw_list.addText(label_position, 0xFFFFFFFF, "-{d}:{d:0>6.3}", .{ minutes, seconds });
             } else {
-                draw_list.addText(label_position, 0xFFFFFFFF, " 0:00", .{});
+                draw_list.addText(label_position, 0xFFFFFFFF, " 0:00.000", .{});
             }
 
             zgui.dummy(.{ .w = 0.0, .h = text_size[1] });
