@@ -362,9 +362,7 @@ const Configuration = struct {
         /// Maximum number of snapshots. Max. rewind time is `period * max_snapshots`.
         max_snapshots: usize = 60,
         compression: Rewind.Snapshot.Compression = .lz4,
-        /// TODO: Keep older snapshots for longer without increasing memory usage by overwriting specific snapshots
-        ///       rather than always the oldest one, effectivelly increasing the period for older snapshots.
-        linear_timeline: bool = true,
+        history: enum { Linear, Logarithmic } = .Linear,
     } = .{},
 };
 
@@ -2315,21 +2313,39 @@ pub fn rewind_tick(self: *@This()) !void {
         }
         const to_insert = try self._allocator.create(Rewind.Snapshot);
         to_insert.* = .{
+            .id = self.rewind.next_snapshot_id,
             .preview = preview,
             .data = serialized,
             .cycle = self.dc._global_cycles,
         };
+        self.rewind.next_snapshot_id +%= 1;
         switch (self.config.rewind.compression) {
             .None => {},
             .lz4 => to_insert.compression = try self.io.concurrent(Rewind.compress, .{ self._allocator, to_insert }),
         }
         if (self.rewind.snapshots.items.len >= self.config.rewind.max_snapshots) {
-            // Shift all snapshots (loosing the oldest) and insert the new one in place.
-            try self.rewind.reclaim(self.io, self._allocator, self.rewind.snapshots.items[0]);
-            // FIXME: Not ideal, but simplifies everything else.
-            for (0..self.rewind.snapshots.items.len - 1) |idx| {
+            const remove_idx: usize = switch (self.config.rewind.history) {
+                .Linear => 0,
+                .Logarithmic => ridx: {
+                    var candidate: usize = 0;
+                    var best_priority: u64 = @ctz(self.rewind.snapshots.items[0].id);
+                    // Recent snapshots (half of the history) are kept as linear
+                    const log_portion = self.rewind.snapshots.items.len / 2;
+                    for (self.rewind.snapshots.items[0..log_portion], 0..) |snapshot, idx| {
+                        const priority = @ctz(snapshot.id);
+                        if (priority < best_priority) {
+                            candidate = idx;
+                            best_priority = priority;
+                        }
+                    }
+                    break :ridx candidate;
+                },
+            };
+            // Shift all snapshots and insert the new one in place.
+            try self.rewind.reclaim(self.io, self._allocator, self.rewind.snapshots.items[remove_idx]);
+            // Not ideal, but simplifies everything else.
+            for (remove_idx..self.rewind.snapshots.items.len - 1) |idx|
                 self.rewind.snapshots.items[idx] = self.rewind.snapshots.items[idx + 1];
-            }
             self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1] = to_insert;
         } else {
             try self.rewind.snapshots.append(self._allocator, to_insert);

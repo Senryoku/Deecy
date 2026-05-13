@@ -1,4 +1,5 @@
 snapshots: std.ArrayList(*Snapshot) = .empty,
+next_snapshot_id: usize = 1,
 
 texture_pool_mutex: std.Io.Mutex = .init,
 texture_pool: std.ArrayList(TextureAndView) = .empty,
@@ -16,6 +17,7 @@ pub const Snapshot = struct {
         lz4,
     };
 
+    id: usize,
     preview: TextureAndView = .{},
     data: []const u8 = &.{},
     cycle: u64 = 0,
@@ -51,6 +53,7 @@ pub fn clear(self: *@This(), io: std.Io, allocator: std.mem.Allocator, gctx: *zg
     self.snapshots.clearRetainingCapacity();
     for (self.texture_pool.items) |texture| texture.release(gctx);
     self.texture_pool.clearRetainingCapacity();
+    self.next_snapshot_id = 1;
 }
 
 /// Thread-safe.
@@ -79,10 +82,11 @@ pub fn reclaim(self: *@This(), io: std.Io, allocator: std.mem.Allocator, snapsho
 }
 
 pub fn discard_after(self: *@This(), io: std.Io, allocator: std.mem.Allocator, snapshot_idx: i32) !void {
-    for (self.snapshots.items[@intCast(snapshot_idx + 1)..self.snapshots.items.len]) |snapshot| {
+    for (self.snapshots.items[@intCast(snapshot_idx + 1)..]) |snapshot| {
         try reclaim(self, io, allocator, snapshot);
     }
     try self.snapshots.resize(allocator, @intCast(snapshot_idx + 1));
+    self.next_snapshot_id = self.snapshots.items[@intCast(snapshot_idx)].id +% 1;
 }
 
 /// Should be called every time the UI re-appears.

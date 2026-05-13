@@ -824,7 +824,7 @@ pub fn draw(self: *@This()) !void {
                             d.config.rewind.max_snapshots = @intCast(@max(1, max_snapshots));
                         }
                         _ = zgui.comboFromEnum("Compression", &d.config.rewind.compression);
-                        _ = zgui.checkbox("Linear timeline", .{ .v = &d.config.rewind.linear_timeline });
+                        _ = zgui.comboFromEnum("History", &d.config.rewind.history);
                     }
                     zgui.endTabItem();
                 }
