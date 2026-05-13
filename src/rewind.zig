@@ -5,8 +5,9 @@ texture_pool_mutex: std.Io.Mutex = .init,
 texture_pool: std.ArrayList(TextureAndView) = .empty,
 
 // UI State
+/// Copy of the current/latest state frame (more recent than the latest snapshot)
 current_frame: TextureAndView = .{},
-/// selected_snapshot >= snapshots.len means the current state (no rewind)
+/// `selected_snapshot` >= `snapshots.len` means the current state (no rewind)
 selected_snapshot: i32 = 0,
 /// Quick, dirty and framerate dependent animation.
 indicator_visual_position: f32 = 1.0,
@@ -21,7 +22,7 @@ pub const Snapshot = struct {
     preview: TextureAndView = .{},
     data: []const u8 = &.{},
     cycle: u64 = 0,
-    /// Waits on this future before accessing data.
+    /// Wait on this future before accessing `data`.
     compression: std.Io.Future(Compression) = .{ .any_future = null, .result = .None },
 
     pub fn deinit(self: *@This(), io: std.Io, allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) void {
@@ -82,9 +83,8 @@ pub fn reclaim(self: *@This(), io: std.Io, allocator: std.mem.Allocator, snapsho
 }
 
 pub fn discard_after(self: *@This(), io: std.Io, allocator: std.mem.Allocator, snapshot_idx: i32) !void {
-    for (self.snapshots.items[@intCast(snapshot_idx + 1)..]) |snapshot| {
+    for (self.snapshots.items[@intCast(snapshot_idx + 1)..]) |snapshot|
         try reclaim(self, io, allocator, snapshot);
-    }
     try self.snapshots.resize(allocator, @intCast(snapshot_idx + 1));
     self.next_snapshot_id = self.snapshots.items[@intCast(snapshot_idx)].id +% 1;
 }
@@ -98,15 +98,14 @@ pub fn ui_init(self: *@This(), gctx: *zgpu.GraphicsContext, current_frame: zgpu.
     copy_texture(gctx, current_frame, self.current_frame.texture, resolution);
 }
 
-pub fn update_preview(self: *@This(), gctx: *zgpu.GraphicsContext, current_frame: zgpu.TextureHandle, resolution: Resolution) void {
+pub fn update_preview(self: *@This(), gctx: *zgpu.GraphicsContext, target: zgpu.TextureHandle, resolution: Resolution) void {
     const texture = if (self.selected_snapshot < self.snapshots.items.len)
         self.snapshots.items[@intCast(self.selected_snapshot)].preview.texture
     else
         self.current_frame.texture;
-    if (texture.id != 0) {
-        // Fullscreen preview. Re-uses the renderer framebuffer for simplicity.
-        copy_texture(gctx, texture, current_frame, resolution);
-    }
+    // Fullscreen preview. Re-uses the renderer framebuffer for simplicity.
+    if (texture.id != 0)
+        copy_texture(gctx, texture, target, resolution);
 }
 
 /// Previews are assumed to be the same resolution as the renderer output for easy copying.
