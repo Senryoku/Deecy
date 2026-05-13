@@ -3,6 +3,8 @@ const builtin = @import("builtin");
 const comptime_config = @import("config");
 const Self = @This();
 
+pub const Rewind = @import("rewind.zig");
+
 const custom_log = @import("custom_log.zig");
 
 const zglfw = @import("zglfw");
@@ -30,7 +32,8 @@ const Disc = DreamcastModule.GDROM.Disc;
 pub const HostPaths = DreamcastModule.HostPaths;
 const PreciseSleep = @import("precise_sleep.zig");
 
-pub const Renderer = @import("./renderer.zig").Renderer;
+pub const RendererModule = @import("./renderer.zig");
+pub const Renderer = RendererModule.Renderer;
 
 pub const UI = @import("./deecy_ui.zig");
 const DebugUI = @import("./debug_ui.zig");
@@ -58,11 +61,17 @@ fn glfw_key_callback(window: *zglfw.Window, key: zglfw.Key, scancode: i32, actio
         // This isn't ideal, but I'm not sure what's the best way to handle this yet.
         if (app.update_dc_keyboard(key, action) and key != .escape) return;
 
-        if (action == .press) {
-            // Escape is a special case in all "wait for input" functions. I'll keep it as the only non-modifiable shortcut.
-            if (key == .escape) {
-                app.toggle_ui();
-            } else app.shortcuts.on_key(.{ .keyboard = .{ .key = key, .mods = .from_glfw(mods) } });
+        switch (action) {
+            .press => {
+                // Escape is a special case in all "wait for input" functions. I'll keep it as the only non-modifiable shortcut.
+                if (key == .escape) {
+                    app.toggle_ui();
+                } else app.shortcuts.on_press(.{ .keyboard = .{ .key = key, .mods = .from_glfw(mods) } });
+            },
+            .repeat => {
+                app.shortcuts.on_repeat(.{ .keyboard = .{ .key = key, .mods = .from_glfw(mods) } });
+            },
+            .release => {},
         }
     }
 }
@@ -345,6 +354,16 @@ const Configuration = struct {
     dsp_emulation: DreamcastModule.AICAModule.DSPEmulation = .JIT,
     aica_sync: DreamcastModule.AICASync = .@"1 ARM Cycle",
     vmu_alarm_volume: f32 = 0.2,
+
+    rewind: struct {
+        enabled: bool = false,
+        /// Seconds
+        period: usize = 1,
+        /// Maximum number of snapshots. Max. rewind time is `period * max_snapshots`.
+        max_snapshots: usize = 60,
+        compression: Rewind.Snapshot.Compression = .lz4,
+        history: enum { Linear, Logarithmic } = .Linear,
+    } = .{},
 };
 
 pub const ConfigFile = "config.zon";
@@ -432,6 +451,8 @@ ui: *UI = undefined,
 debug_ui: DebugUI = undefined,
 
 save_state_slots: [MaxSaveStates]bool = .{ false, false, false, false },
+
+rewind: Rewind = .{},
 
 io: std.Io,
 _allocator: std.mem.Allocator,
@@ -677,6 +698,8 @@ pub fn destroy(self: *@This()) void {
     self.renderer.destroy();
 
     self.dc.destroy();
+
+    self.rewind.deinit(self.io, self._allocator, self.gctx);
 
     self.debug_ui.deinit();
     self.ui_deinit();
@@ -1011,6 +1034,7 @@ pub fn reset(self: *@This()) !void {
     self.renderer.reset();
     self._cycles_to_run = 0;
     try self.check_save_state_slots();
+    self.rewind.clear(self.io, self._allocator, self.gctx);
 }
 
 pub fn stop(self: *@This()) !void {
@@ -1102,8 +1126,13 @@ pub fn poll_controllers(self: *@This()) void {
                                         defer host_controller.last_state = gamepad_state;
 
                                         inline for (std.meta.fields(zglfw.Gamepad.Button)) |button| {
-                                            if (gamepad_state.buttons[button.value] == .press and host_controller.last_state.buttons[button.value] == .release)
-                                                self.shortcuts.on_key(.{ .controller = @enumFromInt(button.value) });
+                                            if (gamepad_state.buttons[button.value] == .press) {
+                                                if (host_controller.last_state.buttons[button.value] == .release) {
+                                                    self.shortcuts.on_press(.{ .controller = @enumFromInt(button.value) });
+                                                } else {
+                                                    self.shortcuts.on_hold(.{ .controller = @enumFromInt(button.value) });
+                                                }
+                                            }
                                         }
 
                                         const config = self.config.controllers_bindings[controller_idx];
@@ -1450,6 +1479,7 @@ pub fn next_vblankin(self: *@This()) void {
             if (event.event == .VBlankIn) {
                 const cycles = 1024 + (event.trigger_cycle -| self.dc._global_cycles);
                 self.run_for(cycles);
+                self.rewind_tick() catch |err| deecy_log.err("Error serializing state: {}", .{err});
                 return;
             }
         }
@@ -1459,7 +1489,7 @@ pub fn save_state_idx(comptime idx: u8) fn (*Self) void {
     std.debug.assert(idx < MaxSaveStates);
     return struct {
         pub fn save_state(self: *Self) void {
-            self.save_state(idx) catch |err| deecy_log.err(termcolor.red("Failed to save state: {}"), .{err});
+            self.save_state(idx) catch |err| deecy_log.err("Failed to save state: {}", .{err});
         }
     }.save_state;
 }
@@ -1467,7 +1497,7 @@ pub fn load_state_idx(comptime idx: u8) fn (*Self) void {
     std.debug.assert(idx < MaxSaveStates);
     return struct {
         pub fn load_state(self: *Self) void {
-            self.load_state(idx) catch |err| deecy_log.err(termcolor.red("Failed to load state: {}"), .{err});
+            self.load_state(idx) catch |err| deecy_log.err("Failed to load state: {}", .{err});
         }
     }.load_state;
 }
@@ -1478,7 +1508,7 @@ pub fn start(self: *@This()) void {
         if (!self.realtime) {
             self.running = true;
             self._dc_thread = std.Thread.spawn(.{}, dc_thread_loop, .{self}) catch |err| {
-                deecy_log.err(termcolor.red("Failed to spawn DC thread: {}"), .{err});
+                deecy_log.err("Failed to spawn DC thread: {}", .{err});
                 self.running = false;
                 return;
             };
@@ -1488,14 +1518,11 @@ pub fn start(self: *@This()) void {
 
             self.running = true;
             self._dc_thread = std.Thread.spawn(.{}, dc_thread_loop_realtime, .{self}) catch |err| {
-                deecy_log.err(termcolor.red("Failed to spawn DC thread: {}"), .{err});
+                deecy_log.err("Failed to spawn DC thread: {}", .{err});
                 self.running = false;
                 return;
             };
-            self.audio_device.start() catch |err| {
-                deecy_log.err(termcolor.red("Failed to start audio device: {}"), .{err});
-                return;
-            };
+            self.audio_device.start() catch |err| deecy_log.err("Failed to start audio device: {}", .{err});
         }
     }
 }
@@ -1514,6 +1541,22 @@ pub fn pause(self: *@This()) void {
             self._dc_thread = null;
         }
         self.dc.maple.flush_vmus();
+
+        if (self.config.rewind.enabled) {
+            // Needed by the render_request check, and rewind.ui_init will copy the framebuffer texture.
+            self.gctx_queue_mutex.lock(self.io) catch |err| return deecy_log.err("Failed to lock gctx queue: {}", .{err});
+            defer self.gctx_queue_mutex.unlock(self.io);
+
+            // Honor pending async render_request immediately, before manipulating resized_framebuffer.
+            // FIXME: This isn't ideal.
+            if (self.renderer.render_request) {
+                self.renderer.update(&self.dc.gpu) catch |err| return deecy_log.err("Failed to update renderer: {}", .{err});
+                self.renderer.render(&self.dc.gpu, false) catch |err| return deecy_log.err("Failed to render: {}", .{err});
+                self.renderer.render_request = false;
+            }
+
+            self.rewind.ui_init(self.gctx, self.renderer.resized_framebuffer.texture, self.renderer.resolution);
+        }
     }
     self.stop_rumble();
 }
@@ -1556,7 +1599,7 @@ pub fn draw_ui(self: *@This()) !void {
     {
         // FIXME: Not sure if this is needed, but omitting it can cause a crash on the first frame when submitting the UI commands.
         //        Either newFrame creates some GPU resources on startup, or this just hides another issue by pure luck.
-        self.gctx_queue_mutex.lockUncancelable(self.io);
+        try self.gctx_queue_mutex.lock(self.io);
         defer self.gctx_queue_mutex.unlock(self.io);
         const fb_size = self.window.getFramebufferSize();
         zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
@@ -1677,6 +1720,8 @@ pub fn draw_ui(self: *@This()) !void {
         }
         zgui.end();
     }
+
+    try self.draw_rewind_ui();
 
     self.ui.notifications.draw();
 }
@@ -1852,6 +1897,7 @@ fn dc_thread_loop(self: *@This()) void {
     while (self.running) {
         const refresh_rate = self.dc.target_refresh_rate();
         self.run_for(refresh_rate.cycles_per_frame());
+        self.rewind_tick() catch |err| deecy_log.err("Error serializing state: {}", .{err});
     }
 }
 
@@ -1861,6 +1907,7 @@ fn dc_thread_loop_realtime(self: *@This()) void {
     while (self.running) {
         const refresh_rate = self.dc.target_refresh_rate();
         self.run_for(refresh_rate.cycles_per_frame());
+        self.rewind_tick() catch |err| deecy_log.err("Error serializing state: {}", .{err});
         precise_sleep.wait_for_interval(self.io, refresh_rate.ns_per_frame());
     }
 }
@@ -1969,17 +2016,19 @@ pub fn save_state(self: *@This(), index: usize) !void {
     const start_time = std.Io.Clock.awake.now(self.io);
     deecy_log.info("Saving State #{d}...", .{index});
 
-    // var uncompressed_array = try std.ArrayList(u8).initCapacity(self._allocator, 32 * 1024 * 1024);
+    const serialized = try self.serialize();
+    deecy_log.info("  Serialized state in {f}. Compressing...", .{start_time.durationTo(std.Io.Clock.awake.now(self.io))});
+    try self.launch_async(compress_and_dump_save_state, .{ self, index, serialized });
+}
+
+fn serialize(self: *@This()) ![]const u8 {
     var allocating_writer = try std.Io.Writer.Allocating.initCapacity(self._allocator, 32 * 1024 * 1024);
     defer allocating_writer.deinit();
     var writer = &allocating_writer.writer;
     _ = try self.dc.serialize(writer);
     _ = try writer.write(std.mem.asBytes(&self._cycles_to_run));
     try writer.flush();
-
-    deecy_log.info("  Serialized state in {f}. Compressing...", .{start_time.durationTo(std.Io.Clock.awake.now(self.io))});
-
-    try self.launch_async(compress_and_dump_save_state, .{ self, index, try allocating_writer.toOwnedSlice() });
+    return try allocating_writer.toOwnedSlice();
 }
 
 fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array: []const u8) !void {
@@ -2039,16 +2088,18 @@ pub fn load_state(self: *@This(), index: usize) !void {
     const decompressed = try lz4.Standard.decompress(self._allocator, compressed, header.uncompressed_size);
     defer self._allocator.free(decompressed);
 
-    var reader = std.Io.Reader.fixed(decompressed);
-
     try self.reset();
-
-    try self.dc.deserialize(&reader);
-    try reader.readSliceAll(std.mem.asBytes(&self._cycles_to_run));
+    try self.deserialize(decompressed);
 
     deecy_log.info("Loaded State #{d} from '{s}' in {f}", .{ index, save_slot_path, start_time.durationTo(.now(self.io, .awake)) });
 
     self.ui.notifications.push("State Loaded", .{}, "Save State #{d} loaded successfully.", .{index});
+}
+
+fn deserialize(self: *@This(), serialized: []const u8) !void {
+    var reader = std.Io.Reader.fixed(serialized);
+    try self.dc.deserialize(&reader);
+    try reader.readSliceAll(std.mem.asBytes(&self._cycles_to_run));
 }
 
 fn save_config(self: *@This()) !void {
@@ -2202,4 +2253,270 @@ pub fn zglfw_key_to_dc_key(key: zglfw.Key) ?DreamcastModule.Maple.Keyboard.KeySc
         .right_super => .RightS3,
         else => null,
     };
+}
+
+pub fn rewind_confirm(self: *@This()) void {
+    if (!self.config.rewind.enabled) return;
+    self.rewind_confirm_impl() catch |err| {
+        deecy_log.err("Failed to rewind: {}", .{err});
+        return;
+    };
+}
+
+fn rewind_confirm_impl(self: *@This()) !void {
+    if (self.running) {
+        self.pause();
+    } else {
+        if (self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
+            try self.dc.reset();
+            self.renderer.reset();
+            const snapshot = self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)];
+            switch (snapshot.compression.cancel(self.io)) {
+                .None => try self.deserialize(snapshot.data),
+                .lz4 => {
+                    const decompressed = try lz4.Standard.decompress(self._allocator, snapshot.data, 32 * 1024 * 1024);
+                    defer self._allocator.free(decompressed);
+                    try self.deserialize(decompressed);
+                },
+            }
+            try self.rewind.discard_after(self.io, self._allocator, self.rewind.selected_snapshot);
+        }
+        self.start();
+    }
+}
+
+pub fn rewind_cancel(self: *@This()) void {
+    if (!self.config.rewind.enabled) return;
+    if (self.running) {
+        self.pause();
+    } else {
+        self.start();
+    }
+}
+
+pub fn rewind_tick(self: *@This()) !void {
+    if (!self.config.rewind.enabled) return;
+
+    if (self.rewind.snapshots.items.len > 0 and self.dc._global_cycles < self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1].cycle) {
+        // FIXME: Pretty sure I'm not reseting the history correctly in all cases yet, this should make it safe for now.
+        deecy_log.err("Inconsistent rewind state: {} < {}", .{ self.dc._global_cycles, self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1].cycle });
+        self.rewind.clear(self.io, self._allocator, self.gctx);
+    }
+    if (self.rewind.snapshots.items.len == 0 or (self.dc._global_cycles - self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1].cycle) / Dreamcast.SH4Clock >= self.config.rewind.period) {
+        const serialized = try self.serialize();
+        errdefer self._allocator.free(serialized);
+        const preview = try self.rewind.get_preview_texture(self.io, self._allocator, self.gctx, self.renderer.resolution);
+        {
+            try self.gctx_queue_mutex.lock(self.io);
+            defer self.gctx_queue_mutex.unlock(self.io);
+            Rewind.copy_texture(self.gctx, self.renderer.resized_framebuffer.texture, preview.texture, self.renderer.resolution);
+        }
+        const to_insert = try self._allocator.create(Rewind.Snapshot);
+        to_insert.* = .{
+            .id = self.rewind.next_snapshot_id,
+            .preview = preview,
+            .data = serialized,
+            .cycle = self.dc._global_cycles,
+        };
+        self.rewind.next_snapshot_id +%= 1;
+        switch (self.config.rewind.compression) {
+            .None => {},
+            .lz4 => to_insert.compression = try self.io.concurrent(Rewind.compress, .{ self._allocator, to_insert }),
+        }
+        if (self.rewind.snapshots.items.len >= self.config.rewind.max_snapshots) {
+            const remove_idx: usize = switch (self.config.rewind.history) {
+                .Linear => 0,
+                .Logarithmic => ridx: {
+                    var candidate: usize = 0;
+                    var best_priority: u64 = @ctz(self.rewind.snapshots.items[0].id);
+                    // Recent snapshots (half of the history) are kept as linear
+                    const log_portion = self.rewind.snapshots.items.len / 2;
+                    for (self.rewind.snapshots.items[0..log_portion], 0..) |snapshot, idx| {
+                        const priority = @ctz(snapshot.id);
+                        if (priority < best_priority) {
+                            candidate = idx;
+                            best_priority = priority;
+                        }
+                    }
+                    break :ridx candidate;
+                },
+            };
+            // Shift all snapshots and insert the new one in place.
+            try self.rewind.reclaim(self.io, self._allocator, self.rewind.snapshots.items[remove_idx]);
+            // Not ideal, but simplifies everything else.
+            for (remove_idx..self.rewind.snapshots.items.len - 1) |idx|
+                self.rewind.snapshots.items[idx] = self.rewind.snapshots.items[idx + 1];
+            self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1] = to_insert;
+        } else {
+            try self.rewind.snapshots.append(self._allocator, to_insert);
+        }
+    }
+}
+
+pub fn previous_snapshot(self: *@This()) void {
+    if (!self.config.rewind.enabled) return;
+    if (self.running) {
+        self.pause();
+        if (self.rewind.snapshots.items.len > 0) {
+            self.rewind.selected_snapshot = @intCast(self.rewind.snapshots.items.len - 1);
+            self.rewind.update_preview(self.gctx, self.renderer.resized_framebuffer.texture, self.renderer.resolution);
+        }
+    } else {
+        if (self.rewind.selected_snapshot > 0) {
+            self.rewind.selected_snapshot -= 1;
+            self.rewind.update_preview(self.gctx, self.renderer.resized_framebuffer.texture, self.renderer.resolution);
+        }
+    }
+}
+
+pub fn next_snapshot(self: *@This()) void {
+    if (!self.config.rewind.enabled) return;
+    if (self.running) {
+        self.pause();
+    } else {
+        if (self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
+            self.rewind.selected_snapshot += 1;
+            self.rewind.update_preview(self.gctx, self.renderer.resized_framebuffer.texture, self.renderer.resolution);
+        }
+    }
+}
+
+fn draw_rewind_ui(self: *@This()) !void {
+    if (!self.config.rewind.enabled) return;
+    if (!self.running and self.rewind.snapshots.items.len > 0) {
+        const window_size = self.window.getFramebufferSize();
+        zgui.setNextWindowPos(.{
+            .cond = .always,
+            .x = @as(f32, @floatFromInt(window_size[0])) / 2.0,
+            .pivot_x = 0.5,
+            .y = @as(f32, @floatFromInt(window_size[1])) - 20.0,
+            .pivot_y = 1.0,
+        });
+        zgui.pushStyleVar2f(.{ .idx = .window_padding, .v = .{ 4.0, 4.0 } });
+        zgui.pushStyleVar1f(.{ .idx = .window_border_size, .v = 0.0 });
+        defer zgui.popStyleVar(.{ .count = 2 });
+        zgui.pushStyleColor4f(.{ .idx = .window_bg, .c = .{ 0.0, 0.0, 0.0, 0.7 } });
+        defer zgui.popStyleColor(.{ .count = 1 });
+        if (zgui.begin("Rewind", .{ .flags = .{
+            .no_title_bar = true,
+            .no_resize = true,
+            .no_scrollbar = true,
+            .no_collapse = true,
+            .always_auto_resize = true,
+        } })) {
+            const DisplayedPreviews = 6;
+            const PreviewWidth = 100;
+            const PreviewHeight = PreviewWidth * (3.0 / 4.0);
+            const timelime_position = zgui.getCursorScreenPos();
+            const total_positions: f32 = @floatFromInt(self.rewind.snapshots.items.len); // The number of snapshots, plus the current frame.
+            {
+                zgui.beginGroup();
+                defer zgui.endGroup();
+                const stride: f32 = total_positions / (DisplayedPreviews - 1);
+                for (0..DisplayedPreviews) |idx| {
+                    const i: u32 = @trunc(stride * @as(f32, @floatFromInt(idx)));
+                    const texture_view = if (i < self.rewind.snapshots.items.len) self.rewind.snapshots.items[i].preview.view else self.rewind.current_frame.view;
+                    if (self.gctx.lookupResource(texture_view)) |tex_id| {
+                        zgui.image(
+                            .{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(tex_id)) },
+                            .{ .w = PreviewWidth, .h = PreviewHeight, .uv0 = .{ 0.0, 0.0 }, .uv1 = .{ 1.0, 1.0 } },
+                        );
+                    } else {
+                        zgui.dummy(.{ .w = PreviewWidth, .h = PreviewHeight });
+                    }
+                    zgui.sameLine(.{ .spacing = 0 });
+                }
+            }
+            zgui.setCursorScreenPos(timelime_position);
+            _ = zgui.invisibleButton("##Timeline", .{ .w = PreviewWidth * DisplayedPreviews, .h = PreviewHeight });
+            if (zgui.isItemActive()) {
+                const mouse_pos = zgui.getMousePos();
+                const rel_x = @max(0.0, @min(mouse_pos[0] - timelime_position[0], PreviewWidth * DisplayedPreviews));
+                const percentage = rel_x / (PreviewWidth * DisplayedPreviews);
+                self.rewind.selected_snapshot = @intFromFloat(percentage * total_positions);
+                self.rewind.update_preview(self.gctx, self.renderer.resized_framebuffer.texture, self.renderer.resolution);
+            }
+
+            // Position indicator
+            const draw_list = zgui.getWindowDrawList();
+            const LabelPadding = .{ 4.0, 2.0 };
+            const target_position_x = timelime_position[0] + (@as(f32, @floatFromInt(self.rewind.selected_snapshot)) / @as(f32, @floatFromInt(self.rewind.snapshots.items.len))) * (PreviewWidth * DisplayedPreviews);
+            self.rewind.indicator_visual_position += 0.5 * (target_position_x - self.rewind.indicator_visual_position);
+            if (@abs(self.rewind.indicator_visual_position - target_position_x) < 1.0) self.rewind.indicator_visual_position = target_position_x;
+            const x = self.rewind.indicator_visual_position;
+            const y = timelime_position[1];
+            draw_list.addLine(.{
+                .p1 = .{ x, y },
+                .p2 = .{ x, y + PreviewHeight + (4 - LabelPadding[1]) },
+                .col = 0xFF000000,
+                .thickness = 4.0,
+            });
+            draw_list.addTriangleFilled(.{
+                .p1 = .{ x, y + 6 },
+                .p2 = .{ x - 6, y - 4 },
+                .p3 = .{ x + 6, y - 4 },
+                .col = 0xFF000000,
+            });
+            draw_list.addLine(.{
+                .p1 = .{ x, y },
+                .p2 = .{ x, y + PreviewHeight + 2 },
+                .col = 0xFFC2753B,
+                .thickness = 2.0,
+            });
+            draw_list.addTriangleFilled(.{
+                .p1 = .{ x, y + 5 },
+                .p2 = .{ x - 5, y - 4 },
+                .p3 = .{ x + 5, y - 4 },
+                .col = 0xFFC2753B,
+            });
+            const text_size = zgui.calcTextSize("-0:00.000", .{});
+            const label_position: [2]f32 = .{
+                std.math.clamp(x - (text_size[0] / 2), timelime_position[0] + LabelPadding[0], timelime_position[0] + PreviewWidth * DisplayedPreviews - text_size[0] - LabelPadding[0]),
+                y + PreviewHeight + 4,
+            };
+            // Label background
+            draw_list.addRectFilled(.{
+                .pmin = .{ label_position[0] - LabelPadding[0], label_position[1] - LabelPadding[1] },
+                .pmax = .{ label_position[0] + text_size[0] + LabelPadding[0], label_position[1] + text_size[1] + LabelPadding[1] },
+                .col = 0xAA000000,
+                .rounding = 4.0,
+            });
+            // Label text
+            if (self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
+                const cycles = self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].cycle;
+                if (cycles < self.dc._global_cycles) {
+                    const cycle_diff = self.dc._global_cycles - cycles;
+                    const minutes = cycle_diff / Dreamcast.SH4Clock / 60;
+                    const seconds = @mod(@as(f32, @floatFromInt(cycle_diff)) / Dreamcast.SH4Clock, 60);
+                    draw_list.addText(label_position, 0xFFFFFFFF, "-{d}:{d:0>6.3}", .{ minutes, seconds });
+                }
+            } else {
+                draw_list.addText(label_position, 0xFFFFFFFF, " 0:00.000", .{});
+            }
+            zgui.dummy(.{ .w = 0.0, .h = text_size[1] });
+
+            if (zgui.button("Cancel", .{})) {
+                self.rewind_cancel();
+            }
+            if (builtin.mode == .Debug and self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
+                zgui.sameLine(.{});
+                zgui.text("Size: {d: >4.1}MB     Available preview texture: {d}", .{
+                    @as(f32, @floatFromInt(self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].data.len)) / 1024 / 1024,
+                    self.rewind.texture_pool.items.len,
+                });
+            }
+            zgui.sameLine(.{});
+            const x_available = zgui.getCursorPosX() + zgui.getContentRegionAvail()[0] - 2 * zgui.getStyle().frame_padding[0];
+            if (self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
+                zgui.setCursorPosX(x_available - zgui.calcTextSize("Rewind", .{})[0]);
+                if (zgui.button("Rewind", .{}))
+                    self.rewind_confirm();
+            } else {
+                zgui.setCursorPosX(x_available - zgui.calcTextSize("Resume", .{})[0]);
+                if (zgui.button("Resume", .{}))
+                    self.rewind_confirm();
+            }
+        }
+        zgui.end();
+    }
 }

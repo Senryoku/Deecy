@@ -792,25 +792,39 @@ pub fn draw(self: *@This()) !void {
             if (zgui.beginTabBar("SettingsTabBar", .{})) {
                 if (zgui.beginTabItem("General", .{})) {
                     _ = zgui.checkbox("Start in Game Launcher", .{ .v = &d.config.auto_start_launcher });
-                    zgui.separator();
                     {
                         zgui.beginDisabled(.{ .disabled = d.running and builtin.mode != .Debug });
                         defer zgui.endDisabled();
                         var flash_updated = false;
-                        zgui.textUnformatted("Dreamcast Configuration");
+                        zgui.separatorText("Dreamcast Configuration");
                         flash_updated = zgui.comboFromEnum("Region", &d.config.region) or flash_updated;
                         zgui.setItemTooltip("Auto: Uses the region of the currently loaded game.", .{});
                         if (zgui.comboFromEnum("Cable", &d.config.video_cable))
                             d.dc.cable_type = d.config.video_cable.to_dreamcast();
                         zgui.setItemTooltip("Auto: VGA by default, unless the game does not support it.", .{});
 
-                        zgui.separator();
-                        zgui.textUnformatted("Bios Configuration");
+                        zgui.separatorText("Bios Configuration");
                         flash_updated = zgui.comboFromEnum("Language", &d.config.bios_config.language) or flash_updated;
                         flash_updated = zgui.comboFromEnum("Sound Mode", &d.config.bios_config.sound_mode) or flash_updated;
                         flash_updated = zgui.comboFromEnum("Auto Start", &d.config.bios_config.auto_start) or flash_updated;
                         if (flash_updated)
                             try d.dc.load_flash(d.io, d.config.region.to_dreamcast(), d.config.bios_config);
+                    }
+                    {
+                        zgui.separatorText("Rewind");
+                        _ = zgui.checkbox("Enabled", .{ .v = &d.config.rewind.enabled });
+                        zgui.beginDisabled(.{ .disabled = !d.config.rewind.enabled });
+                        defer zgui.endDisabled();
+                        var period: i32 = @intCast(d.config.rewind.period);
+                        if (zgui.inputInt("Period (s)", .{ .v = &period, .step = 1 })) {
+                            d.config.rewind.period = @intCast(@max(1, period));
+                        }
+                        var max_snapshots: i32 = @intCast(d.config.rewind.max_snapshots);
+                        if (zgui.inputInt("Max. Snapshots", .{ .v = &max_snapshots, .step = 1 })) {
+                            d.config.rewind.max_snapshots = @intCast(@max(1, max_snapshots));
+                        }
+                        _ = zgui.comboFromEnum("Compression", &d.config.rewind.compression);
+                        _ = zgui.comboFromEnum("History", &d.config.rewind.history);
                     }
                     zgui.endTabItem();
                 }
@@ -828,7 +842,7 @@ pub fn draw(self: *@This()) !void {
                         zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
                         return;
                     }
-                    zgui.text("Curent Resolution: {d}x{d}", .{ d.renderer.resolution.width, d.renderer.resolution.height });
+                    zgui.text("Current Resolution: {d}x{d}", .{ d.renderer.resolution.width, d.renderer.resolution.height });
                     var resolution_update = false;
                     var resolution: enum(u8) { Native = 1, x2 = 2, x3 = 3, x4 = 4, x5 = 5, x6 = 6 } = @enumFromInt(d.renderer.resolution.width / d.config.renderer.aspect_ratio.width());
                     zgui.setNextItemWidth(dropdown_size);
@@ -858,6 +872,7 @@ pub fn draw(self: *@This()) !void {
                             .height = Deecy.Renderer.NativeResolution.height * d.config.renderer.internal_resolution_factor,
                         };
                         d.renderer.on_inner_resolution_change();
+                        d.rewind.on_inner_resolution_change(d.gctx);
                         //  Force a re-render if we're paused
                         if (!d.running) try d.renderer.render(&d.dc.gpu, false);
                     }
@@ -906,10 +921,9 @@ pub fn draw(self: *@This()) !void {
                             }
                             zgui.endCombo();
                         }
-                        zgui.separator();
                     }
 
-                    zgui.text("Experimental settings", .{});
+                    zgui.separatorText("Experimental settings");
                     zgui.setNextItemWidth(dropdown_size);
                     _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
                     _ = zgui.checkbox("Framebuffer Emulation", .{ .v = &d.config.renderer.framebuffer_emulation });
@@ -1266,9 +1280,8 @@ pub fn draw(self: *@This()) !void {
                         }
                         zgui.endTable();
                     }
-                    zgui.separator();
                     {
-                        zgui.textDisabled("Add shortcut:", .{});
+                        zgui.separatorText("Add shortcut");
                         const static = struct {
                             var action = Shortcuts.Action.Name.Screenshot;
                             var key: ?Shortcuts.Key = null;
@@ -1432,7 +1445,7 @@ pub fn draw_game_library(self: *@This()) !void {
                             _ = zgui.tableNextColumn();
                             if (entry.view) |view| {
                                 const uv = 0.25 * RowHeight / ImageWidth;
-                                zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(((self.deecy.gctx.lookupResource(view).?)))) }, .{ .w = ImageWidth, .h = RowHeight, .uv0 = .{ 0.5, 0.5 - uv }, .uv1 = .{ 1.0, 0.5 + uv } });
+                                zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(self.deecy.gctx.lookupResource(view).?)) }, .{ .w = ImageWidth, .h = RowHeight, .uv0 = .{ 0.5, 0.5 - uv }, .uv1 = .{ 1.0, 0.5 + uv } });
                             }
                             _ = zgui.tableNextColumn();
                             zgui.alignTextToFramePadding();
