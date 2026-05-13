@@ -823,7 +823,7 @@ pub fn draw(self: *@This()) !void {
                         if (zgui.inputInt("Max. Snapshots", .{ .v = &max_snapshots, .step = 1 })) {
                             d.config.rewind.max_snapshots = @intCast(@max(1, max_snapshots));
                         }
-                        _ = zgui.checkbox("Compress", .{ .v = &d.config.rewind.compress });
+                        _ = zgui.comboFromEnum("Compression", &d.config.rewind.compression);
                         _ = zgui.checkbox("Linear timeline", .{ .v = &d.config.rewind.linear_timeline });
                     }
                     zgui.endTabItem();
@@ -872,6 +872,7 @@ pub fn draw(self: *@This()) !void {
                             .height = Deecy.Renderer.NativeResolution.height * d.config.renderer.internal_resolution_factor,
                         };
                         d.renderer.on_inner_resolution_change();
+                        d.rewind.on_inner_resolution_change(d.gctx);
                         //  Force a re-render if we're paused
                         if (!d.running) try d.renderer.render(&d.dc.gpu, false);
                     }

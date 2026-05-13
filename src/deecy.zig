@@ -361,8 +361,7 @@ const Configuration = struct {
         period: usize = 1,
         /// Maximum number of snapshots. Max. rewind time is `period * max_snapshots`.
         max_snapshots: usize = 60,
-        /// TODO: Compress asynchronously when enabled.
-        compress: bool = false,
+        compression: Rewind.Snapshot.Compression = .lz4,
         /// TODO: Keep older snapshots for longer without increasing memory usage by overwriting specific snapshots
         ///       rather than always the oldest one, effectivelly increasing the period for older snapshots.
         linear_timeline: bool = true,
@@ -1544,7 +1543,22 @@ pub fn pause(self: *@This()) void {
             self._dc_thread = null;
         }
         self.dc.maple.flush_vmus();
-        self.rewind.ui_init(self.gctx, self.renderer.resized_framebuffer.texture, self.renderer.resolution);
+
+        if (self.config.rewind.enabled) {
+            // Needed by the render_request check, and rewind.ui_init will copy the framebuffer texture.
+            self.gctx_queue_mutex.lock(self.io) catch |err| return deecy_log.err("Failed to lock gctx queue: {}", .{err});
+            defer self.gctx_queue_mutex.unlock(self.io);
+
+            // Honor pending async render_request immediately, before manipulating resized_framebuffer.
+            // FIXME: This isn't ideal.
+            if (self.renderer.render_request) {
+                self.renderer.update(&self.dc.gpu) catch |err| return deecy_log.err("Failed to update renderer: {}", .{err});
+                self.renderer.render(&self.dc.gpu, false) catch |err| return deecy_log.err("Failed to render: {}", .{err});
+                self.renderer.render_request = false;
+            }
+
+            self.rewind.ui_init(self.gctx, self.renderer.resized_framebuffer.texture, self.renderer.resolution);
+        }
     }
     self.stop_rumble();
 }
@@ -2004,17 +2018,19 @@ pub fn save_state(self: *@This(), index: usize) !void {
     const start_time = std.Io.Clock.awake.now(self.io);
     deecy_log.info("Saving State #{d}...", .{index});
 
-    // var uncompressed_array = try std.ArrayList(u8).initCapacity(self._allocator, 32 * 1024 * 1024);
+    const serialized = try self.serialize();
+    deecy_log.info("  Serialized state in {f}. Compressing...", .{start_time.durationTo(std.Io.Clock.awake.now(self.io))});
+    try self.launch_async(compress_and_dump_save_state, .{ self, index, serialized });
+}
+
+fn serialize(self: *@This()) ![]const u8 {
     var allocating_writer = try std.Io.Writer.Allocating.initCapacity(self._allocator, 32 * 1024 * 1024);
     defer allocating_writer.deinit();
     var writer = &allocating_writer.writer;
     _ = try self.dc.serialize(writer);
     _ = try writer.write(std.mem.asBytes(&self._cycles_to_run));
     try writer.flush();
-
-    deecy_log.info("  Serialized state in {f}. Compressing...", .{start_time.durationTo(std.Io.Clock.awake.now(self.io))});
-
-    try self.launch_async(compress_and_dump_save_state, .{ self, index, try allocating_writer.toOwnedSlice() });
+    return try allocating_writer.toOwnedSlice();
 }
 
 fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array: []const u8) !void {
@@ -2074,16 +2090,18 @@ pub fn load_state(self: *@This(), index: usize) !void {
     const decompressed = try lz4.Standard.decompress(self._allocator, compressed, header.uncompressed_size);
     defer self._allocator.free(decompressed);
 
-    var reader = std.Io.Reader.fixed(decompressed);
-
     try self.reset();
-
-    try self.dc.deserialize(&reader);
-    try reader.readSliceAll(std.mem.asBytes(&self._cycles_to_run));
+    try self.deserialize(decompressed);
 
     deecy_log.info("Loaded State #{d} from '{s}' in {f}", .{ index, save_slot_path, start_time.durationTo(.now(self.io, .awake)) });
 
     self.ui.notifications.push("State Loaded", .{}, "Save State #{d} loaded successfully.", .{index});
+}
+
+fn deserialize(self: *@This(), serialized: []const u8) !void {
+    var reader = std.Io.Reader.fixed(serialized);
+    try self.dc.deserialize(&reader);
+    try reader.readSliceAll(std.mem.asBytes(&self._cycles_to_run));
 }
 
 fn save_config(self: *@This()) !void {
@@ -2255,16 +2273,13 @@ fn rewind_confirm_impl(self: *@This()) !void {
             try self.dc.reset();
             self.renderer.reset();
             const snapshot = self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)];
-            if (snapshot.compressed.cancel(self.io)) {
-                const decompressed = try lz4.Standard.decompress(self._allocator, snapshot.data, 32 * 1024 * 1024);
-                defer self._allocator.free(decompressed);
-                var reader = std.Io.Reader.fixed(decompressed);
-                try self.dc.deserialize(&reader);
-                try reader.readSliceAll(std.mem.asBytes(&self._cycles_to_run));
-            } else {
-                var reader = std.Io.Reader.fixed(self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].data);
-                try self.dc.deserialize(&reader);
-                try reader.readSliceAll(std.mem.asBytes(&self._cycles_to_run));
+            switch (snapshot.compression.cancel(self.io)) {
+                .None => try self.deserialize(snapshot.data),
+                .lz4 => {
+                    const decompressed = try lz4.Standard.decompress(self._allocator, snapshot.data, 32 * 1024 * 1024);
+                    defer self._allocator.free(decompressed);
+                    try self.deserialize(decompressed);
+                },
             }
             try self.rewind.discard_after(self.io, self._allocator, self.rewind.selected_snapshot);
         }
@@ -2290,13 +2305,9 @@ pub fn rewind_tick(self: *@This()) !void {
         self.rewind.clear(self.io, self._allocator, self.gctx);
     }
     if (self.rewind.snapshots.items.len == 0 or (self.dc._global_cycles - self.rewind.snapshots.items[self.rewind.snapshots.items.len - 1].cycle) / Dreamcast.SH4Clock >= self.config.rewind.period) {
-        var allocating_writer = try std.Io.Writer.Allocating.initCapacity(self._allocator, 32 * 1024 * 1024);
-        defer allocating_writer.deinit();
-        var writer = &allocating_writer.writer;
-        _ = try self.dc.serialize(writer);
-        _ = try writer.write(std.mem.asBytes(&self._cycles_to_run));
-        try writer.flush();
-        const preview: RendererModule.TextureAndView = try self.rewind.get_preview_texture(self.io, self._allocator, self.gctx, self.renderer.resolution);
+        const serialized = try self.serialize();
+        errdefer self._allocator.free(serialized);
+        const preview = try self.rewind.get_preview_texture(self.io, self._allocator, self.gctx, self.renderer.resolution);
         {
             try self.gctx_queue_mutex.lock(self.io);
             defer self.gctx_queue_mutex.unlock(self.io);
@@ -2305,20 +2316,17 @@ pub fn rewind_tick(self: *@This()) !void {
         const to_insert = try self._allocator.create(Rewind.Snapshot);
         to_insert.* = .{
             .preview = preview,
-            .data = try allocating_writer.toOwnedSlice(),
+            .data = serialized,
             .cycle = self.dc._global_cycles,
         };
-        if (self.config.rewind.compress)
-            to_insert.compressed = try self.io.concurrent(Rewind.compress, .{ &self.rewind, self.io, self._allocator, to_insert });
-        try self.rewind.snapshots_array_mutex.lock(self.io);
-        defer self.rewind.snapshots_array_mutex.unlock(self.io);
+        switch (self.config.rewind.compression) {
+            .None => {},
+            .lz4 => to_insert.compression = try self.io.concurrent(Rewind.compress, .{ self._allocator, to_insert }),
+        }
         if (self.rewind.snapshots.items.len >= self.config.rewind.max_snapshots) {
             // Shift all snapshots (loosing the oldest) and insert the new one in place.
+            try self.rewind.reclaim(self.io, self._allocator, self.rewind.snapshots.items[0]);
             // FIXME: Not ideal, but simplifies everything else.
-            _ = self.rewind.snapshots.items[0].compressed.cancel(self.io);
-            self._allocator.free(self.rewind.snapshots.items[0].data);
-            try self.rewind.release_preview_texture(self.io, self._allocator, self.rewind.snapshots.items[0].preview);
-            self._allocator.destroy(self.rewind.snapshots.items[0]);
             for (0..self.rewind.snapshots.items.len - 1) |idx| {
                 self.rewind.snapshots.items[idx] = self.rewind.snapshots.items[idx + 1];
             }
@@ -2335,7 +2343,6 @@ pub fn previous_snapshot(self: *@This()) void {
         self.pause();
         if (self.rewind.snapshots.items.len > 0) {
             self.rewind.selected_snapshot = @intCast(self.rewind.snapshots.items.len - 1);
-            // FIXME: Doesn't work as expected.
             self.rewind.update_preview(self.gctx, self.renderer.resized_framebuffer.texture, self.renderer.resolution);
         }
     } else {
