@@ -1926,7 +1926,7 @@ fn save_screenshot_impl(self: *const @This()) !void {
     const day_seconds = epoch_seconds.getDaySeconds();
     const year_day = epoch_seconds.getEpochDay().calculateYearDay();
     const month_day = year_day.calculateMonthDay();
-    const filepath = try std.fmt.allocPrint(self._allocator, "screenshots/{s}_{d:0>4}-{d:0>2}-{d:0>2}_{d:0>2}-{d:0>2}-{d:0>2}.bmp", .{
+    const filepath = try std.fmt.allocPrint(self._allocator, "screenshots/{s}_{d:0>4}-{d:0>2}-{d:0>2}_{d:0>2}-{d:0>2}-{d:0>2}.png", .{
         self.get_product_name(),
         year_day.year,
         month_day.month.numeric(),
@@ -1946,7 +1946,7 @@ fn save_screenshot_impl(self: *const @This()) !void {
 
     var buffer: [1024]u8 = undefined;
     var file_writer = file.writer(self.io, &buffer);
-    try screen.write_bmp(&file_writer.interface);
+    try screen.write_png(self._allocator, &file_writer.interface);
 
     deecy_log.info(termcolor.green("Screenshot saved as '{s}'"), .{filepath});
     self.ui.notifications.push("Screenshot Saved", .{}, "Screenshot saved as '{s}.", .{filepath});
