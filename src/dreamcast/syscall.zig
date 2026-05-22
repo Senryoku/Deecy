@@ -1,3 +1,5 @@
+//! HLE Re-Implementations of syscalls normally provided by the Boot ROM
+
 const std = @import("std");
 const termcolor = @import("termcolor");
 
@@ -9,8 +11,6 @@ const HardwareRegister = HardwareRegisters.HardwareRegister;
 const gdrom_hle = @import("gdrom_hle.zig");
 
 const syscall_log = std.log.scoped(.syscall);
-
-// HLE Re-Implementations of syscalls normally provided by the Boot ROM
 
 inline fn return_from_syscall(dc: *Dreamcast) void {
     // Syscall are called using JSR, simulate a RTS/N (return from subroutine, without delay slot)
@@ -69,7 +69,7 @@ pub fn syscall_romfont(dc: *Dreamcast) void {
 pub fn syscall_flashrom(dc: *Dreamcast) void {
     switch (dc.cpu.R(7).*) {
         0 => {
-            syscall_log.debug("FLASHROM_INFO  (R4={X:0>8}, R5={X:0>8})", .{ dc.cpu.R(4).*, dc.cpu.R(5).* });
+            syscall_log.info("FLASHROM_INFO  (R4={X:0>8}, R5={X:0>8})", .{ dc.cpu.R(4).*, dc.cpu.R(5).* });
             // Queries the extent of a single partition in the system flashrom.
             // Args: r4 = partition number (0-4)
             //       r5 = pointer to two 32 bit integers to receive the result. The first will be the offset of the partition start, in bytes from the start of the flashrom. The second will be the size of the partition, in bytes.
@@ -89,7 +89,7 @@ pub fn syscall_flashrom(dc: *Dreamcast) void {
             }
         },
         1 => {
-            syscall_log.debug("FLASHROM_READ  (R4={X:0>8}, R5={X:0>8}, R6={X:0>8})", .{ dc.cpu.R(4).*, dc.cpu.R(5).*, dc.cpu.R(6).* });
+            syscall_log.info("FLASHROM_READ  (R4={X:0>8}, R5={X:0>8}, R6={X:0>8})", .{ dc.cpu.R(4).*, dc.cpu.R(5).*, dc.cpu.R(6).* });
             // Read data from the system flashrom.
             // Args: r4 = read start position, in bytes from the start of the flashrom
             //       r5 = pointer to destination buffer
@@ -103,7 +103,7 @@ pub fn syscall_flashrom(dc: *Dreamcast) void {
             dc.cpu.R(0).* = len;
         },
         2 => {
-            syscall_log.debug("FLASHROM_WRITE  (R4={X:0>8}, R5={X:0>8}, R6={X:0>8})", .{ dc.cpu.R(4).*, dc.cpu.R(5).*, dc.cpu.R(6).* });
+            syscall_log.info("FLASHROM_WRITE  (R4={X:0>8}, R5={X:0>8}, R6={X:0>8})", .{ dc.cpu.R(4).*, dc.cpu.R(5).*, dc.cpu.R(6).* });
             // Write data to the system flashrom.
             //   r4 = write start position, in bytes from the start of the flashrom
             //   r5 = pointer to source buffer

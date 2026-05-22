@@ -439,7 +439,7 @@ pub const SH4 = struct {
         self.execution_state = .Running;
     }
 
-    // Reset state to after bios.
+    /// Reset state to after bios.
     pub fn state_after_boot_rom(self: *@This()) void {
         self.set_sr(@bitCast(@as(u32, 0x400000F1)));
         self.set_fpscr(@as(u32, 0x00040001));

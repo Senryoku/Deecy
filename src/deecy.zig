@@ -349,6 +349,7 @@ const Configuration = struct {
         }
     } = .Auto,
     bios_config: Dreamcast.BiosConfig = .{},
+    bios_emulation: enum { Original, @"HLE Replacement" } = .Original,
 
     audio_volume: f32 = 0.3,
     dsp_emulation: DreamcastModule.AICAModule.DSPEmulation = .JIT,
@@ -1305,6 +1306,36 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
         self.enabled_cheats = try cheat_list.toOwnedSlice(self._allocator);
     }
 
+    switch (self.config.bios_emulation) {
+        .Original => {},
+        .@"HLE Replacement" => {
+            try self.dc.skip_bios();
+            try self.dc.install_hle_syscalls();
+            try self.dc.load_ip_bin_from_disc();
+
+            // Load 1ST_READ.BIN (Actual name might change, get it from IP.BIN loaded in RAM)
+            const first_read_name = self.dc.ram[0x00008000..][0x60..0x70];
+            const name_end = std.mem.indexOfScalar(u8, first_read_name, 0x20) orelse first_read_name.len;
+            var first_read: []u8 = try self._allocator.alloc(u8, name_end + 2);
+            defer self._allocator.free(first_read);
+            @memcpy(first_read[0..name_end], first_read_name[0..name_end]);
+            @memcpy(first_read[name_end .. name_end + 2], ";1");
+            const file_size = self.dc.gdrom.disc.?.load_file(first_read, self.dc.ram[0x00010000..]) catch |err| size: {
+                if (!std.mem.eql(u8, first_read, "1ST_READ.BIN;1")) {
+                    std.log.err("Failed to load '{s}': {t}. Checking '1ST_READ.BIN;1'...", .{ first_read, err });
+                    break :size try self.dc.gdrom.disc.?.load_file("1ST_READ.BIN;1", self.dc.ram[0x00010000..]);
+                } else return err;
+            };
+
+            if (self.dc.gdrom.disc.?.get_format() == .CDROM_XA) {
+                const scrambled_copy = try self._allocator.dupe(u8, self.dc.ram[0x00010000..][0..file_size]);
+                defer self._allocator.free(scrambled_copy);
+                var descrambler = @import("descrambler.zig").init(file_size);
+                descrambler.descramble(scrambled_copy, self.dc.ram[0x00010000..][0..file_size]);
+            }
+        },
+    }
+
     if (self.config.per_game_vmu) try self.load_per_game_vmu();
     try self.check_save_state_slots();
 
@@ -1327,7 +1358,8 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
 pub fn load_launcher(self: *@This()) !void {
     try self.stop();
     try self.reset();
-    try self.dc.skip_bios(true);
+    try self.dc.skip_bios();
+    try self.dc.install_hle_syscalls();
     if (builtin.mode == .Debug) {
         _ = try std.Io.Dir.cwd().readFile(self.io, "./src/assets/launcher.bin", self.dc.ram[0x10000..]);
     } else {
@@ -1348,10 +1380,11 @@ pub fn start_launcher(self: *@This()) void {
 }
 
 pub fn load_binary(self: *@This(), path: []const u8, ip_bin_path: ?[]const u8) !void {
+    try self.dc.skip_bios();
     // FIXME: I'd rather be using LLE syscalls here,
     //        but at least the ROM font one requires some initialization
     //        and won't work if the boot ROM is skipped.
-    try self.dc.skip_bios(true);
+    try self.dc.install_hle_syscalls();
 
     var entry_point: u32 = 0xAC010000;
 

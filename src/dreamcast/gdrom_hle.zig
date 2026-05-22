@@ -112,14 +112,20 @@ pub fn mainloop(dc: *Dreamcast) void {
             for (0..dc.gdrom_hle.params.len) |i|
                 gdrom_hle_log.debug("      {d}  {X:0>8}", .{ i, dc.gdrom_hle.params[i] });
 
-            const dest_slice = @as([*]u8, @ptrCast(dc._get_memory(dest & 0x1FFFFFFF)))[0..408];
-            const bytes_written = dc.gdrom.write_toc(dest_slice, if (area == 1) .DoubleDensity else .SingleDensity);
-            dc.gdrom_hle.result = .{ 0, 0, bytes_written, 0 };
-
+            if (dc.gdrom.disc) |disc| {
+                const dest_slice = @as([*]u8, @ptrCast(dc._get_memory(dest & 0x1FFFFFFF)))[0..408];
+                const bytes_written = disc.write_toc(dest_slice, if (area == 1) .DoubleDensity else .SingleDensity);
+                const dest_u32 = std.mem.bytesAsSlice(u32, dest_slice[0..bytes_written]);
+                for (dest_u32) |*v|
+                    v.* = @byteSwap(v.*);
+                dc.gdrom_hle.result = .{ 0, 0, bytes_written, 0 };
+            } else {
+                dc.gdrom_hle.result = .{ 0xFFFFFFFF, 0, 0, 0 };
+            }
             dc.gdrom.state = .Standby;
         },
         .GetSCD => {
-            gdrom_hle_log.warn(termcolor.yellow("    Unimplemented GDROM command GetSCD"), .{});
+            gdrom_hle_log.warn("Unimplemented GDROM command GetSCD", .{});
             for (0..dc.gdrom_hle.params.len) |i|
                 gdrom_hle_log.debug("      {d}  {X:0>8}", .{ i, dc.gdrom_hle.params[i] });
 
@@ -131,7 +137,7 @@ pub fn mainloop(dc: *Dreamcast) void {
             dc.gdrom.state = .Standby;
         },
         else => {
-            gdrom_hle_log.warn(termcolor.yellow("    Unhandled GDROM command {any}"), .{dc.gdrom_hle.command});
+            gdrom_hle_log.warn("Unhandled GDROM command {}", .{dc.gdrom_hle.command});
             for (0..dc.gdrom_hle.params.len) |i|
                 gdrom_hle_log.debug("      {d}  {X:0>8}", .{ i, dc.gdrom_hle.params[i] });
             dc.gdrom.state = .Standby;

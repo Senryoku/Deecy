@@ -380,7 +380,7 @@ pub const Dreamcast = struct {
         @memcpy(self.ram[start_addr .. start_addr + bin.len], bin);
     }
 
-    pub fn skip_bios(self: *@This(), hle_syscalls: bool) !void {
+    pub fn skip_bios(self: *@This()) !void {
         self.cpu.state_after_boot_rom();
 
         @memset(self.ram[0x00200000..0x00300000], 0x00); // FIXME: I think KallistiOS relies on that, or maybe I messed up somewhere else. (the BootROM does clear this section of RAM)
@@ -421,21 +421,6 @@ pub const Dreamcast = struct {
             .{ 0x8C0000E0, 0x8C000800 },
         }) |p| {
             try self.cpu.write(u32, p[0], p[1]);
-        }
-        // Replace them by HLE counterparts (see syscall.zig) by inserting fake opcodes.
-        if (hle_syscalls) {
-            // System
-            try self.cpu.write(u16, 0x8C003C00, 0b0000000000010000);
-            // Font
-            try self.cpu.write(u16, 0x8C003D80, 0b0000000000100000);
-            // Flashrom
-            try self.cpu.write(u16, 0x8C003D00, 0b0000000000110000);
-            // GD
-            try self.cpu.write(u16, 0x8C001000, 0b0000000001000000);
-            // GD2
-            try self.cpu.write(u16, 0x8C0010F0, 0b0000000001010000);
-            // Misc
-            try self.cpu.write(u16, 0x8C000800, 0b0000000001100000);
         }
 
         // Other set values, IDK
@@ -487,22 +472,46 @@ pub const Dreamcast = struct {
         self.gpu.finalize_deserialization();
     }
 
+    /// Replaces bios syscalls by HLE counterparts (see syscall.zig) by inserting fake opcodes at the start of handlers.
+    pub fn install_hle_syscalls(self: *@This()) !void {
+        // System
+        try self.cpu.write(u16, 0x8C003C00, 0b0000000000010000);
+        // Font
+        try self.cpu.write(u16, 0x8C003D80, 0b0000000000100000);
+        // Flashrom
+        try self.cpu.write(u16, 0x8C003D00, 0b0000000000110000);
+        // GD
+        try self.cpu.write(u16, 0x8C001000, 0b0000000001000000);
+        // GD2
+        try self.cpu.write(u16, 0x8C0010F0, 0b0000000001010000);
+        // Misc
+        try self.cpu.write(u16, 0x8C000800, 0b0000000001100000);
+    }
+
     pub fn load_ip_bin_from_disc(self: *@This()) !void {
         if (self.gdrom.disc) |*disc| {
             // Look into the PVD for an IP.BIN file and load it into RAM. This should fail on original discs.
             _ = disc.load_file("IP.BIN;1", self.ram[0x00008000..]) catch {
-                // If not found, load the first 16 sectors of the first data track of the high density session (normal behaviour).
-                _ = disc.load_sectors(45150, 16 * 2048, self.ram[0x00008000..]);
-
-                // IP.bin patches (from the original bootrom)
-                inline for (.{
-                    .{ 0xAC0090D8, 0x5113 },
-                    .{ 0xAC00940A, 0x000B },
-                    .{ 0xAC00940C, 0x0009 },
-                }) |p| {
-                    try self.cpu.write(u16, p[0], p[1]);
+                switch (disc.get_format()) {
+                    .CDROM_XA => {
+                        _ = disc.load_sectors(150, 16, self.ram[0x00008000..]);
+                    },
+                    .GDROM => {
+                        // If not found, load the first 16 sectors of the first data track of the high density session (normal behaviour).
+                        _ = disc.load_sectors(45150, 16, self.ram[0x00008000..]);
+                    },
+                    else => return error.Unimplemented,
                 }
             };
+
+            // IP.bin patches (from the original bootrom)
+            inline for (.{
+                .{ 0xAC0090D8, 0x5113 },
+                .{ 0xAC00940A, 0x000B },
+                .{ 0xAC00940C, 0x0009 },
+            }) |p| {
+                try self.cpu.write(u16, p[0], p[1]);
+            }
         }
     }
 

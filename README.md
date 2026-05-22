@@ -53,7 +53,6 @@ Keyboard bindings can be customized in the settings. Defaults for controller 1:
 | --no-realtime | Starts with unlimited emulation speed |
 | --load-state | Loads a save state on startup | Path to a Deecy save state | Use with -g |
 | --stop | Prevent automatic start of emulation | | Use with -g or -b |
-| --skip-bios | Skip default BIOS. | | Experimental |
 | -b     | Load and Execute a .bin file | Path to a .bin file | Will also skip the BIOS. Experimental |
 | -i     | Replace default IP.BIN file | Path to an IP.BIN file | Use with -b only |
 | --fullscreen | Starts in fullscreen | | |

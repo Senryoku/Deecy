@@ -804,9 +804,24 @@ pub fn draw(self: *@This()) !void {
                         zgui.setItemTooltip("Auto: VGA by default, unless the game does not support it.", .{});
 
                         zgui.separatorText("Bios Configuration");
-                        flash_updated = zgui.comboFromEnum("Language", &d.config.bios_config.language) or flash_updated;
-                        flash_updated = zgui.comboFromEnum("Sound Mode", &d.config.bios_config.sound_mode) or flash_updated;
-                        flash_updated = zgui.comboFromEnum("Auto Start", &d.config.bios_config.auto_start) or flash_updated;
+                        _ = zgui.comboFromEnum("Type", &d.config.bios_emulation);
+                        zgui.setItemTooltip(
+                            \\ Type of bios emulation for discs (Note that raw executables always use HLE)
+                            \\   Original: Uses your supplied dc_boot.bin file.
+                            \\   HLE Replacement: Skips the original bios and uses High-Level replacement syscalls. Experimental.
+                        , .{});
+                        if (d.config.bios_emulation == .@"HLE Replacement") {
+                            zgui.sameLine(.{});
+                            zgui.textColored(common.Yellow, Icons.TriangleExclamation, .{});
+                            zgui.setItemTooltip("The HLE Replacement Bios is considered experimental.", .{});
+                        }
+                        {
+                            zgui.beginDisabled(.{ .disabled = d.config.bios_emulation != .Original });
+                            defer zgui.endDisabled();
+                            flash_updated = zgui.comboFromEnum("Language", &d.config.bios_config.language) or flash_updated;
+                            flash_updated = zgui.comboFromEnum("Sound Mode", &d.config.bios_config.sound_mode) or flash_updated;
+                            flash_updated = zgui.comboFromEnum("Auto Start", &d.config.bios_config.auto_start) or flash_updated;
+                        }
                         if (flash_updated)
                             try d.dc.load_flash(d.io, d.config.region.to_dreamcast(), d.config.bios_config);
                     }

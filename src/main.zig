@@ -25,12 +25,12 @@ pub const std_options: std.Options = .{
         .{ .scope = .sh4_jit, .level = .warn },
         .{ .scope = .arm_jit, .level = .info },
         .{ .scope = .x86_64_emitter, .level = .info },
-        .{ .scope = .syscall, .level = .debug },
+        .{ .scope = .syscall, .level = .info },
         .{ .scope = .aica, .level = .info },
         .{ .scope = .dsp, .level = .info },
         .{ .scope = .holly, .level = .warn },
         .{ .scope = .gdrom, .level = .warn },
-        .{ .scope = .gdrom_hle, .level = .debug },
+        .{ .scope = .gdrom_hle, .level = .info },
         .{ .scope = .cdi, .level = .info },
         .{ .scope = .chd, .level = .info },
         // .{ .scope = .chd_flac, .level = .debug },
@@ -86,7 +86,6 @@ pub fn main(init: std.process.Init) !void {
 
     var disc_path: ?[]const u8 = null;
 
-    var skip_bios = false;
     var start_immediately = false;
     var force_stop = false;
     var force_render = false; // Enable to re-render every time and help capturing with RenderDoc (will mess with framebuffer emulation).
@@ -124,8 +123,6 @@ pub fn main(init: std.process.Init) !void {
                 d.config.per_game_vmu = false;
             } else if (std.mem.eql(u8, arg, "-d")) {
                 dc.cpu.debug_trace = true;
-            } else if (std.mem.eql(u8, arg, "--skip-bios")) {
-                skip_bios = true;
             } else if (std.mem.eql(u8, arg, "--stop")) {
                 force_stop = true;
             } else if (std.mem.eql(u8, arg, "--force-render")) {
@@ -133,9 +130,8 @@ pub fn main(init: std.process.Init) !void {
             } else if (std.mem.eql(u8, arg, "--no-realtime")) {
                 d.realtime = false;
             } else if (std.mem.eql(u8, arg, "--fullscreen")) {
-                if (!d.config.fullscreen) {
+                if (!d.config.fullscreen)
                     d.toggle_fullscreen();
-                }
             } else if (std.mem.eql(u8, arg, "--load-state")) {
                 const num_str = args_iterator.next() orelse {
                     std.log.err(termcolor.red("Expected state number after --load-state."), .{});
@@ -170,45 +166,14 @@ pub fn main(init: std.process.Init) !void {
         start_immediately = true;
     } else if (disc_path) |path| {
         std.log.info("Loading Disc: '{s}'...", .{path});
-
         try d.load_disc(path);
-
-        if (skip_bios) {
-            try dc.skip_bios(true);
-            try dc.load_ip_bin_from_disc();
-
-            // Load 1ST_READ.BIN (Actual name might change, get it from IP.BIN loaded in RAM)
-            const first_read_name = dc.ram[0x00008000..][0x60..0x70];
-            const name_end = std.mem.indexOfScalar(u8, first_read_name, 0x20) orelse first_read_name.len;
-            var first_read: []u8 = try allocator.alloc(u8, name_end + 2);
-            defer allocator.free(first_read);
-            @memcpy(first_read[0..name_end], first_read_name[0..name_end]);
-            @memcpy(first_read[name_end .. name_end + 2], ";1");
-            _ = dc.gdrom.disc.?.load_file(first_read, dc.ram[0x00010000..]) catch |err| {
-                if (!std.mem.eql(u8, first_read, "1ST_READ.BIN;1")) {
-                    std.log.err("Failed to load '{s}': {t}. Checking '1ST_READ.BIN;1'...", .{ first_read, err });
-                    _ = try dc.gdrom.disc.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]);
-                } else return err;
-            };
-        }
-
-        if (load_state) |state| {
-            try d.load_state(state);
-        }
-
+        if (load_state) |state| try d.load_state(state);
         start_immediately = true;
         d.set_display_ui(false);
     } else if (d.config.auto_start_launcher) {
         try d.load_launcher();
         start_immediately = true;
     } else {
-        if (skip_bios) {
-            // Boot to menu
-            try dc.skip_bios(true);
-            // Skip IP.bin (Maybe we should bundle one to load here).
-            dc.cpu.pc = 0xAC010000;
-        }
-
         try d.launch_async(Deecy.UI.refresh_games, .{d.ui});
     }
 
