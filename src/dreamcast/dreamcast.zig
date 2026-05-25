@@ -608,15 +608,16 @@ pub const Dreamcast = struct {
                 self.hw_register(T, .SB_MDAPRO).* = value;
             },
             .SB_MDST => if (value == 1) self.start_maple_dma(),
-            .SB_ISTNRM => {
-                if (T != u32) return log.err("Invalid Write({any}) to 0x{X:0>8} (SB_ISTNRM)\n", .{ T, addr });
+            .SB_ISTNRM, .SB_ISTERR => {
+                if (T != u32) return log.err("Invalid Write({any}) to {t}\n", .{ T, reg });
                 // Interrupt can be cleared by writing "1" to the corresponding bit.
-                self.hw_register(u32, .SB_ISTNRM).* &= ~(value & 0x3FFFFF);
+                // NOTE: In SB_ISTNRM case, higher bits are not writable. This is enforced by check_sb_interrupts.
+                self.hw_register(u32, reg).* &= ~value;
+                self.check_sb_interrupts();
             },
-            .SB_ISTERR => {
-                if (T != u32) return log.err("Invalid Write({any}) to 0x{X:0>8} (SB_ISTERR)\n", .{ T, addr });
-                // Interrupt can be cleared by writing "1" to the corresponding bit.
-                self.hw_register(u32, .SB_ISTERR).* &= ~value;
+            .SB_IML6NRM, .SB_IML6EXT, .SB_IML6ERR, .SB_IML4NRM, .SB_IML4EXT, .SB_IML4ERR, .SB_IML2NRM, .SB_IML2EXT, .SB_IML2ERR => {
+                self.hw_register_addr(T, addr).* = value;
+                self.check_sb_interrupts();
             },
             .SB_C2DSTAT => {
                 if (T != u32) return log.err("Invalid Write({any}) to 0x{X:0>8} (SB_C2DSTAT)\n", .{ T, addr });
@@ -990,22 +991,32 @@ pub const Dreamcast = struct {
         self.check_sb_interrupts();
     }
 
+    pub fn clear_normal_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTNRM) void {
+        self.hw_register(u32, .SB_ISTNRM).* &= ~@as(u32, @bitCast(int));
+        self.check_sb_interrupts();
+    }
+
     pub fn raise_external_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTEXT) void {
         self.hw_register(u32, .SB_ISTEXT).* |= @bitCast(int);
-        self.hw_register(HardwareRegisters.SB_ISTNRM, .SB_ISTNRM).ExtStatus = if (self.hw_register(u32, .SB_ISTEXT).* != 0) 1 else 0;
         self.check_sb_interrupts();
     }
 
     pub fn clear_external_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTEXT) void {
         self.hw_register(u32, .SB_ISTEXT).* &= ~@as(u32, @bitCast(int));
-        self.hw_register(HardwareRegisters.SB_ISTNRM, .SB_ISTNRM).ExtStatus = if (self.hw_register(u32, .SB_ISTEXT).* != 0) 1 else 0;
         self.check_sb_interrupts();
     }
 
     fn check_sb_interrupts(self: *@This()) void {
-        const istnrm = self.read_hw_register(u32, .SB_ISTNRM);
         const istext = self.read_hw_register(u32, .SB_ISTEXT);
         const isterr = self.read_hw_register(u32, .SB_ISTERR);
+        const istnrm_ptr = self.hw_register(HardwareRegisters.SB_ISTNRM, .SB_ISTNRM);
+        istnrm_ptr._ = 0;
+        istnrm_ptr.ExtStatus = if (istext != 0) 1 else 0;
+        istnrm_ptr.ErrorStatus = if (isterr != 0) 1 else 0;
+        const istnrm: u32 = @bitCast(istnrm_ptr.*);
+        self.cpu.clear_interrupt(.IRL9);
+        self.cpu.clear_interrupt(.IRL11);
+        self.cpu.clear_interrupt(.IRL13);
         if ((istnrm & self.read_hw_register(u32, .SB_IML6NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML6EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML6ERR)) != 0) {
             self.cpu.request_interrupt(.IRL9);
         } else if ((istnrm & self.read_hw_register(u32, .SB_IML4NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML4EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML4ERR)) != 0) {

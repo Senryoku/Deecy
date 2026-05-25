@@ -706,6 +706,10 @@ pub const SH4 = struct {
         }
     }
 
+    pub inline fn clear_interrupt(self: *@This(), int: Interrupt) void {
+        self.interrupt_requests &= ~(@as(u64, 1) << @intCast(self._interrupts_indices[@intFromEnum(int)]));
+    }
+
     pub fn request_interrupt(self: *@This(), int: Interrupt) void {
         sh4_log.debug(" (Interrupt request! {s})", .{std.enums.tagName(Interrupt, int) orelse "Unknown"});
         self.interrupt_requests |= @as(u64, 1) << @intCast(self._interrupts_indices[@intFromEnum(int)]);

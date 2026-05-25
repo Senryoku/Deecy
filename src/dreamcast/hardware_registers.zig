@@ -231,7 +231,9 @@ pub const SB_ISTNRM = packed struct(u32) {
 
     _: u8 = 0,
 
+    /// OR'ed result of all the bits in SB_ISTEXT
     ExtStatus: u1 = 0,
+    /// OR'ed result of all the bits in SB_ISTERR
     ErrorStatus: u1 = 0,
 
     pub fn format(self: @This(), writer: *std.Io.Writer) !void {
