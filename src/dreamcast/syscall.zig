@@ -22,14 +22,14 @@ pub fn syscall(dc: *Dreamcast) void {
     @panic("Unimplemented SYSCALL");
 }
 
-fn unhandled_function(comptime syscall_name: []const u8, dc: *Dreamcast, function: u32) void {
-    log.err("Syscall " ++ syscall_name ++ " called with unhandled function {d}.", .{function});
+fn unhandled_function(comptime syscall_name: []const u8, dc: *Dreamcast, function: anytype) void {
+    log.err("Syscall " ++ syscall_name ++ " called with unhandled function {}.", .{function});
     dc.cpu.R(0).* = 0xFFFFFFFF;
 }
 
 pub fn syscall_sysinfo(dc: *Dreamcast) void {
-    const func: enum(u32) { Init = 0, GetIcon = 2, GetId = 3, _ } = @enumFromInt(dc.cpu.R(7).*);
-    switch (func) {
+    const function: enum(u32) { Init = 0, GetIcon = 2, GetId = 3, _ } = @enumFromInt(dc.cpu.R(7).*);
+    switch (function) {
         .Init => {
             // Prepares the other two SYSINFO calls for use by copying the relevant data from the system flashrom into 8C000068-8C00007F. Always call this function before using the other two calls.
             @memcpy(dc.ram[0x00000068 .. 0x00000068 + 8], dc.flash.data[0x1A056 .. 0x1A056 + 8]);
@@ -42,25 +42,26 @@ pub fn syscall_sysinfo(dc: *Dreamcast) void {
             // Returns: A pointer to where the ID is stored as 8 contiguous bytes
             dc.cpu.R(0).* = 0x8C000068;
         },
-        else => unhandled_function("SYSINFO", dc, dc.cpu.R(7).*),
+        else => unhandled_function("SYSINFO", dc, function),
     }
 
     return_from_syscall(dc);
 }
 
 pub fn syscall_romfont(dc: *Dreamcast) void {
-    const func: enum(u32) { Address = 0, Lock = 1, Unlock = 2, _ } = @enumFromInt(dc.cpu.R(1).*);
-    switch (func) {
+    const function: enum(u32) { Address = 0, Lock = 1, Unlock = 2, _ } = @enumFromInt(dc.cpu.R(1).*);
+    switch (function) {
         .Address => dc.cpu.R(0).* = 0xA0100020, // NOTE: Just an informed guess from stepping through the boot ROM.
         .Lock => dc.cpu.R(0).* = 0, // Returns: 0 if you got the mutex (unlock it with ROMFONT_UNLOCK when you're done), -1 if it was already taken by someone else.
         .Unlock => {},
-        else => unhandled_function("ROMFONT", dc, dc.cpu.R(1).*),
+        else => unhandled_function("ROMFONT", dc, function),
     }
     return_from_syscall(dc);
 }
 
 pub fn syscall_flashrom(dc: *Dreamcast) void {
-    switch (dc.cpu.R(7).*) {
+    const function = dc.cpu.R(7).*;
+    switch (function) {
         0 => {
             log.info("FLASHROM_INFO  (R4={X:0>8}, R5={X:0>8})", .{ dc.cpu.R(4).*, dc.cpu.R(5).* });
             // Queries the extent of a single partition in the system flashrom.
@@ -105,45 +106,50 @@ pub fn syscall_flashrom(dc: *Dreamcast) void {
             // Returns: zero if successful, -1 if delete failed
             dc.cpu.R(0).* = 0xFFFFFFFF;
         },
-        else => unhandled_function("FLASHROM", dc, dc.cpu.R(7).*),
+        else => unhandled_function("FLASHROM", dc, function),
     }
     return_from_syscall(dc);
 }
 
 const GDFunction = enum(u32) {
-    ReqCmd = 0,
-    GetCmdStat = 1,
+    SendCommand = 0,
+    CheckCommand = 1,
     ExecServer = 2,
-    InitSystem = 3,
-    GetDrvStat = 4,
-    G1DmaEnd = 5,
-    ReqDmaTrans = 6,
-    CheckDmaTrans = 7,
-    ReadAbort = 8,
+    Init = 3,
+    GetDriveStatus = 4,
+    DMACallback = 5,
+    DMATransfer = 6,
+    DMACheck = 7,
+    AbortCommand = 8,
     Reset = 9,
-    ChangeDataType = 10,
+    SectorMode = 10,
+    PIOCallback = 11,
+    PIOTransfer = 12,
+    PIOCheck = 13,
     _,
 };
 
 /// Called when R6 = -1
 const GDBootFunction = enum(u32) {
     ReInitEntry = 0,
-    AddDesc = 1,
+    AddDesc = 1, // "SetVector" ?
     _,
 };
 
 pub fn syscall_gdrom(dc: *Dreamcast) void {
-    if (dc.cpu.R(6).* != 0) log.warn("GD syscall with non-zero R6: R6={d}", .{dc.cpu.R(6).*});
+    if (dc.cpu.R(6).* != 0) {
+        log.warn("GD syscall with non-zero R6: R6={d}", .{dc.cpu.R(6).*});
+        return;
+    }
 
     const function: GDFunction = @enumFromInt(dc.cpu.R(7).*);
     switch (function) {
-        .ReqCmd => {
-            // GDROM_SEND_COMMAND
+        .SendCommand => {
             // Enqueue a command for the GDROM subsystem to execute.
             // Args: r4 = command code
             //       r5 = pointer to parameter block for the command, can be NULL if the command does not take parameters
             // Returns: a request id (>=0) if successful, negative error code if failed
-            log.info("  GDROM_SEND_COMMAND R4={d} R5={X:0>8}", .{ dc.cpu.R(4).*, dc.cpu.R(5).* });
+            log.info("  GDROM {t} R4={d} R5={X:0>8}", .{ function, dc.cpu.R(4).*, dc.cpu.R(5).* });
 
             var params: [4]u32 = @splat(0);
             const params_addr = dc.cpu.R(5).*;
@@ -155,7 +161,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
 
             dc.cpu.R(0).* = gdrom_hle.send_command(dc, dc.cpu.R(4).*, params);
         },
-        .GetCmdStat => {
+        .CheckCommand => {
             // GDROM_CHECK_COMMAND
             // Check if an enqueued command has completed.
             // Args: r4 = request id
@@ -163,7 +169,8 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             dc.cpu.R(0).* = @intFromEnum(gdrom_hle.check_command(dc, dc.cpu.R(4).*));
             for (0..4) |i|
                 dc.cpu.write_physical(u32, @intCast(dc.cpu.R(5).* + 4 * i), dc.gdrom_hle.result[i]);
-            log.info("GDROM_CHECK_COMMAND R4={d} R5={X:0>8} | Ret : {X:0>8}, Result: {X:0>8} {X:0>8} {X:0>8} {X:0>8}", .{
+            log.info("GDROM {t} R4={d} R5={X:0>8} | Ret : {X:0>8}, Result: {X:0>8} {X:0>8} {X:0>8} {X:0>8}", .{
+                function,
                 dc.cpu.R(4).*,
                 dc.cpu.R(5).*,
                 dc.cpu.R(0).*,
@@ -181,44 +188,36 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             // Returns: no return value
             gdrom_hle.mainloop(dc);
         },
-        .InitSystem => {
-            // GDROM_INIT
-            log.debug("GDROM_INIT", .{});
+        .Init => {
+            log.debug("GDROM {t}", .{function});
             dc.gdrom.reset();
         },
-        .GetDrvStat => {
+        .GetDriveStatus => {
             // GDROM_CHECK_DRIVE
             // Checks the general condition of the drive.
             // Args: r4 = pointer to two 32 bit integers, to receive the drive status. The first is the current drive status, the second is the type of disc inserted (if any).
             // Returns: zero if successful, nonzero if failure
-            log.debug("GDROM_CHECK_DRIVE", .{});
-            dc.cpu.write_physical(u32, dc.cpu.R(4).*, @intFromEnum(dc.gdrom.state));
+            const dest = dc.cpu.R(4).*;
+            log.debug("GDROM {t}: dest={X:0>8}", .{ function, dest });
+            dc.cpu.write_physical(u32, dest, @intFromEnum(dc.gdrom.state));
             const disc_type: u8 = if (dc.gdrom.disc) |disc| @intFromEnum(disc.get_format()) else 0;
-            dc.cpu.write_physical(u32, dc.cpu.R(4).* + 4, disc_type << 4);
+            dc.cpu.write_physical(u32, dest + 4, disc_type << 4);
             dc.cpu.R(0).* = 0;
         },
-        .G1DmaEnd => {
-            // DMA END?
-            // According to the disassembly, maybe?:
-            //   R4: Callback
-            //   R5: Callback parameter
-            log.info("GDROM_DMA_END (R7={d}) R4={X:0>8} R5={X:0>8}", .{
-                dc.cpu.R(7).*,
-                dc.cpu.R(4).*,
-                dc.cpu.R(5).*,
-            });
+        .DMACallback => {
+            const callback = dc.cpu.R(4).*;
+            const callback_parameter = dc.cpu.R(5).*;
+            log.info("GDROM {t}: callback={X:0>8}, parameter={X:0>8}", .{ function, callback, callback_parameter });
             dc.cpu.write_physical(u32, @intFromEnum(HardwareRegister.SB_ISTNRM), @bitCast(HardwareRegisters.SB_ISTNRM{ .EoD_GDROM = 1 })); // Clear interrupt
-            if (dc.cpu.R(4).* != 0)
-                log.warn("GDROM_DMA_END: R4={X:0>8}, is it a callback?", .{dc.cpu.R(4).*});
+            if (callback != 0)
+                log.warn("GDROM {t} Unimplemented: callback={X:0>8}, parameter={X:0>8}", .{ function, callback, callback_parameter });
             // No return value, I think.
         },
         .Reset => {
-            // GDROM_RESET
-            log.warn("GDROM_RESET (R7={d}) : Not implemented!", .{dc.cpu.R(7).*});
+            log.warn("GDROM {t}: Not implemented!", .{function});
         },
-        .ChangeDataType => {
-            // GDROM_SECTOR_MODE
-            log.warn("GDROM_SECTOR_MODE  (R7={d}) : Not implemented!", .{dc.cpu.R(7).*});
+        .SectorMode => {
+            log.warn("GDROM {t}: Not implemented!", .{function});
             if (dc.cpu.read_physical(u32, dc.cpu.R(4).*) == 0) { // Get/Set, if 0 the mode will be set, if 1 it will be queried.
                 const mode = dc.cpu.read_physical(u32, dc.cpu.R(4).* + 8) == 0;
                 const sector_size_in_bytes = dc.cpu.read_physical(u32, dc.cpu.R(4).* + 12) == 0;

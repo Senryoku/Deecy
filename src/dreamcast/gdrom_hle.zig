@@ -2,22 +2,32 @@
 
 pub const GDROMCommand = enum(u32) {
     None = 0,
+    CheckLicense = 2,
+    ReqSPICommand = 4,
     PIORead = 16,
     DMARead = 17,
     GetTOC = 18,
     GetTOC2 = 19,
-    Play = 20,
-    Play2 = 21,
+    PlayTrack = 20,
+    PlaySectors = 21,
     Pause = 22,
     Release = 23,
     Init = 24,
+    DMAAbort = 25,
+    OpenTray = 26,
     Seek = 27,
-    Read = 28,
+    DMAReadStream = 28,
+    NOP = 29,
     ReqMode = 30,
     SetMode = 31,
+    ScanCD = 32,
     Stop = 33,
     GetSCD = 34,
     GetSession = 35,
+    ReqStat = 36,
+    PIOReadStream = 37,
+    DMAReadStreamEx = 38,
+    PIOReadStreamEx = 39,
     GetVersion = 40,
     _,
 };
@@ -58,12 +68,12 @@ pub fn mainloop(dc: *Dreamcast) void {
         return;
     }
 
-    log.info("  GDROM Mainloop - {}", .{dc.gdrom_hle.command});
+    log.info("  GDROM Mainloop {}", .{dc.gdrom_hle.command});
     for (0..dc.gdrom_hle.params.len) |i|
         log.debug("    [{d}] {X:0>8}", .{ i, dc.gdrom_hle.params[i] });
 
     switch (dc.gdrom_hle.command) {
-        .DMARead, .PIORead => {
+        .PIORead, .DMARead => {
             const lba = dc.gdrom_hle.params[0];
             const size = dc.gdrom_hle.params[1];
             const dest = dc.gdrom_hle.params[2] & 0x1FFFFFFF;
@@ -71,6 +81,11 @@ pub fn mainloop(dc: *Dreamcast) void {
             const read = dc.gdrom.disc.?.load_sectors(lba, size, @as([*]u8, @ptrCast(dc._get_memory(dest)))[0 .. 2352 * size]);
             dc.gdrom_hle.result = .{ 0, 0, read, 0 };
             dc.gdrom.state = .Standby;
+        },
+        .DMAReadStream => {
+            const lba = dc.gdrom_hle.params[0];
+            const size = dc.gdrom_hle.params[1];
+            log.warn("    GDROM DMAReadStream Unimplemented sector={d} size={d}", .{ lba, size });
         },
         .Init => {
             log.warn("    GDROM Init: Unimplemented", .{});
@@ -86,7 +101,7 @@ pub fn mainloop(dc: *Dreamcast) void {
         },
         .ReqMode => {
             const dest = dc.gdrom_hle.params[0];
-            log.info("    GDROM ReqMode  dest=0x{X:0>8}", .{dest});
+            log.info("    GDROM ReqMode dest=0x{X:0>8}", .{dest});
             dc.cpu.write_physical(u32, dest + 0, 0); // Speed
             dc.cpu.write_physical(u32, dest + 4, 0x00B4); // Standby
             dc.cpu.write_physical(u32, dest + 8, 0x19); // Read Flags
@@ -124,7 +139,7 @@ pub fn mainloop(dc: *Dreamcast) void {
             dc.gdrom.state = .Standby;
         },
         else => {
-            log.warn("Unhandled GDROM command {}", .{dc.gdrom_hle.command});
+            log.err("Unhandled GDROM command {}", .{dc.gdrom_hle.command});
             dc.gdrom.state = .Standby;
         },
     }

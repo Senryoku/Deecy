@@ -100,7 +100,7 @@ pub const Opcodes = [_]OpcodeDescription{
     .{ .code = 0b0000000000100000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_romfont, .name = "Syscall ROMFont", .issue_cycles = 1, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
     .{ .code = 0b0000000000110000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_flashrom, .name = "Syscall FlashROM", .issue_cycles = 1, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
     .{ .code = 0b0000000001000000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_gdrom, .name = "Syscall GDROM", .issue_cycles = 1, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
-    .{ .code = 0b0000000001010000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_unknown, .name = "Syscall", .issue_cycles = 1, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
+    .{ .code = 0b0000000001010000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_gdrom, .name = "Syscall GDROM2", .issue_cycles = 1, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
     .{ .code = 0b0000000001100000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_misc, .name = "Syscall Misc.", .issue_cycles = 1, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
     // Fake opcode to communicate with the emulator
     .{ .code = 0b0000000001110000, .mask = 0b0000000000000000, .fn_ = EmulatorSyscall.call, .name = "Emulator Syscall", .issue_cycles = 1, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
