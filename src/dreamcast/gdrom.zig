@@ -1201,7 +1201,7 @@ pub fn serialize(self: *@This(), writer: *std.Io.Writer) !usize {
     return bytes;
 }
 
-pub fn deserialize(self: *@This(), reader: anytype) !void {
+pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !void {
     try reader.readSliceAll(std.mem.asBytes(&self.state));
     try reader.readSliceAll(std.mem.asBytes(&self.status_register));
     try reader.readSliceAll(std.mem.asBytes(&self.control_register));
