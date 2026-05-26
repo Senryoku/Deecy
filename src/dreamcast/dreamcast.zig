@@ -617,7 +617,8 @@ pub const Dreamcast = struct {
             },
             .SB_IML6NRM, .SB_IML6EXT, .SB_IML6ERR, .SB_IML4NRM, .SB_IML4EXT, .SB_IML4ERR, .SB_IML2NRM, .SB_IML2EXT, .SB_IML2ERR => {
                 self.hw_register_addr(T, addr).* = value;
-                self.check_sb_interrupts();
+                // FIXME: Updating the interrupts here would make sense to me, but it causes a regression in WinCE games (stuck on the license screen).
+                //   self.check_sb_interrupts();
             },
             .SB_C2DSTAT => {
                 if (T != u32) return log.err("Invalid Write({any}) to 0x{X:0>8} (SB_C2DSTAT)\n", .{ T, addr });
