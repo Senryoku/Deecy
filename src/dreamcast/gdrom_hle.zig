@@ -74,18 +74,20 @@ pub fn mainloop(dc: *Dreamcast) void {
 
     switch (dc.gdrom_hle.command) {
         .PIORead, .DMARead => {
-            const lba = dc.gdrom_hle.params[0];
-            const size = dc.gdrom_hle.params[1];
+            const fad = dc.gdrom_hle.params[0];
+            const count = dc.gdrom_hle.params[1];
             const dest = dc.gdrom_hle.params[2] & 0x1FFFFFFF;
-            log.info("    GDROM {t} sector={d} size={d} destination=0x{X:0>8}", .{ dc.gdrom_hle.command, lba, size, dest });
-            const read = dc.gdrom.disc.?.load_sectors(lba, size, @as([*]u8, @ptrCast(dc._get_memory(dest)))[0 .. 2352 * size]);
+            log.info("    GDROM {t} sector={d} count={d} destination=0x{X:0>8}", .{ dc.gdrom_hle.command, fad, count, dest });
+            const read = dc.gdrom.disc.?.load_sectors(fad, count, @as([*]u8, @ptrCast(dc._get_memory(dest)))[0 .. 2352 * count]);
             dc.gdrom_hle.result = .{ 0, 0, read, 0 };
             dc.gdrom.state = .Standby;
         },
         .DMAReadStream => {
-            const lba = dc.gdrom_hle.params[0];
-            const size = dc.gdrom_hle.params[1];
-            log.warn("    GDROM DMAReadStream Unimplemented sector={d} size={d}", .{ lba, size });
+            const fad = dc.gdrom_hle.params[0];
+            const count = dc.gdrom_hle.params[1];
+            log.info("    GDROM DMAReadStream sector={d} count={d}", .{ fad, count });
+            dc.gdrom.cd_read_state.fad = fad;
+            dc.gdrom.cd_read_state.remaining_sectors = count;
         },
         .Init => {
             log.warn("    GDROM Init: Unimplemented", .{});
@@ -145,6 +147,16 @@ pub fn mainloop(dc: *Dreamcast) void {
     }
 }
 
+pub fn abort_command(dc: *Dreamcast, cmd_id: u32) void {
+    log.info("AbortCommand cmd_id={d}, current={d}", .{ cmd_id, dc.gdrom_hle._current_command_id });
+    if (cmd_id == dc.gdrom_hle._current_command_id) {
+        dc.gdrom.state = .Standby;
+        dc.cpu.R(0).* = 0;
+    } else {
+        dc.cpu.R(0).* = 0xFFFFFFFF;
+    }
+}
+
 pub fn check_command(dc: *Dreamcast, cmd_id: u32) enum(u32) {
     /// No such request active
     NoRequest = 0,
@@ -152,8 +164,9 @@ pub fn check_command(dc: *Dreamcast, cmd_id: u32) enum(u32) {
     InProgress = 1,
     /// Request has completed (if queried again, you will get a 0)
     Completed = 2,
-    /// Request was aborted
-    Aborted = 3,
+    /// DMA/PIO streaming command in progress
+    Streaming = 3,
+    Busy = 4,
     /// Request has failed (examine extended status information for cause of failure)
     Failed = 0xFFFFFFFF,
 } {
@@ -161,9 +174,43 @@ pub fn check_command(dc: *Dreamcast, cmd_id: u32) enum(u32) {
         dc.gdrom_hle.result = .{ 5, 0, 0, 0 };
         return .NoRequest;
     }
-    if (dc.gdrom.state != .Standby) return .InProgress;
+    if (dc.gdrom.state != .Standby) {
+        switch (dc.gdrom_hle.command) {
+            .DMAReadStream, .PIOReadStream, .DMAReadStreamEx, .PIOReadStreamEx => return .Streaming,
+            else => return .InProgress,
+        }
+    }
     dc.gdrom_hle._current_command_id = 0;
     return .Completed;
+}
+
+pub fn dma_transfer(dc: *Dreamcast, parameters_ptr: u32) void {
+    const dest = dc.cpu.read_physical(u32, parameters_ptr + 0);
+    const size = dc.cpu.read_physical(u32, parameters_ptr + 4);
+    std.debug.assert(size % 2048 == 0);
+    const sector_count = size / 2048;
+    if (dc.gdrom_hle.command != .DMAReadStream and dc.gdrom_hle.command != .DMAReadStreamEx) {
+        log.warn("    GDROM DMA transfer: No active streaming command.", .{});
+        dc.cpu.R(0).* = 0xFFFFFFFF;
+    } else if (dc.gdrom.cd_read_state.remaining_sectors < sector_count) {
+        log.warn("    GDROM DMA transfer: Sector overflow.", .{});
+        dc.cpu.R(0).* = 0xFFFFFFFF;
+    } else {
+        if (dc.gdrom.disc) |*disc| {
+            log.info("    GDROM DMA transfer: fad: {d} size: {d} dest: {X:0>8}.", .{ dc.gdrom.cd_read_state.fad, size, dest });
+            const read = disc.load_sectors(dc.gdrom.cd_read_state.fad, sector_count, @as([*]u8, @ptrCast(dc._get_memory(dest)))[0..size]);
+            dc.gdrom.cd_read_state.fad += sector_count;
+            dc.gdrom.cd_read_state.remaining_sectors -= sector_count;
+            if (dc.gdrom.cd_read_state.remaining_sectors == 0)
+                dc.gdrom.state = .Standby;
+            dc.gdrom_hle.result = .{ 0, 0, read, if (dc.gdrom.cd_read_state.remaining_sectors == 0) 0 else 1 };
+            dc.cpu.R(0).* = 0;
+            dc.raise_normal_interrupt(.{ .EoD_GDROM = 1 });
+            // dc.schedule_interrupt(.{ .EoD_GDROM = 1 }, 14 * size); // FIXME
+        } else {
+            dc.cpu.R(0).* = 0xFFFFFFFF;
+        }
+    }
 }
 
 pub fn serialize(self: *@This(), writer: *std.Io.Writer) !usize {

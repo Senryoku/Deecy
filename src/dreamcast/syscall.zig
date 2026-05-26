@@ -149,7 +149,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             // Args: r4 = command code
             //       r5 = pointer to parameter block for the command, can be NULL if the command does not take parameters
             // Returns: a request id (>=0) if successful, negative error code if failed
-            log.info("  GDROM {t} R4={d} R5={X:0>8}", .{ function, dc.cpu.R(4).*, dc.cpu.R(5).* });
+            log.info("GDROM {t} R4={d} R5={X:0>8}", .{ function, dc.cpu.R(4).*, dc.cpu.R(5).* });
 
             var params: [4]u32 = @splat(0);
             const params_addr = dc.cpu.R(5).*;
@@ -208,11 +208,25 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             const callback = dc.cpu.R(4).*;
             const callback_parameter = dc.cpu.R(5).*;
             log.info("GDROM {t}: callback={X:0>8}, parameter={X:0>8}", .{ function, callback, callback_parameter });
-            dc.cpu.write_physical(u32, @intFromEnum(HardwareRegister.SB_ISTNRM), @bitCast(HardwareRegisters.SB_ISTNRM{ .EoD_GDROM = 1 })); // Clear interrupt
-            if (callback != 0)
-                log.warn("GDROM {t} Unimplemented: callback={X:0>8}, parameter={X:0>8}", .{ function, callback, callback_parameter });
-            // No return value, I think.
+            dc.cpu.R(0).* = 0;
+            dc.clear_normal_interrupt(.{ .EoD_GDROM = 1 });
+            if (callback != 0) {
+                if (dc.gdrom_hle.command != .DMAReadStream and dc.gdrom_hle.command != .DMAReadStreamEx) {
+                    log.err("GDROM {t}: No streaming command active.", .{function});
+                } else {
+                    // FIXME: Assumes DMATransfer has already been called: Resolve immediately.
+                    dc.cpu.R(4).* = callback_parameter;
+                    dc.cpu.pc = callback - 2;
+                    return;
+                }
+            }
         },
+        .DMATransfer => {
+            const parameters = dc.cpu.R(5).*;
+            log.info("GDROM {t}: parameters={X:0>8}", .{ function, parameters });
+            gdrom_hle.dma_transfer(dc, parameters);
+        },
+        .AbortCommand => gdrom_hle.abort_command(dc, dc.cpu.R(4).*),
         .Reset => {
             log.warn("GDROM {t}: Not implemented!", .{function});
         },
