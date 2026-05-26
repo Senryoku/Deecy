@@ -1310,6 +1310,7 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
         .Original => {},
         .@"HLE Replacement" => {
             try self.dc.skip_bios();
+            self.renderer.update_registers(&self.dc.gpu);
             try self.dc.install_hle_syscalls();
             try self.dc.load_ip_bin_from_disc();
 

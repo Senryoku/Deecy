@@ -464,11 +464,23 @@ pub const Dreamcast = struct {
 
         self.gpu._get_register(u32, .SPG_HBLANK_INT).* = 0x03450000;
         self.gpu._get_register(u32, .SPG_VBLANK_INT).* = 0x00150208;
-        self.gpu._get_register(u32, .SPG_CONTROL).* = 0x00000100;
-        self.gpu._get_register(u32, .SPG_HBLANK).* = 0x007E0345;
-        self.gpu._get_register(u32, .SPG_VBLANK).* = 0x00280208;
-        self.gpu._get_register(u32, .SPG_WIDTH).* = 0x03F1933F;
-        self.gpu._get_register(u32, .SPG_LOAD).* = 0x020C0359;
+
+        const video_mode = switch (self.cable_type) {
+            .VGA => HollyModule.VideoModes.VGA,
+            else => switch (self.flash.data[0x1A004]) {
+                '0' => HollyModule.VideoModes.NTSCInterlace,
+                else => HollyModule.VideoModes.PALInterlace,
+            },
+        };
+        self.gpu._get_register(HollyModule.SPG_LOAD, .SPG_LOAD).* = video_mode.spg_load;
+        self.gpu._get_register(HollyModule.SPG_HBLANK, .SPG_HBLANK).* = video_mode.spg_hblank;
+        self.gpu._get_register(HollyModule.SPG_VBLANK, .SPG_VBLANK).* = video_mode.spg_vblank;
+        self.gpu._get_register(HollyModule.SPG_WIDTH, .SPG_WIDTH).* = video_mode.spg_width;
+        self.gpu._get_register(HollyModule.SPG_CONTROL, .SPG_CONTROL).* = video_mode.spg_control;
+        self.gpu._get_register(HollyModule.VO_STARTX, .VO_STARTX).* = video_mode.vo_startx;
+        self.gpu._get_register(HollyModule.VO_STARTY, .VO_STARTY).* = video_mode.vo_starty;
+        self.gpu._get_register(HollyModule.VO_CONTROL, .VO_CONTROL).* = video_mode.vo_control;
+
         self.gpu.finalize_deserialization();
     }
 

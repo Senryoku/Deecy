@@ -1469,9 +1469,6 @@ pub const Renderer = struct {
         }
 
         self.on_render_start_param_base = dc.gpu.read_register(u32, .PARAM_BASE);
-        self.spg_control = dc.gpu.read_register(HollyModule.SPG_CONTROL, .SPG_CONTROL);
-        self.vo_startx = dc.gpu.read_register(HollyModule.VO_STARTX, .VO_STARTX);
-        self.vo_starty = dc.gpu.read_register(HollyModule.VO_STARTY, .VO_STARTY);
 
         // Clear the previous used TA lists and swap it with the one submitted by the game.
         // NOTE: Clearing the lists here means the game cannot render lists more than once (i.e. starting a render without
@@ -1879,7 +1876,11 @@ pub const Renderer = struct {
     }
 
     /// Assumes gctx_queue_mutex is locked: Modifies parameters used in rendering.
-    fn update_registers(self: *@This(), gpu: *const HollyModule.Holly) void {
+    pub fn update_registers(self: *@This(), gpu: *const HollyModule.Holly) void {
+        self.spg_control = gpu.read_register(HollyModule.SPG_CONTROL, .SPG_CONTROL);
+        self.vo_startx = gpu.read_register(HollyModule.VO_STARTX, .VO_STARTX);
+        self.vo_starty = gpu.read_register(HollyModule.VO_STARTY, .VO_STARTY);
+
         self.pt_alpha_ref = @as(f32, @floatFromInt(gpu.read_register(u8, .PT_ALPHA_REF))) / 255.0;
 
         self.fpu_shad_scale = gpu.read_register(HollyModule.FPU_SHAD_SCALE, .FPU_SHAD_SCALE).get_factor();
