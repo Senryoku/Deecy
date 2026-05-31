@@ -66,6 +66,19 @@
     },
     .{
         .game = .{
+            .name = "Ready 2 Rumble Boxing: Round 2 (PAL)",
+            .product_name = "READY 2 RUMBLE B",
+            .product_id = "T9711D  50V1.001",
+        },
+        .cheats = .{
+            .{
+                .name = "Widescreen",
+                .actions = .{.{ .Write = .{ .address = 0x0C1574D8, .value = .{ .u32 = 0x43700000 } } }},
+            },
+        },
+    },
+    .{
+        .game = .{
             .name = "SoulCalibur (US)",
             .product_name = "SOULCALIBUR",
             .product_id = "T1401N    V1.000",
