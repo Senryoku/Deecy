@@ -272,6 +272,7 @@ const ControllerSettings = struct {
         None,
         VMU: struct { filename: []const u8 },
         VibrationPack,
+        Microphone,
         pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
             switch (self.*) {
                 .VMU => |*v| allocator.free(v.filename),
@@ -933,6 +934,14 @@ pub fn init_peripheral(self: *@This(), port: u8, slot: u8) !void {
             switch (self.dc.maple.ports[port]) {
                 .emulated => |*e| {
                     e.subperipherals[slot] = .{ .VibrationPack = .init(.{ .function = @ptrCast(VibrationCallbacks[port]), .context = self }) };
+                },
+                else => {},
+            }
+        },
+        .Microphone => {
+            switch (self.dc.maple.ports[port]) {
+                .emulated => |*e| {
+                    e.subperipherals[slot] = .{ .Microphone = .init() };
                 },
                 else => {},
             }

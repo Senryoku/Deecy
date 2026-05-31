@@ -1122,6 +1122,7 @@ pub fn draw(self: *@This()) !void {
                                                         .None => .None,
                                                         .VMU => .{ .VMU = .{ .filename = try self.allocator.dupe(u8, Deecy.DefaultVMUPaths[port][slot]) } },
                                                         .VibrationPack => .VibrationPack,
+                                                        .Microphone => .Microphone,
                                                     };
                                                     try d.init_peripheral(port, slot);
                                                 }

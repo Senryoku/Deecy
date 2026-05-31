@@ -7,17 +7,20 @@ const DreamcastModule = @import("dreamcast.zig");
 const Dreamcast = DreamcastModule.Dreamcast;
 const Context = DreamcastModule.Context;
 
-const PatternSelection = enum(u3) {
-    Normal = 0b000,
-    LightGun = 0b001,
-    RESET = 0b010,
-    ReturnFromLightGun = 0b011,
-    NOP = 0b111,
-};
+// Structure of a transfer:
+//   Instruction
+//   Response Address (System Memory)
+//   Data[...], starting with a CommandWord
 
 pub const Instruction = packed struct(u32) {
     transfer_length: u8, // In units of 4 bytes.
-    pattern: PatternSelection,
+    pattern: enum(u3) {
+        Normal = 0b000,
+        LightGun = 0b001,
+        RESET = 0b010,
+        ReturnFromLightGun = 0b011,
+        NOP = 0b111,
+    },
     _z0: u5 = 0,
     port_select: u2,
     _z1: u13 = 0,
@@ -28,12 +31,7 @@ pub const Instruction = packed struct(u32) {
     }
 };
 
-// Structure of a transfer:
-//   Instruction
-//   Response Address (System Memory)
-//   Data[...]
-
-const Command = enum(u8) {
+pub const Command = enum(u8) {
     DeviceInfoRequest = 0x01,
     ExtendedDeviceInfo = 0x02,
     Reset = 0x03,
@@ -48,6 +46,8 @@ const Command = enum(u8) {
     BlockWrite = 0x0C,
     GetLastError = 0x0D,
     SetCondition = 0x0E,
+    AudioInputDevice = 0x0F,
+    ARControl = 0x10,
     ARError = 0xF9,
     LCDError = 0xFA,
     FileError = 0xFB,
@@ -101,6 +101,7 @@ pub const FunctionCodesMask = packed struct(u32) {
     pub const Storage = @This(){ .storage = 1 };
     pub const Screen = @This(){ .screen = 1 };
     pub const Timer = @This(){ .timer = 1 };
+    pub const AudioInput = @This(){ .audio_input = 1 };
     pub const Keyboard = @This(){ .keyboard = 1 };
 
     pub fn format(self: @This(), writer: *std.Io.Writer) !void {
@@ -132,6 +133,7 @@ pub const Mouse = @import("maple/mouse.zig");
 
 pub const VMU = @import("maple/vmu.zig");
 pub const VibrationPack = @import("maple/vibration_pack.zig");
+pub const Microphone = @import("maple/microphone.zig");
 
 const Peripheral = union(enum) {
     Controller: Controller,
@@ -139,10 +141,12 @@ const Peripheral = union(enum) {
     Mouse: Mouse,
     VMU: VMU,
     VibrationPack: VibrationPack,
+    Microphone: Microphone,
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         switch (self.*) {
             .VMU => |*v| v.deinit(allocator),
+            .Microphone => |*m| m.deinit(),
             inline else => {},
         }
     }
@@ -224,6 +228,21 @@ const EmulatedPort = struct {
                 const ptr = dc._get_memory(return_addr + 4);
                 @memcpy(@as([*]u8, @ptrCast(ptr))[0..@sizeOf(DeviceInfoPayload)], std.mem.asBytes(&identity));
                 return 1 + @sizeOf(DeviceInfoPayload) / 4;
+            },
+            .Reset => {
+                switch (target.*) {
+                    inline .Microphone => |*m| {
+                        m.reset();
+                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
+                        return 1;
+                    },
+                    else => {
+                        log.err("Unimplemented Reset for target: {t}", .{target.tag()});
+                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
+                        return 1;
+                    },
+                }
+                return 1;
             },
             .GetCondition => {
                 switch (target.*) {
@@ -312,6 +331,23 @@ const EmulatedPort = struct {
                         return 1;
                     },
                 }
+                return 1;
+            },
+            .AudioInputDevice => {
+                switch (target.*) {
+                    inline .Microphone => |*m| {
+                        std.debug.assert(function_type == FunctionCodesMask.AudioInput.as_u32());
+                        const response, const payload_length = m.audio_input_command(data[3..][0 .. command.payload_length - 1]);
+                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = response, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = payload_length }));
+                        return 1;
+                    },
+                    else => {
+                        log.err(termcolor.red("Unimplemented AudioInputDevice for target: {t}"), .{target.tag()});
+                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
+                        return 1;
+                    },
+                }
+                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                 return 1;
             },
             else => {
