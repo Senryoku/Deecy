@@ -1,6 +1,5 @@
 const std = @import("std");
 const log = std.log.scoped(.maple);
-const termcolor = @import("termcolor");
 
 const common = @import("../maple.zig");
 const FunctionCodesMask = common.FunctionCodesMask;
@@ -158,13 +157,13 @@ pub fn get_media_info(_: *const @This(), dest: [*]u8, function: u32, vibration_s
             @memcpy(dest[0..@sizeOf(VibrationSourceSettings)], std.mem.asBytes(&Settings));
             return @sizeOf(VibrationSourceSettings) / 4;
         },
-        else => log.err(termcolor.red("Unimplemented VibrationPack.get_media_info for function: {f}"), .{FunctionCodesMask.from_u32(function)}),
+        else => log.err("Unimplemented VibrationPack.get_media_info for function: {f}", .{FunctionCodesMask.from_u32(function)}),
     }
     return 0;
 }
 
 /// Returns payload size in 32-bit words
-pub fn block_read(self: *const @This(), dest: [*]u8, function: u32, vn: u8, block_num: u16, phase: u8) u8 {
+pub fn block_read(self: *const @This(), function: u32, vn: u8, block_num: u16, phase: u8, dest: [*]u8) u8 {
     _ = self;
     _ = dest;
     _ = block_num;
@@ -175,7 +174,7 @@ pub fn block_read(self: *const @This(), dest: [*]u8, function: u32, vn: u8, bloc
     // In vibration functions, Phase='00h' ,Block No. ='0000h' are fixed values. VN
     // for each vibration source is '01h'～'0Fh' for Vibration Source -1～Vibration
     // Source -15, respectively.
-    log.warn(termcolor.yellow("VibrationPack.block_read for function: {f}, source: {d}"), .{ FunctionCodesMask.from_u32(function), vn });
+    log.warn("VibrationPack.block_read for function: {f}, source: {d}", .{ FunctionCodesMask.from_u32(function), vn });
     switch (function) {
         FunctionCodesMask.Vibration.as_u32() => {},
         else => log.err("Unimplemented VibrationPack.block_read for function: {f}", .{FunctionCodesMask.from_u32(function)}),
@@ -184,7 +183,7 @@ pub fn block_read(self: *const @This(), dest: [*]u8, function: u32, vn: u8, bloc
 }
 
 /// Returns payload size in 32-bit words
-pub fn block_write(self: *@This(), function: u32, vn: u8, phase: u8, block_num: u16, data: []const u32) u8 {
+pub fn block_write(self: *@This(), function: u32, vn: u8, block_num: u16, phase: u8, data: []const u32) u8 {
     _ = self;
     _ = data; // Arbitrary waveform data
     _ = block_num;
@@ -195,7 +194,7 @@ pub fn block_write(self: *@This(), function: u32, vn: u8, phase: u8, block_num: 
     // In vibration functions, Phase='00h' ,Block No. ='0000h' are fixed values. VN
     // for each vibration source is '01h'～'0Fh' for Vibration Source -1～Vibration
     // Source -15, respectively.
-    log.warn(termcolor.yellow("VibrationPack.block_write for function: {f}, source: {d}"), .{ FunctionCodesMask.from_u32(function), vn });
+    log.warn("VibrationPack.block_write for function: {f}, source: {d}", .{ FunctionCodesMask.from_u32(function), vn });
     switch (function) {
         FunctionCodesMask.Vibration.as_u32() => {},
         else => log.err("Unimplemented VibrationPack.block_write for function: {f}", .{FunctionCodesMask.from_u32(function)}),
@@ -219,7 +218,7 @@ pub fn set_condition(self: *@This(), function: u32, data: []const u32) void {
             const value: VibrationConfiguration = @bitCast(data[0]);
 
             log.debug("[VibrationPack.set_condition] Vibration settings: {any}", .{value});
-            if (value.vn != 1) log.warn(termcolor.yellow("Only vibration source 1 is supported: {any}"), .{value});
+            if (value.vn != 1) log.warn("Only vibration source 1 is supported: {any}", .{value});
 
             self.vibration_source = value;
 
