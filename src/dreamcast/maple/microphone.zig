@@ -2,16 +2,19 @@
 pub const Capabilities = FunctionCodesMask.AudioInput;
 subcapabilities: [3]u32 = .{ DreamEyeMicrophoneCapabilities.Default.as_u32(), 0, 0 },
 
+// Internal state
+// NOTE: This is not serialized, but also not really used.
 amp_gain: u8 = 0x80,
 control: BasicControl = .{},
 sample_expansion: ExtuBit = .Low00,
 
+// Callbacks
 context: ?*anyopaque,
 on_start_sampling: ?*const fn (?*anyopaque) void,
 on_stop_sampling: ?*const fn (?*anyopaque) void,
-on_get_samples: ?*const fn (?*anyopaque) []u16,
+on_get_samples: ?*const fn (?*anyopaque) []i16,
 
-pub fn init(context: ?*anyopaque, start_sampling: ?*const fn (?*anyopaque) void, stop_sampling: ?*const fn (?*anyopaque) void, get_samples: ?*const fn (?*anyopaque) []u16) @This() {
+pub fn init(context: ?*anyopaque, start_sampling: ?*const fn (?*anyopaque) void, stop_sampling: ?*const fn (?*anyopaque) void, get_samples: ?*const fn (?*anyopaque) []i16) @This() {
     return .{
         .context = context,
         .on_start_sampling = start_sampling,
@@ -59,16 +62,17 @@ pub fn audio_input_command(self: *@This(), command: []const u32, dest: [*]u32) s
             if (self.on_get_samples) |callback| {
                 const samples = callback(self.context);
                 sample_header.sample_count = @intCast(samples.len);
-                @memcpy(std.mem.sliceAsBytes(dest[2..][0 .. samples.len / 2]), std.mem.sliceAsBytes(samples));
+                const sample_dest: [*]i16 = @ptrCast(dest[2..]);
+                for (samples, 0..) |sample, i| sample_dest[i] = sample;
             }
+            log.debug("Get Sampling Data command: {any}", .{sample_header});
             dest[0] = Capabilities.as_u32(); // "Function type"
             dest[1] = @bitCast(sample_header); // "FT4 data"
-            log.warn("Get Sampling Data command: {any}", .{sample_header});
             return .{ .DataTransfer, 2 + sample_header.sample_count / 2 };
         },
         .BasicControl => {
             const control: BasicControl = @bitCast(dt[0]);
-            log.warn("Basic Control: {any}", .{control});
+            log.info("Basic Control: {any}", .{control});
             if (control.sampling != self.control.sampling) {
                 if (control.sampling) {
                     if (self.on_start_sampling) |callback| callback(self.context);
@@ -189,7 +193,11 @@ pub const SamplingData = packed struct(u32) {
         /// Sampling frequency setting
         frequency: enum(u1) { @"11.025 kHz" = 0, @"8.0 kHz" = 1 },
         /// CODEC conversion
-        uLaw: enum(u1) { @"14bit Linear" = 0, @"8bit u-Law Codec" = 1 },
+        uLaw: enum(u1) {
+            // Signed 14-bit samples extended to 16-bit
+            @"14bit Linear" = 0,
+            @"8bit u-Law Codec" = 1,
+        },
         /// Sampling operation start
         sampling: bool,
         /// Linear sampling data expansion method flag ("14lsb")
