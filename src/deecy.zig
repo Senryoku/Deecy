@@ -941,7 +941,7 @@ pub fn init_peripheral(self: *@This(), port: u8, slot: u8) !void {
         .Microphone => {
             switch (self.dc.maple.ports[port]) {
                 .emulated => |*e| {
-                    e.subperipherals[slot] = .{ .Microphone = .init() };
+                    e.subperipherals[slot] = .{ .Microphone = .init(null, null, null, null) };
                 },
                 else => {},
             }

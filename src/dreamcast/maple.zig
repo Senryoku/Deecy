@@ -333,10 +333,10 @@ const EmulatedPort = struct {
                 switch (target.*) {
                     inline .Microphone => |*m| {
                         std.debug.assert(function_type == FunctionCodesMask.AudioInput.as_u32());
-                        const response, const payload_length = m.audio_input_command(data[3..][0 .. command.payload_length - 1]);
+                        const response, const payload_length = m.audio_input_command(data[3..][0 .. command.payload_length - 1], response_data);
                         response_header.command = response;
                         response_header.payload_length = payload_length;
-                        return 1;
+                        return 1 + 1 + payload_length;
                     },
                     else => return unimplemented(command.command, data, target),
                 }
