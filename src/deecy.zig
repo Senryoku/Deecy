@@ -951,8 +951,8 @@ fn microphone_get_samples(context: ?*anyopaque) []i16 {
         deecy_log.err("Failed to get audio samples: {}", .{err});
         return &[_]i16{};
     };
-    // FIXME: A call to `get_samples` without a valid audio input probably comes from
-    //        loading a save state (the game has already initialized it prior to the saved state).
+    // NOTE: The front end might stop capturing independently of the emulated system (e.g. pause or
+    //       save state load), restart it here if the game seems to expect samples.
     microphone_start(context);
     return &[_]i16{};
 }
@@ -1623,6 +1623,7 @@ pub fn pause(self: *@This()) void {
             if (self._dc_thread) |dc_thread| dc_thread.join();
             self._dc_thread = null;
         }
+        if (self.audio_input) |ai| ai.device.stop() catch |err| deecy_log.err(termcolor.red("Failed to stop audio device: {}"), .{err});
         self.dc.maple.flush_vmus();
 
         if (self.config.rewind.enabled) {

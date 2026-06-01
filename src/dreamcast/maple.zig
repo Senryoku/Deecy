@@ -210,7 +210,7 @@ const EmulatedPort = struct {
         self.subperipherals = @splat(null);
     }
 
-    /// Returns the number of 32bytes words transferred to the host.
+    /// Returns the number of 32bit words transferred to the host.
     pub fn handle_command(self: *@This(), dc: *Dreamcast, data: []const u32) u32 {
         const return_addr = data[0];
         std.debug.assert(return_addr >= 0x0C000000 and return_addr < 0x10000000);
