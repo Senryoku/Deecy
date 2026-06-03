@@ -7,17 +7,20 @@ const DreamcastModule = @import("dreamcast.zig");
 const Dreamcast = DreamcastModule.Dreamcast;
 const Context = DreamcastModule.Context;
 
-const PatternSelection = enum(u3) {
-    Normal = 0b000,
-    LightGun = 0b001,
-    RESET = 0b010,
-    ReturnFromLightGun = 0b011,
-    NOP = 0b111,
-};
+// Structure of a transfer:
+//   Instruction
+//   Response Address (System Memory)
+//   Data[...], starting with a CommandWord
 
 pub const Instruction = packed struct(u32) {
     transfer_length: u8, // In units of 4 bytes.
-    pattern: PatternSelection,
+    pattern: enum(u3) {
+        Normal = 0b000,
+        LightGun = 0b001,
+        RESET = 0b010,
+        ReturnFromLightGun = 0b011,
+        NOP = 0b111,
+    },
     _z0: u5 = 0,
     port_select: u2,
     _z1: u13 = 0,
@@ -28,12 +31,7 @@ pub const Instruction = packed struct(u32) {
     }
 };
 
-// Structure of a transfer:
-//   Instruction
-//   Response Address (System Memory)
-//   Data[...]
-
-const Command = enum(u8) {
+pub const Command = enum(u8) {
     DeviceInfoRequest = 0x01,
     ExtendedDeviceInfo = 0x02,
     Reset = 0x03,
@@ -48,6 +46,8 @@ const Command = enum(u8) {
     BlockWrite = 0x0C,
     GetLastError = 0x0D,
     SetCondition = 0x0E,
+    AudioInputDevice = 0x0F,
+    ARControl = 0x10,
     ARError = 0xF9,
     LCDError = 0xFA,
     FileError = 0xFB,
@@ -63,6 +63,8 @@ pub const CommandWord = packed struct(u32) {
     recipent_address: u8,
     sender_address: u8,
     payload_length: u8, // In 32-bit words.
+
+    pub const NoConnection: @This() = @bitCast(@as(u32, 0xFFFFFFFF));
 
     pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         try writer.print("{t}{{ recipent: {X}, sender: {X}, payload_length: {X} }}", .{ self.command, self.recipent_address, self.sender_address, self.payload_length });
@@ -101,6 +103,7 @@ pub const FunctionCodesMask = packed struct(u32) {
     pub const Storage = @This(){ .storage = 1 };
     pub const Screen = @This(){ .screen = 1 };
     pub const Timer = @This(){ .timer = 1 };
+    pub const AudioInput = @This(){ .audio_input = 1 };
     pub const Keyboard = @This(){ .keyboard = 1 };
 
     pub fn format(self: @This(), writer: *std.Io.Writer) !void {
@@ -132,6 +135,7 @@ pub const Mouse = @import("maple/mouse.zig");
 
 pub const VMU = @import("maple/vmu.zig");
 pub const VibrationPack = @import("maple/vibration_pack.zig");
+pub const Microphone = @import("maple/microphone.zig");
 
 const Peripheral = union(enum) {
     Controller: Controller,
@@ -139,10 +143,12 @@ const Peripheral = union(enum) {
     Mouse: Mouse,
     VMU: VMU,
     VibrationPack: VibrationPack,
+    Microphone: Microphone,
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         switch (self.*) {
             .VMU => |*v| v.deinit(allocator),
+            .Microphone => |*m| m.deinit(),
             inline else => {},
         }
     }
@@ -157,9 +163,10 @@ const Peripheral = union(enum) {
         };
     }
 
-    pub fn block_read(self: *const @This(), dest: [*]u8, function: u32, partition: u8, block_num: u16, phase: u8) u8 {
+    pub fn block_read(self: *const @This(), function: u32, location: BlockLocation, dest: [*]u8) u8 {
+        log.debug("BlockRead({f}) {any}", .{ @as(FunctionCodesMask, @bitCast(function)), location });
         return switch (self.*) {
-            inline .VMU, .VibrationPack => |*v| v.block_read(dest, function, partition, block_num, phase),
+            inline .VMU, .VibrationPack => |*v| v.block_read(function, location.partition, location.block_num, location.phase, dest),
             else => s: {
                 log.err(termcolor.red("Unimplemented BlockRead for target: {t}"), .{self.tag()});
                 break :s 0;
@@ -167,13 +174,27 @@ const Peripheral = union(enum) {
         };
     }
 
-    pub fn block_write(self: *@This(), function: u32, partition: u8, phase: u8, block_num: u16, data: []const u32) u8 {
+    pub fn block_write(self: *@This(), function: u32, location: BlockLocation, data: []const u32) u8 {
         switch (self.*) {
-            inline .VMU, .VibrationPack => |*v| return v.block_write(function, partition, phase, block_num, data),
+            inline .VMU, .VibrationPack => |*v| return v.block_write(function, location.partition, location.block_num, location.phase, data),
             else => log.warn(termcolor.yellow("BlockWrite Unimplemented for target: {t}"), .{self.tag()}),
         }
         return 0;
     }
+
+    pub const BlockLocation = struct {
+        partition: u8,
+        phase: u8,
+        block_num: u16,
+
+        pub inline fn parse(data: u32) BlockLocation {
+            return .{
+                .partition = @truncate(data & 0xFF),
+                .phase = @truncate((data >> 8) & 0xFF),
+                .block_num = @truncate(((data >> 24) & 0xFF) | ((data >> 8) & 0xFF00)),
+            };
+        }
+    };
 };
 
 const EmulatedPort = struct {
@@ -189,10 +210,11 @@ const EmulatedPort = struct {
         self.subperipherals = @splat(null);
     }
 
-    /// Returns the number of 32bytes words transferred to the host.
+    /// Returns the number of 32bit words transferred to the host.
     pub fn handle_command(self: *@This(), dc: *Dreamcast, data: []const u32) u32 {
         const return_addr = data[0];
         std.debug.assert(return_addr >= 0x0C000000 and return_addr < 0x10000000);
+        std.debug.assert(return_addr % 4 == 0);
         const command: CommandWord = @bitCast(data[1]);
         const function_type = if (data.len >= 3) data[2] else 0;
         log.debug("  Dest: {X:0>8}, Command: {f}, Function: {f}", .{ return_addr, command, @as(FunctionCodesMask, @bitCast(function_type)) });
@@ -208,118 +230,124 @@ const EmulatedPort = struct {
         }
         const recipent_address = command.sender_address;
 
+        const response_ptr: [*]u32 = @ptrCast(@alignCast(dc._get_memory(return_addr)));
+        const response_header: *CommandWord = @ptrCast(@alignCast(&response_ptr[0]));
+        response_header.* = .{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 };
+        const response_data = response_ptr[1..];
+
         const target: *Peripheral = switch (command.recipent_address & 0b11111) {
             0 => &self.main, // Equivalent to setting bit 5.
             else => sp: {
                 if (self.subperipherals[@ctz(command.recipent_address)]) |*s|
                     break :sp s;
-                dc.cpu.write_physical(u32, return_addr, 0xFFFFFFFF); // "No connection"
+                response_header.* = .NoConnection;
                 return 1;
             },
         };
         switch (command.command) {
             .DeviceInfoRequest => {
                 const identity = target.get_identity();
-                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = @intCast(@sizeOf(DeviceInfoPayload) / 4) }));
-                const ptr = dc._get_memory(return_addr + 4);
-                @memcpy(@as([*]u8, @ptrCast(ptr))[0..@sizeOf(DeviceInfoPayload)], std.mem.asBytes(&identity));
+                response_header.command = .DeviceInfo;
+                response_header.payload_length = @intCast(@sizeOf(DeviceInfoPayload) / 4);
+                @memcpy(@as([*]u8, @ptrCast(response_data))[0..@sizeOf(DeviceInfoPayload)], std.mem.asBytes(&identity));
                 return 1 + @sizeOf(DeviceInfoPayload) / 4;
+            },
+            .Reset => {
+                switch (target.*) {
+                    inline .Microphone => |*m| {
+                        m.reset();
+                        response_header.command = .Acknowledge;
+                        return 1;
+                    },
+                    else => return unimplemented(command.command, data, target),
+                }
             },
             .GetCondition => {
                 switch (target.*) {
                     inline .Controller, .Keyboard, .Mouse, .VibrationPack => |*c| {
                         std.debug.assert(command.payload_length == 1);
                         const condition = c.get_condition(function_type);
-                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = @intCast(condition.len) }));
-                        const ptr: [*]u32 = @ptrCast(@alignCast(dc._get_memory(return_addr + 4)));
-                        @memcpy(ptr[0..condition.len], &condition);
+                        response_header.command = .DataTransfer;
+                        response_header.payload_length = @intCast(condition.len);
+                        @memcpy(response_data[0..condition.len], &condition);
                         return 1 + condition.len;
                     },
-                    else => {
-                        log.err(termcolor.red("Unimplemented GetCondition for target: {t}"), .{target.tag()});
-                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
-                        return 1;
-                    },
+                    else => return unimplemented(command.command, data, target),
                 }
             },
             .GetMediaInformation => {
                 std.debug.assert(command.payload_length == 2);
                 const partition_number: u8 = @truncate(data[3] >> 24);
-                log.warn(termcolor.yellow("  GetMediaInformation: Function: {f}, Partition number: {d}"), .{ @as(FunctionCodesMask, @bitCast(function_type)), partition_number });
+                log.warn("GetMediaInformation: Function: {f}, Partition number: {d}", .{ @as(FunctionCodesMask, @bitCast(function_type)), partition_number });
 
                 switch (target.*) {
                     inline .VMU, .VibrationPack => |*v| {
                         const dest = @as([*]u8, @ptrCast(dc._get_memory(return_addr + 8)))[0..];
                         const payload_size = v.get_media_info(dest, function_type, partition_number);
                         if (payload_size > 0) {
-                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = payload_size + 1 }));
-                            dc.cpu.write_physical(u32, return_addr + 4, function_type);
+                            response_header.command = .DataTransfer;
+                            response_header.payload_length = payload_size + 1;
+                            response_data[0] = function_type;
                             return 1 + payload_size + 1;
-                        } else {
-                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
-                            return 1;
-                        }
+                        } else return unimplemented(command.command, data, target);
                     },
-                    else => {
-                        log.err(termcolor.red("Unimplemented GetMediaInformation for target: {t}"), .{target.tag()});
-                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
-                        return 1;
-                    },
+                    else => return unimplemented(command.command, data, target),
                 }
             },
             .BlockRead => {
-                const partition: u8 = @truncate((data[3] >> 0) & 0xFF);
-                const phase: u8 = @truncate((data[3] >> 8) & 0xFF);
-                const block_num: u16 = @truncate(((data[3] >> 24) & 0xFF) | ((data[3] >> 8) & 0xFF00));
-                log.warn(termcolor.yellow("BlockRead({f}) Partition: {d}, Block: {d}, Phase: {d} ({X:0>8})"), .{ @as(FunctionCodesMask, @bitCast(function_type)), partition, block_num, phase, data[3] });
-
                 const dest = @as([*]u8, @ptrCast(dc._get_memory(return_addr + 12)))[0..];
-                const payload_size = target.block_read(dest, function_type, partition, block_num, phase);
+                const payload_size = target.block_read(function_type, .parse(data[3]), dest);
 
                 if (payload_size > 0) {
-                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = payload_size + 2 }));
-                    dc.cpu.write_physical(u32, return_addr + 4, function_type);
-                    dc.cpu.write_physical(u32, return_addr + 8, data[3]); // Header repeating the location.
+                    response_header.command = .DataTransfer;
+                    response_header.payload_length = payload_size + 2;
+                    response_data[0] = function_type;
+                    response_data[1] = data[3]; // Header repeating the location.
                     return 1 + payload_size + 2;
                 } else {
-                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FileError, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
+                    response_header.command = .FileError;
                     return 1;
                 }
             },
             .BlockWrite => {
-                const partition: u8 = @truncate((data[3] >> 0) & 0xFF);
-                const phase: u8 = @truncate((data[3] >> 8) & 0xFF);
-                const block_num: u16 = @truncate(((data[3] >> 24) & 0xFF) | ((data[3] >> 8) & 0xFF00));
                 const write_data = data[4 .. 4 + command.payload_length - 2];
-                const words_written = target.block_write(function_type, partition, phase, block_num, write_data);
-                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
+                const words_written = target.block_write(function_type, .parse(data[3]), write_data);
+                response_header.command = .Acknowledge;
                 return 1 + words_written;
             },
             .GetLastError => {
-                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
+                response_header.command = .Acknowledge;
                 return 1;
             },
             .SetCondition => {
                 switch (target.*) {
                     inline .VMU, .VibrationPack => |*vmu| {
                         vmu.set_condition(function_type, data[3..][0 .. command.payload_length - 1]);
-                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
+                        response_header.command = .Acknowledge;
                         return 1;
                     },
-                    else => {
-                        log.err(termcolor.red("Unimplemented SetCondition for target: {t}"), .{target.tag()});
-                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
-                        return 1;
-                    },
+                    else => return unimplemented(command.command, data, target),
                 }
-                return 1;
             },
-            else => {
-                log.warn(termcolor.yellow("Unimplemented command: {s} ({X}, {any})"), .{ std.enums.tagName(Command, command.command) orelse "Unknown", @intFromEnum(command.command), data });
-                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
-                return 1;
+            .AudioInputDevice => {
+                switch (target.*) {
+                    inline .Microphone => |*m| {
+                        std.debug.assert(function_type == FunctionCodesMask.AudioInput.as_u32());
+                        const response, const payload_length = m.audio_input_command(data[3..][0 .. command.payload_length - 1], response_data);
+                        response_header.command = response;
+                        response_header.payload_length = payload_length;
+                        return 1 + 1 + payload_length;
+                    },
+                    else => return unimplemented(command.command, data, target),
+                }
             },
+            else => return unimplemented(command.command, data, target),
         }
+    }
+
+    fn unimplemented(command: Command, data: []const u32, target: *const Peripheral) u32 {
+        log.warn("Unimplemented command {} for target: {t} (data: {X})", .{ command, target.tag(), std.mem.sliceAsBytes(data) });
+        return 1;
     }
 
     pub fn serialize(_: @This(), _: *std.Io.Writer) !usize {

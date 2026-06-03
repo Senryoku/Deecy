@@ -35,6 +35,8 @@ const PreciseSleep = @import("precise_sleep.zig");
 pub const RendererModule = @import("./renderer.zig");
 pub const Renderer = RendererModule.Renderer;
 
+pub const AudioInput = @import("audio_input.zig");
+
 pub const UI = @import("./deecy_ui.zig");
 const DebugUI = @import("./debug_ui.zig");
 const Shortcuts = @import("./ui/shortcuts.zig");
@@ -272,6 +274,7 @@ const ControllerSettings = struct {
         None,
         VMU: struct { filename: []const u8 },
         VibrationPack,
+        Microphone,
         pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
             switch (self.*) {
                 .VMU => |*v| allocator.free(v.filename),
@@ -397,6 +400,7 @@ vmu_alarm: struct {
         return s;
     }
 } = .{},
+audio_input: ?*AudioInput = null,
 
 config: Configuration = .{},
 previous_window_position: struct { x: i32 = 0, y: i32 = 0, w: i32 = 0, h: i32 = 0 } = .{},
@@ -695,6 +699,8 @@ pub fn destroy(self: *@This()) void {
     self.breakpoints.deinit(self._allocator);
 
     self.audio_device.destroy();
+    if (self.audio_input) |ai| ai.destroy(self._allocator);
+    self.audio_input = null;
 
     self.renderer.destroy();
 
@@ -920,6 +926,37 @@ fn VibrationCallback(comptime port: u8) *const fn (*Self, f32, f32) void {
 }
 const VibrationCallbacks = [4]@TypeOf(VibrationCallback(0)){ VibrationCallback(0), VibrationCallback(1), VibrationCallback(2), VibrationCallback(3) };
 
+fn microphone_start(context: ?*anyopaque) void {
+    if (context == null) return;
+    const self: *Self = @ptrCast(@alignCast(context));
+    if (self.audio_input == null)
+        self.audio_input = AudioInput.create(self._allocator) catch |err| {
+            deecy_log.err("Failed to initialize audio capture: {}", .{err});
+            return;
+        };
+    if (self.audio_input) |ai| ai.start() catch |err| deecy_log.err("Failed to start audio device: {}", .{err});
+}
+
+fn microphone_stop(context: ?*anyopaque) void {
+    if (context == null) return;
+    const self: *Self = @ptrCast(@alignCast(context));
+    if (self.audio_input) |ai|
+        ai.device.stop() catch |err| deecy_log.err("Failed to stop audio device: {}", .{err});
+}
+
+fn microphone_get_samples(context: ?*anyopaque) []i16 {
+    if (context == null) return &[_]i16{};
+    const self: *Self = @ptrCast(@alignCast(context));
+    if (self.audio_input) |ai| return ai.get_samples() catch |err| {
+        deecy_log.err("Failed to get audio samples: {}", .{err});
+        return &[_]i16{};
+    };
+    // NOTE: The front end might stop capturing independently of the emulated system (e.g. pause or
+    //       save state load), restart it here if the game seems to expect samples.
+    microphone_start(context);
+    return &[_]i16{};
+}
+
 pub fn init_peripheral(self: *@This(), port: u8, slot: u8) !void {
     self.deinit_peripheral(port, slot);
     switch (self.config.controllers[port].subperipherals[slot]) {
@@ -933,6 +970,14 @@ pub fn init_peripheral(self: *@This(), port: u8, slot: u8) !void {
             switch (self.dc.maple.ports[port]) {
                 .emulated => |*e| {
                     e.subperipherals[slot] = .{ .VibrationPack = .init(.{ .function = @ptrCast(VibrationCallbacks[port]), .context = self }) };
+                },
+                else => {},
+            }
+        },
+        .Microphone => {
+            switch (self.dc.maple.ports[port]) {
+                .emulated => |*e| {
+                    e.subperipherals[slot] = .{ .Microphone = .init(self, microphone_start, microphone_stop, microphone_get_samples) };
                 },
                 else => {},
             }
@@ -1033,6 +1078,10 @@ pub fn reset(self: *@This()) !void {
     try self.dc.reset();
     self.ui.binary_loaded = false;
     self.renderer.reset();
+    if (self.audio_input) |audio_input| {
+        audio_input.destroy(self._allocator);
+        self.audio_input = null;
+    }
     self._cycles_to_run = 0;
     try self.check_save_state_slots();
     self.rewind.clear(self.io, self._allocator, self.gctx);
@@ -1574,6 +1623,7 @@ pub fn pause(self: *@This()) void {
             if (self._dc_thread) |dc_thread| dc_thread.join();
             self._dc_thread = null;
         }
+        if (self.audio_input) |ai| ai.device.stop() catch |err| deecy_log.err(termcolor.red("Failed to stop audio device: {}"), .{err});
         self.dc.maple.flush_vmus();
 
         if (self.config.rewind.enabled) {

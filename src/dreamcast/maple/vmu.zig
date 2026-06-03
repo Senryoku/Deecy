@@ -256,7 +256,7 @@ pub fn get_media_info(self: *const @This(), dest: [*]u8, function: u32, partitio
 }
 
 /// Returns payload size in 32-bit words
-pub fn block_read(self: *const @This(), dest: [*]u8, function: u32, partition: u8, block_num: u16, phase: u8) u8 {
+pub fn block_read(self: *const @This(), function: u32, partition: u8, block_num: u16, phase: u8, dest: [*]u8) u8 {
     std.debug.assert(partition == 0);
     switch (function) {
         FunctionCodesMask.Storage.as_u32() => {
@@ -273,7 +273,7 @@ pub fn block_read(self: *const @This(), dest: [*]u8, function: u32, partition: u
 }
 
 /// Returns payload size in 32-bit words
-pub fn block_write(self: *@This(), function: u32, partition: u8, phase: u8, block_num: u16, data: []const u32) u8 {
+pub fn block_write(self: *@This(), function: u32, partition: u8, block_num: u16, phase: u8, data: []const u32) u8 {
     switch (function) {
         FunctionCodesMask.Screen.as_u32() => {
             //  - Partition is the screen number, should always be zero.
