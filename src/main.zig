@@ -200,6 +200,14 @@ pub fn main(init: std.process.Init) !void {
         d.update(@floatCast(now - then));
         then = now;
 
+        if (try d.check_resize() == .Resizing) {
+            // Skip rendering while resizing. Keep presenting to update window size.
+            try d.gctx_queue_mutex.lock(d.io);
+            defer d.gctx_queue_mutex.unlock(d.io);
+            _ = d.gctx.present();
+            continue;
+        }
+
         // Framebuffer has been written to by the CPU.
         // Update the host texture and blit it to our render target.
         // FIXME: Hackishly forced on for .bin files

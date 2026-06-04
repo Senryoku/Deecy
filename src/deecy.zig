@@ -147,18 +147,10 @@ fn glfw_drop_callback(window: *zglfw.Window, count: i32, paths: [*][*:0]const u8
 fn glfw_resize_callback(window: *zglfw.Window, width: i32, height: i32) callconv(.c) void {
     const maybe_app = window.getUserPointer(@This());
     if (maybe_app) |app| {
-        app.gctx_queue_mutex.lockUncancelable(app.io);
-        defer app.gctx_queue_mutex.unlock(app.io);
         if (width > 0 and height > 0) {
-            app.gctx.surface.configure(.{
-                .device = app.gctx.device,
-                .format = zgpu.GraphicsContext.surface_texture_format,
-                .usage = .{ .render_attachment = true },
-                .width = @intCast(width),
-                .height = @intCast(height),
-                .present_mode = app.gctx.present_mode,
-            });
-            app.on_resize();
+            app.gctx_queue_mutex.lockUncancelable(app.io);
+            defer app.gctx_queue_mutex.unlock(app.io);
+            app.pending_resize = .{ .time = std.Io.Timestamp.now(app.io, .awake), .width = @intCast(width), .height = @intCast(height) };
         }
     }
 }
@@ -379,6 +371,8 @@ wayland: bool,
 gctx: *zgpu.GraphicsContext = undefined,
 gctx_queue_mutex: std.Io.Mutex = .init, // GPU Memory access isn't thread safe. Use this to copy to textures from another thread for example.
 scale_factor: f32 = 1.0,
+/// Track and debounce window resize events
+pending_resize: ?struct { time: std.Io.Timestamp, width: u32, height: u32 } = null,
 
 dc: *Dreamcast = undefined,
 renderer: *Renderer = undefined,
@@ -1103,6 +1097,29 @@ pub fn update(self: *@This(), delta_time: f32) void {
         self._stop_request = false;
         if (self._on_stop_request) |on_stop_request| on_stop_request(self);
     }
+}
+
+pub fn check_resize(self: *@This()) !enum { Normal, Resizing } {
+    if (self.pending_resize == null) return .Normal; // Fast check without locking the mutex.
+
+    try self.gctx_queue_mutex.lock(self.io);
+    defer self.gctx_queue_mutex.unlock(self.io);
+
+    const resize = self.pending_resize.?; // NOTE: Intentionally acquiring the value after locking.
+    if (resize.time.toMilliseconds() + 30 < std.Io.Timestamp.now(self.io, .awake).toMilliseconds()) {
+        self.gctx.surface.configure(.{
+            .device = self.gctx.device,
+            .format = zgpu.GraphicsContext.surface_texture_format,
+            .usage = .{ .render_attachment = true },
+            .width = resize.width,
+            .height = resize.height,
+            .present_mode = self.gctx.present_mode,
+        });
+        self.on_resize();
+        self.pending_resize = null;
+        return .Normal;
+    }
+    return .Resizing;
 }
 
 fn update_rumble(self: *@This(), dt: f32) void {
