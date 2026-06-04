@@ -1642,7 +1642,7 @@ pub const AICA = struct {
         // FIXME: Backward compatibility. Marker for new version.
         bytes += try writer.write(std.mem.asBytes(&@as(usize, 0xFFFFFFFF_FFFFFFFF)));
         if (self.sample_read_offset > self.sample_write_offset) {
-            const sample_count = self.sample_read_offset - self.sample_write_offset;
+            const sample_count = (self.sample_buffer.len - self.sample_read_offset) + self.sample_write_offset;
             bytes += try writer.write(std.mem.asBytes(&sample_count));
             bytes += try writer.write(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..]));
             bytes += try writer.write(std.mem.sliceAsBytes(self.sample_buffer[0..self.sample_write_offset]));
