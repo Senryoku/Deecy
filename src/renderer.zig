@@ -2525,7 +2525,7 @@ pub const Renderer = struct {
                         tex_idx = self.get_texture_index(gpu, texture_size_index, texture_control) orelse self.upload_texture(gpu, tsp_instruction, texture_control);
                     }
                     if (area1_texture_control) |tc| {
-                        const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
+                        const texture_size_index = @max(area1_tsp_instruction.?.texture_u_size, area1_tsp_instruction.?.texture_v_size);
                         tex_idx_area_1 = self.get_texture_index(gpu, texture_size_index, tc) orelse self.upload_texture(gpu, area1_tsp_instruction.?, tc);
                     }
 
