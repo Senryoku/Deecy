@@ -5,7 +5,7 @@ const known_folders = @import("known-folders");
 var data_path: []const u8 = "";
 var userdata_path: []const u8 = "";
 
-pub fn init(io: std.Io, allocator: std.mem.Allocator, environ: std.process.Environ.Map) !void {
+pub fn init(io: std.Io, allocator: std.mem.Allocator, environ: *const std.process.Environ.Map) !void {
     if (path_config.use_appdata_dir) {
         const app_data_dir = try known_folders.getPath(io, allocator, environ, .local_configuration) orelse {
             std.log.warn("No known 'local_configuration' folder.", .{});

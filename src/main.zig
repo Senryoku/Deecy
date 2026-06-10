@@ -61,7 +61,7 @@ pub fn main(init: std.process.Init) !void {
     custom_log.init(io, allocator);
     defer custom_log.deinit();
 
-    try DreamcastModule.HostPaths.init(io, allocator, init.environ_map.*);
+    try DreamcastModule.HostPaths.init(io, allocator, init.environ_map);
     defer DreamcastModule.HostPaths.deinit(allocator);
 
     if (builtin.os.tag == .windows and config.no_console) {

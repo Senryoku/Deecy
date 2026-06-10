@@ -1,0 +1,37 @@
+app-id: io.github.Senryoku.Deecy
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+command: Deecy
+
+finish-args:
+  - --filesystem=host:ro
+
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  
+  - --device=all 
+  
+  - --socket=pulseaudio
+
+modules:
+  - name: zig
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/bin
+      - cp zig /app/bin/zig
+      - cp -r lib /app/
+    sources:
+      - type: archive
+        url: https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+        sha256: 70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+
+  - name: deecy
+    buildsystem: simple
+    build-commands:
+      - /app/bin/zig build --release=fast -Dcpu=baseline -Duse_appdata_dir=true -p /app
+    sources:
+      - type: dir
+        path: ../
