@@ -146,31 +146,29 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator, io: std.Io) void {
     self.shortcuts.deinit();
 }
 
+fn app_ptr(self: *@This()) *Deecy {
+    return @alignCast(@fieldParentPtr("shortcuts", self));
+}
+
 pub fn on_press(self: *@This(), key: Key) void {
-    if (self.shortcuts.getPtr(key)) |shortcut| {
-        const deecy: *Deecy = @fieldParentPtr("shortcuts", self);
-        shortcut.call(deecy);
-    }
+    if (self.shortcuts.getPtr(key)) |shortcut|
+        shortcut.call(self.app_ptr());
 }
 
 /// Bypasses internal repeat timer. Intended to be used with the OS repeat logic.
 /// Do not mix on_repeat and on_hold with the same type of input device.
 pub fn on_repeat(self: *@This(), key: Key) void {
     if (self.shortcuts.getPtr(key)) |shortcut| {
-        if (shortcut.allow_repeat) {
-            const deecy: *Deecy = @fieldParentPtr("shortcuts", self);
-            shortcut.call(deecy);
-        }
+        if (shortcut.allow_repeat)
+            shortcut.call(self.app_ptr());
     }
 }
 
 /// Intended to be used with input without OS repeat logic (e.g. controller).
 /// Do not mix on_repeat and on_hold with the same type of input device.
 pub fn on_hold(self: *@This(), key: Key) void {
-    if (self.shortcuts.getPtr(key)) |shortcut| {
-        const deecy: *Deecy = @fieldParentPtr("shortcuts", self);
-        shortcut.on_hold(deecy);
-    }
+    if (self.shortcuts.getPtr(key)) |shortcut|
+        shortcut.on_hold(self.app_ptr());
 }
 
 pub fn put(self: *@This(), key: Key, action: Action.Name) !void {
