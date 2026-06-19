@@ -679,10 +679,27 @@ fn pio_prep_complete(self: *@This()) void {
     });
 }
 
+pub fn dma(self: *@This(), dst: []u8, len: u32) usize {
+    var copied: usize = self.dma_data_queue.read(dst);
+    while (copied < len) {
+        if (self.cd_read_state.remaining_sectors > 0) {
+            // FIXME: Avoid this copy?
+            self.cd_read_fetch(&self.dma_data_queue, self.cd_read_state.data_select, self.cd_read_state.expected_data_type, self.cd_read_state.fad, 1) catch |err| {
+                gdrom_log.err("Error reading sector {X}: {}", .{ self.cd_read_state.fad, err });
+                return copied;
+            };
+            self.cd_read_state.fad += 1;
+            self.cd_read_state.remaining_sectors -= 1;
+            copied += self.dma_data_queue.read(dst[copied..]);
+        } else return copied;
+    }
+    return copied;
+}
+
 pub fn on_dma_end(self: *@This(), dc: *Dreamcast) void {
     // When the device is ready to send the status, it writes the final status (IO, CoD, DRDY set, BSY,
     // DRQ cleared) to the "Status" register before making INTRQ valid.
-    if (self.dma_data_queue.count == 0) {
+    if (self.cd_read_state.remaining_sectors == 0 and self.dma_data_queue.count == 0) {
         self.status_register.drq = 0;
         self.status_register.bsy = 0;
         self.status_register.drdy = 1;
@@ -1068,17 +1085,19 @@ fn cd_read(self: *@This()) !void {
 
     const transfer_type: enum { PIO, DMA } = if (self.features.DMA == 1) .DMA else .PIO;
 
+    self.pio_data_queue.discard(self.pio_data_queue.count);
+    self.dma_data_queue.discard(self.dma_data_queue.count);
+    self.cd_read_state = .{
+        .fad = start_addr,
+        .remaining_sectors = transfer_length,
+        .data_select = data_select,
+        .expected_data_type = expected_data_type,
+    };
     if (transfer_type == .PIO) {
         gdrom_log.debug("SPI Packet CDRead PIO mode: start_addr: {X:0>8}, transfer_length: {X:0>4}", .{ start_addr, transfer_length });
-        self.cd_read_state = .{
-            .fad = start_addr,
-            .remaining_sectors = transfer_length,
-            .data_select = data_select,
-            .expected_data_type = expected_data_type,
-        };
         try self.cd_read_pio_fetch();
     } else {
-        try self.cd_read_fetch(&self.dma_data_queue, data_select, expected_data_type, start_addr, transfer_length);
+        // TODO: Prefetch a sector?
     }
 }
 

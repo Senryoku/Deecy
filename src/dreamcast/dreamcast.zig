@@ -1071,7 +1071,8 @@ pub const Dreamcast = struct {
 
             // NOTE: This should use ch0-DMA, but the SH4 DMAC implementation can't handle this case (yet?).
             //       Unless we copy u16 by u16 from the data register, but, mmh, yeah.
-            const copied = self.gdrom.dma_data_queue.read(@as([*]u8, @ptrCast(self._get_memory(dst_addr)))[0..len]);
+            const dst = @as([*]u8, @ptrCast(self._get_memory(dst_addr)))[0..len];
+            const copied = self.gdrom.dma(dst, len);
 
             if (copied < len) {
                 log.warn("GD DMA: {X:0>8} bytes copied out of {X:0>8} expected.", .{ copied, len });
