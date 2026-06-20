@@ -385,9 +385,15 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
                 var last_dma_data_queue_count: u64 = 0;
                 var last_remaining_sectors: u64 = 0;
             };
-            if (self.status_register.bsy == 1 and (self.dma_data_queue.count > 0 or self.cd_read_state.remaining_sectors > 0) and self.dma_data_queue.count == static.last_dma_data_queue_count and self.cd_read_state.remaining_sectors == static.last_remaining_sectors) {
+            if (self.status_register.bsy == 1 and
+                (self.dma_data_queue.count > 0 or self.cd_read_state.remaining_sectors > 0) and
+                self.dma_data_queue.count == static.last_dma_data_queue_count and
+                self.cd_read_state.remaining_sectors == static.last_remaining_sectors)
+            {
                 static.consecutive_busy_reads += 1;
-                if (static.consecutive_busy_reads >= 1_000) {
+                if ((static.consecutive_busy_reads >= 1_000 and self.dma_data_queue.count > 0) or
+                    (static.consecutive_busy_reads >= 10 and self.cd_read_state.remaining_sectors > 0))
+                {
                     gdrom_log.err(termcolor.red("Multi-Read DMA Hack: Stuck with data in dma queue ({d} bytes, {d} sectors), discarding."), .{ self.dma_data_queue.count, self.cd_read_state.remaining_sectors });
                     self.dma_data_queue.discard(self.dma_data_queue.count);
                     self.cd_read_state.remaining_sectors = 0;

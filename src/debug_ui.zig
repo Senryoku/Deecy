@@ -356,9 +356,9 @@ fn display_packed_color(comptime label: [:0]const u8, packed_color: Colors.Packe
     _ = zgui.colorEdit4(label, .{ .col = @as([*]f32, @ptrCast(&fcolor))[0..4] });
 }
 
-fn display_non_zero(comptime label: [:0]const u8, comptime T: type, value: T) void {
+fn display_non_zero(comptime label: [:0]const u8, value: anytype) void {
     zgui.textUnformatted(label);
-    inline for (@typeInfo(T).@"struct".fields) |f| {
+    inline for (@typeInfo(@TypeOf(value)).@"struct".fields) |f| {
         if (@field(value, f.name) != 0) {
             zgui.sameLine(.{});
             zgui.text("{s}", .{f.name});
@@ -424,17 +424,17 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         }
         zgui.separator();
 
-        display_non_zero("SB_ISTNRM: ", HardwareRegisters.SB_ISTNRM, d.dc.hw_register(HardwareRegisters.SB_ISTNRM, .SB_ISTNRM).*);
-        display_non_zero("SB_ISTEXT: ", HardwareRegisters.SB_ISTEXT, d.dc.hw_register(HardwareRegisters.SB_ISTEXT, .SB_ISTEXT).*);
+        display_non_zero("SB_ISTNRM: ", d.dc.hw_register(HardwareRegisters.SB_ISTNRM, .SB_ISTNRM).*);
+        display_non_zero("SB_ISTEXT: ", d.dc.hw_register(HardwareRegisters.SB_ISTEXT, .SB_ISTEXT).*);
         zgui.text("SB_ISTERR:  {X}", .{d.dc.hw_register(u32, .SB_ISTERR).*});
 
-        display_non_zero("SB_IML2NRM: ", HardwareRegisters.SB_ISTNRM, d.dc.hw_register(HardwareRegisters.SB_ISTNRM, .SB_IML2NRM).*);
-        display_non_zero("SB_IML4NRM: ", HardwareRegisters.SB_ISTNRM, d.dc.hw_register(HardwareRegisters.SB_ISTNRM, .SB_IML4NRM).*);
-        display_non_zero("SB_IML6NRM: ", HardwareRegisters.SB_ISTNRM, d.dc.hw_register(HardwareRegisters.SB_ISTNRM, .SB_IML6NRM).*);
+        display_non_zero("SB_IML2NRM: ", d.dc.hw_register(HardwareRegisters.SB_ISTNRM, .SB_IML2NRM).*);
+        display_non_zero("SB_IML4NRM: ", d.dc.hw_register(HardwareRegisters.SB_ISTNRM, .SB_IML4NRM).*);
+        display_non_zero("SB_IML6NRM: ", d.dc.hw_register(HardwareRegisters.SB_ISTNRM, .SB_IML6NRM).*);
 
-        display_non_zero("SB_IML2EXT: ", HardwareRegisters.SB_ISTEXT, d.dc.hw_register(HardwareRegisters.SB_ISTEXT, .SB_IML2EXT).*);
-        display_non_zero("SB_IML4EXT: ", HardwareRegisters.SB_ISTEXT, d.dc.hw_register(HardwareRegisters.SB_ISTEXT, .SB_IML4EXT).*);
-        display_non_zero("SB_IML6EXT: ", HardwareRegisters.SB_ISTEXT, d.dc.hw_register(HardwareRegisters.SB_ISTEXT, .SB_IML6EXT).*);
+        display_non_zero("SB_IML2EXT: ", d.dc.hw_register(HardwareRegisters.SB_ISTEXT, .SB_IML2EXT).*);
+        display_non_zero("SB_IML4EXT: ", d.dc.hw_register(HardwareRegisters.SB_ISTEXT, .SB_IML4EXT).*);
+        display_non_zero("SB_IML6EXT: ", d.dc.hw_register(HardwareRegisters.SB_ISTEXT, .SB_IML6EXT).*);
 
         zgui.text("SB_IML2ERR:  {X}", .{d.dc.hw_register(u32, .SB_IML2ERR).*});
         zgui.text("SB_IML4ERR:  {X}", .{d.dc.hw_register(u32, .SB_IML4ERR).*});
