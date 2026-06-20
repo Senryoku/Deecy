@@ -629,6 +629,7 @@ pub const Dreamcast = struct {
             },
             .SB_ISTEXT => {
                 // Read-only
+                log.warn("[{X:0>8}] Write to SB_ISTEXT (ignored): {X}", .{ self.cpu.pc, value });
             },
             .SB_IML6NRM, .SB_IML6EXT, .SB_IML6ERR, .SB_IML4NRM, .SB_IML4EXT, .SB_IML4ERR, .SB_IML2NRM, .SB_IML2EXT, .SB_IML2ERR => {
                 self.hw_register_addr(T, addr).* = value;
