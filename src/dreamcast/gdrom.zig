@@ -378,22 +378,25 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
             gdrom_log.debug("Read Alternate Status @{X:0>8} = {}", .{ addr, self.status_register });
             // NOTE: Alternate status reads do NOT clear the pending interrupt signal.
 
-            // FIXME: CDI Hack - See issue #70
+            // FIXME: Multi-Read DMA Hack - See issue #70
             //        IP.BIN (using boot ROM syscalls) is stuck waiting for the GD drive with data in DMA queue.
             const static = struct {
                 var consecutive_busy_reads: u64 = 0;
                 var last_dma_data_queue_count: u64 = 0;
+                var last_remaining_sectors: u64 = 0;
             };
-            if (self.status_register.bsy == 1 and self.dma_data_queue.count > 0 and self.dma_data_queue.count == static.last_dma_data_queue_count) {
+            if (self.status_register.bsy == 1 and (self.dma_data_queue.count > 0 or self.cd_read_state.remaining_sectors > 0) and self.dma_data_queue.count == static.last_dma_data_queue_count and self.cd_read_state.remaining_sectors == static.last_remaining_sectors) {
                 static.consecutive_busy_reads += 1;
-                if (static.consecutive_busy_reads >= 10_000) {
-                    gdrom_log.err(termcolor.red("CDI Hack: Stuck with data in dma queue, discarding."), .{});
+                if (static.consecutive_busy_reads >= 1_000) {
+                    gdrom_log.err(termcolor.red("Multi-Read DMA Hack: Stuck with data in dma queue ({d} bytes, {d} sectors), discarding."), .{ self.dma_data_queue.count, self.cd_read_state.remaining_sectors });
                     self.dma_data_queue.discard(self.dma_data_queue.count);
+                    self.cd_read_state.remaining_sectors = 0;
                     self.status_register.bsy = 0;
                     self.status_register.drdy = 1;
                 }
             } else static.consecutive_busy_reads = 0;
             static.last_dma_data_queue_count = self.dma_data_queue.count;
+            static.last_remaining_sectors = self.cd_read_state.remaining_sectors;
 
             return @intCast(@as(u8, @bitCast(self.status_register)));
         },
@@ -1071,7 +1074,7 @@ fn cd_read(self: *@This()) !void {
     const data_select: u4 = @truncate((self.packet_command[1] >> 4) & 0xF);
 
     self.state = .Paused;
-    self.audio_state.status = .Paused;
+    self.audio_state.status = .NoInfo;
 
     const start_addr: u32 = if (parameter_type == 0)
         (@as(u32, self.packet_command[2]) << 16) | (@as(u32, self.packet_command[3]) << 8) | self.packet_command[4] // Start FAD

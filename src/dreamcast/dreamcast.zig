@@ -1098,7 +1098,6 @@ pub const Dreamcast = struct {
                     14 * len
                 else // GDROM speed: 1.8 MB/s
                     // FIXME: Added a maximum amount of cycles here, as very large DMA were causing visible freezes in Soul Calibur.
-                    //        The proper fix is probably to have the GDROM send data in multiple DMA instead of a single, huge one.
                     @as(u32, 14) * 128 * 1024 + @as(u32, 111) * (@min(len, 0x40000) - 128 * 1024),
             );
 
