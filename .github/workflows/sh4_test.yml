@@ -14,6 +14,7 @@ jobs:
               with:
                   repository: SingleStepTests/sh4
                   path: sh4_json
+                  ref: 33c252a9e5abefc5e085649220ca08a116da0c0c
             - name: Move JSON test files to temp directory
               run: mkdir /home/runner/dev && mv sh4_json /home/runner/dev/sh4_json/
             - name: Transcode JSON test files
