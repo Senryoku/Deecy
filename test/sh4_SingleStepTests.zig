@@ -149,8 +149,10 @@ const Test = struct {
         fetch_val: u16,
         read_addr: ?u32 = null,
         read_val: ?u64 = null,
+        read_size: ?u32 = null,
         write_addr: ?u32 = null,
         write_val: ?u64 = null,
+        write_size: ?u32 = null,
     },
     opcodes: []u16,
 
