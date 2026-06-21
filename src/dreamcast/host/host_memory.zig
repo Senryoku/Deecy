@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-pub fn allocate_executable(allocator: std.mem.Allocator, size: usize) ![]align(std.heap.page_size_min) u8 {
+pub fn allocate_executable(size: usize) ![]align(std.heap.page_size_min) u8 {
     switch (builtin.os.tag) {
         .windows => {
             var local_size: std.os.windows.SIZE_T = size;
@@ -17,22 +17,24 @@ pub fn allocate_executable(allocator: std.mem.Allocator, size: usize) ![]align(s
             return @as([*]align(std.heap.page_size_min) u8, @ptrCast(@alignCast(base_addr)))[0..size];
         },
         .linux => {
-            const r = try allocator.alignedAlloc(u8, .fromByteUnits(std.heap.page_size_min), size);
-            switch (std.posix.errno(std.posix.system.mprotect(r.ptr, size, .{ .READ = true, .WRITE = true, .EXEC = true }))) {
-                .SUCCESS => {},
-                .NOMEM => return error.OutOfMemory,
-                else => |err| return std.posix.unexpectedErrno(err),
-            }
-            return r;
+            const aligned_size = std.mem.alignForward(usize, size, std.heap.page_size_min);
+            return try std.posix.mmap(
+                null,
+                aligned_size,
+                .{ .READ = true, .WRITE = true, .EXEC = true },
+                .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
+                -1,
+                0,
+            );
         },
         else => @compileError("Unsupported OS."),
     }
 }
 
-pub fn deallocate_executable(allocator: std.mem.Allocator, memory: []align(std.heap.page_size_min) u8) void {
+pub fn deallocate_executable(memory: []align(std.heap.page_size_min) u8) void {
     switch (builtin.os.tag) {
         .windows => virtual_dealloc(memory),
-        .linux => allocator.free(memory),
+        .linux => std.posix.munmap(memory),
         else => @compileError("Unsupported OS."),
     }
 }

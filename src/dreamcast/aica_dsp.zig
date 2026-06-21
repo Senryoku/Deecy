@@ -102,7 +102,7 @@ pub fn init(ring_buffer: *const AICAModule.RingBufferAddress, registers: []u32, 
 }
 
 pub fn deinit(self: *@This()) void {
-    if (self._jit_buffer) |buffer| host_memory.deallocate_executable(self._allocator, buffer);
+    if (self._jit_buffer) |buffer| host_memory.deallocate_executable(buffer);
 }
 
 pub inline fn read_register(self: *const @This(), comptime T: type, local_addr: u32) T {
@@ -350,7 +350,7 @@ pub fn compile(self: *@This()) !void {
     std.debug.assert(!FullRegisterEmulation); // TODO: Not supported yet.
 
     if (self._jit_buffer == null)
-        self._jit_buffer = try host_memory.allocate_executable(self._allocator, 0x8000);
+        self._jit_buffer = try host_memory.allocate_executable(0x8000);
 
     var b = try IRBlock.init(self._allocator);
     defer b.deinit();
