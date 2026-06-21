@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-pub fn allocate_executable(_: std.mem.Allocator, size: usize) ![]align(std.heap.page_size_min) u8 {
+pub fn allocate_executable(size: usize) ![]align(std.heap.page_size_min) u8 {
     switch (builtin.os.tag) {
         .windows => {
             var local_size: std.os.windows.SIZE_T = size;
@@ -31,7 +31,7 @@ pub fn allocate_executable(_: std.mem.Allocator, size: usize) ![]align(std.heap.
     }
 }
 
-pub fn deallocate_executable(_: std.mem.Allocator, memory: []align(std.heap.page_size_min) u8) void {
+pub fn deallocate_executable(memory: []align(std.heap.page_size_min) u8) void {
     switch (builtin.os.tag) {
         .windows => virtual_dealloc(memory),
         .linux => std.posix.munmap(memory),

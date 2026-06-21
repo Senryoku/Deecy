@@ -71,7 +71,7 @@ const BlockCache = struct {
 
     pub fn init(allocator: std.mem.Allocator) !@This() {
         var r: @This() = .{
-            .buffer = try host_memory.allocate_executable(allocator, BlockBufferSize),
+            .buffer = try host_memory.allocate_executable(BlockBufferSize),
             ._allocator = allocator,
         };
         try r.allocate_blocks();
@@ -79,7 +79,7 @@ const BlockCache = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        host_memory.deallocate_executable(self._allocator, self.buffer);
+        host_memory.deallocate_executable(self.buffer);
         self.deallocate_blocks();
     }
 
