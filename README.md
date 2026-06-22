@@ -91,13 +91,7 @@ sudo apt install libgtk-3-dev libudev-dev
 
 ## Things I know I have to do
 
--   Debug, debug, debug.
--   SH4:
-    -   MMU:
-        -   Windows CE: Test and Debug more games.
-        -   Optimize.
 -   AICA:
-    -   Debug
     -   More accurate low pass filter (Q is currently ignored. Test case: the bios)
 -   Renderer:
     -   Framebuffer:
@@ -107,7 +101,6 @@ sudo apt install libgtk-3-dev libudev-dev
         -   Implemented: Inclusion volumes and shadow bit over opaque and transparent geometry.
         -   Missing: Exclusion volumes.
         -   Missing: Open Translucent MVs. I've seen some uses, but no easy way to check an hypothetical implementation.
-        -   Missing: Translucent MV in pre-sort mode.
     -   Region Array Data Configuration are mostly ignored.
     -   Fog LUT Mode 2.
     -   User Tile Clip, only the simplest version is supported.

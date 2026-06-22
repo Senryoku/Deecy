@@ -1707,7 +1707,7 @@ pub fn draw_ui(self: *@This()) !void {
     }
     _ = zgui.DockSpaceOverViewport(0, zgui.getMainViewport(), .{ .passthru_central_node = true });
 
-    self.ui.draw_vmus(self.display_ui);
+    self.ui.draw_vmu_screens(self.display_ui);
 
     if (self.display_ui) {
         try self.ui.draw();

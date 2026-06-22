@@ -187,8 +187,7 @@ pub fn draw_controller_settings(d: *Deecy, comptime port: u8) !void {
 
     const bg_color = zgui.colorConvertFloat4ToU32(zgui.getStyle().colors[@intFromEnum(zgui.StyleCol.window_bg)]);
     const draw_list = zgui.getWindowDrawList();
-    const window_size = zgui.getContentRegionAvail();
-    const s: f32 = std.math.clamp(window_size[0] / IntendedSize, 0.5, 4.0); // Scaling factor
+    const s: f32 = 1.58; // Scaling factor
     const x = zgui.getCursorScreenPos()[0];
     const y = zgui.getCursorScreenPos()[1];
     // Non-functional decorations

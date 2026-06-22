@@ -59,10 +59,13 @@ last_error: []const u8 = "",
 vmu_displays: [4]struct {
     texture: zgpu.TextureHandle = .nil,
     view: zgpu.TextureViewHandle = .nil,
-    valid: bool = false, // Is in use?
-    display: bool = true, // Should be displayed?
-    dirty: bool = false, // GPU texture is outdated?
-    data: [48 * 32 / 8]u8 = @splat(255),
+    /// Is in use?
+    valid: bool = false,
+    /// Should be displayed?
+    display: bool = true,
+    /// GPU texture is outdated?
+    dirty: bool = false,
+    data: [48 * 32 / 8]u8 = @splat(0),
 } = @splat(.{}),
 
 binary_loaded: bool = false, // Indicates if we're running a raw binary loaded directly in RAM (not from a disc) (FIXME: Used to avoid drawing the game library when pausing without a disc. Clunky.)
@@ -104,7 +107,7 @@ pub fn destroy(self: *@This()) void {
     self.allocator.destroy(self);
 }
 
-fn create_vmu_texture(self: *@This(), controller: u8) void {
+fn create_vmu_texture(self: *@This(), port: u8) void {
     const tex = self.deecy.gctx.createTexture(.{
         .usage = .{ .texture_binding = true, .copy_dst = true },
         .size = .{
@@ -116,13 +119,13 @@ fn create_vmu_texture(self: *@This(), controller: u8) void {
         .mip_level_count = 1,
     });
     const view = self.deecy.gctx.createTextureView(tex, .{});
-    self.vmu_displays[controller] = .{ .texture = tex, .view = view };
-    self.upload_vmu_texture(controller);
+    self.vmu_displays[port] = .{ .texture = tex, .view = view, .data = VMUScreenDefault[port] };
+    self.upload_vmu_texture(port);
 }
 
-pub fn update_vmu_screen(self: *@This(), data: [*]const u8, controller: u8) void {
-    @memcpy(&self.vmu_displays[controller].data, data[0 .. 48 * 32 / 8]);
-    self.vmu_displays[controller].dirty = true;
+pub fn update_vmu_screen(self: *@This(), data: [*]const u8, port: u8) void {
+    @memcpy(&self.vmu_displays[port].data, data[0 .. 48 * 32 / 8]);
+    self.vmu_displays[port].dirty = true;
 }
 
 pub fn vmu_screen_callback(comptime port_idx: u8) type {
@@ -135,13 +138,13 @@ pub fn vmu_screen_callback(comptime port_idx: u8) type {
 }
 
 /// Locks gctx_queue_mutex
-pub fn upload_vmu_texture(self: *@This(), controller: u8) void {
+pub fn upload_vmu_texture(self: *@This(), port: u8) void {
     const colors = [2][3]u8{ // bgr
         .{ 152, 135, 92 }, // "white"
         .{ 104, 43, 40 }, // "black"
     };
 
-    const tex = &self.vmu_displays[controller];
+    const tex = &self.vmu_displays[port];
     var pixels: [4 * 48 * 32]u8 = undefined;
     for (0..32) |r| {
         const row = tex.data[6 * (31 - r) .. 6 * ((31 - r) + 1)];
@@ -170,15 +173,15 @@ pub fn upload_vmu_texture(self: *@This(), controller: u8) void {
     tex.dirty = false;
 }
 
-pub fn draw_vmus(self: *@This(), editable: bool) void {
+pub fn draw_vmu_screens(self: *@This(), editable: bool) void {
     if (!self.deecy.config.display_vmus) return;
 
-    zgui.setNextWindowSize(.{ .w = 4 * 48, .h = 2 * (4 * 32 + 8), .cond = .first_use_ever });
-    zgui.setNextWindowPos(.{ .x = 32, .y = 32, .cond = .first_use_ever });
+    zgui.setNextWindowSize(.{ .w = 4 * 48, .h = 26.0 + 4 * (4 * 32 + 12), .cond = .first_use_ever });
+    zgui.setNextWindowPos(.{ .x = 32, .y = 64, .cond = .first_use_ever });
 
     zgui.pushStyleVar2f(.{ .idx = .window_padding, .v = .{ 0.0, 0.0 } });
 
-    if (zgui.begin("VMUs", .{ .popen = &self.deecy.config.display_vmus, .flags = .{
+    if (zgui.begin("VMU Screens", .{ .popen = &self.deecy.config.display_vmus, .flags = .{
         .no_resize = !editable,
         .no_move = !editable,
         .no_title_bar = !editable,
@@ -190,18 +193,37 @@ pub fn draw_vmus(self: *@This(), editable: bool) void {
         .no_scrollbar = true,
         .no_collapse = true,
     } })) {
-        if (!editable) zgui.dummy(.{ .w = 0, .h = 18.0 });
-        const win_width = zgui.getWindowSize()[0];
+        const win_width = zgui.getWindowWidth();
+        if (!editable) {
+            zgui.dummy(.{ .w = 0, .h = 18.0 + 30.0 }); // Title Bar + Controls
+        } else {}
+
+        if (editable) {
+            var valid_count: u8 = 0;
+            inline for (&self.vmu_displays) |*tex| {
+                if (tex.valid) valid_count += 1;
+            }
+            zgui.setCursorPosX(@max(0.0, (win_width - @as(f32, valid_count) * 44.5) / 2.0));
+            inline for (&self.vmu_displays, 0..) |*tex, idx| {
+                if (tex.valid) {
+                    if (idx != 0) zgui.sameLine(.{});
+                    // _ = zgui.checkbox("##Display #" ++ std.fmt.comptimePrint("{d}", .{idx}), .{ .v = &tex.display });
+                    _ = zgui.checkbox(std.fmt.comptimePrint("{s}", .{.{ "A", "B", "C", "D" }[idx]}), .{ .v = &tex.display });
+                    zgui.setItemTooltip("Display VMU screen from port {s}", .{.{ "A", "B", "C", "D" }[idx]});
+                }
+            }
+        }
+
+        var valid_count: u8 = 0;
         inline for (&self.vmu_displays, 0..) |*tex, idx| {
             if (tex.valid) {
+                valid_count += 1;
                 if (tex.display) {
                     if (tex.dirty)
                         self.upload_vmu_texture(@intCast(idx));
                     zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr((self.deecy.gctx.lookupResource(tex.view).?))) }, .{ .w = win_width, .h = win_width * 32.0 / 48.0 });
+                    zgui.dummy(.{ .w = 0, .h = 12.0 });
                 }
-                if (editable) {
-                    _ = zgui.checkbox("Display #" ++ std.fmt.comptimePrint("{d}", .{idx}), .{ .v = &tex.display });
-                } else zgui.dummy(.{ .w = 0, .h = 24.0 });
             }
         }
     }
@@ -733,7 +755,7 @@ pub fn draw(self: *@This()) !void {
         }
         if (zgui.beginMenu("Windows", true)) {
             _ = menu_from_enum(Icons.ChartLine ++ " Performance Overlay", &d.config.performance_overlay, .{});
-            if (zgui.menuItem(Icons.MobileScreen ++ " VMUs", .{ .selected = d.config.display_vmus })) {
+            if (zgui.menuItem(Icons.MobileScreen ++ " VMU screens", .{ .selected = d.config.display_vmus })) {
                 d.config.display_vmus = !d.config.display_vmus;
             }
             if (zgui.menuItem(Icons.Gear ++ " Settings", .{ .selected = d.config.display_settings })) {
@@ -786,12 +808,13 @@ pub fn draw(self: *@This()) !void {
         };
 
     if (self.deecy.config.display_settings) {
-        zgui.setNextWindowSize(.{ .w = 290, .h = 800, .cond = .first_use_ever });
-        zgui.setNextWindowPos(.{ .x = 1408, .y = 32, .cond = .first_use_ever });
+        zgui.setNextWindowSize(.{ .w = 520, .h = 800, .cond = .first_use_ever });
+        zgui.setNextWindowPos(.{ .x = 32, .y = 32, .cond = .first_use_ever });
         if (zgui.begin("Settings", .{ .popen = &self.deecy.config.display_settings, .flags = .{ .no_collapse = true } })) {
             if (zgui.beginTabBar("SettingsTabBar", .{})) {
                 if (zgui.beginTabItem("General", .{})) {
                     _ = zgui.checkbox("Start in Game Launcher", .{ .v = &d.config.auto_start_launcher });
+                    zgui.setItemTooltip("When enabled, Deecy will start automatically in the game launcher, allowing you to select games using your configured DC controller.", .{});
                     {
                         zgui.beginDisabled(.{ .disabled = d.running and builtin.mode != .Debug });
                         defer zgui.endDisabled();
@@ -1375,194 +1398,226 @@ pub fn draw_game_library(self: *@This()) !void {
 
     defer zgui.end();
     if (zgui.begin("Library", .{ .flags = .{ .no_resize = true, .no_move = true, .no_title_bar = true, .no_docking = true, .no_bring_to_front_on_focus = true } })) {
-        zgui.alignTextToFramePadding();
-        const static = struct {
-            var display_game_search: [63:0]u8 = @splat(0);
-            var lowercase_buffer: [64]u8 = @splat(0);
-            var lowercase_game_search: []u8 = lowercase_buffer[0..0];
+        if (d.config.game_directory) |game_directory| {
+            zgui.alignTextToFramePadding();
+            const static = struct {
+                var display_game_search: [63:0]u8 = @splat(0);
+                var lowercase_buffer: [64]u8 = @splat(0);
+                var lowercase_game_search: []u8 = lowercase_buffer[0..0];
 
-            pub fn reset() void {
-                display_game_search = @splat(0);
-                lowercase_buffer = @splat(0);
-                lowercase_game_search = lowercase_buffer[0..0];
-            }
-
-            pub fn match(name: []const u8) bool {
-                var lowercase_name: [256]u8 = @splat(0);
-                for (0..@min(name.len, lowercase_name.len)) |i| lowercase_name[i] = std.ascii.toLower(name[i]);
-                if (lowercase_game_search.len > 0 and std.mem.indexOf(u8, &lowercase_name, lowercase_game_search) == null) return false;
-                return true;
-            }
-        };
-        var open_game_settings = false;
-        zgui.setNextItemWidth(150.0);
-        if (zgui.inputTextWithHint("##Search", .{ .hint = "Search file...", .buf = @ptrCast(&static.display_game_search), .flags = .{ .auto_select_all = true } })) {
-            static.lowercase_buffer = @splat(0);
-            for (0..static.display_game_search.len) |i| {
-                if (static.display_game_search[i] == 0) {
-                    static.lowercase_game_search = static.lowercase_buffer[0..i];
-                    break;
+                pub fn reset() void {
+                    display_game_search = @splat(0);
+                    lowercase_buffer = @splat(0);
+                    lowercase_game_search = lowercase_buffer[0..0];
                 }
-                static.lowercase_buffer[i] = std.ascii.toLower(static.display_game_search[i]);
+
+                pub fn match(name: []const u8) bool {
+                    var lowercase_name: [256]u8 = @splat(0);
+                    for (0..@min(name.len, lowercase_name.len)) |i| lowercase_name[i] = std.ascii.toLower(name[i]);
+                    if (lowercase_game_search.len > 0 and std.mem.indexOf(u8, &lowercase_name, lowercase_game_search) == null) return false;
+                    return true;
+                }
+            };
+            var open_game_settings = false;
+            // TODO: Set active on startup when this API is added to ImGui (https://github.com/ocornut/imgui/issues/3949)
+            // if (zgui.isWindowAppearing()) zgui.setActive("##Search");
+            zgui.setNextItemWidth(150.0);
+            if (zgui.inputTextWithHint("##Search", .{ .hint = "Search file...", .buf = @ptrCast(&static.display_game_search), .flags = .{ .auto_select_all = true } })) {
+                static.lowercase_buffer = @splat(0);
+                for (0..static.display_game_search.len) |i| {
+                    if (static.display_game_search[i] == 0) {
+                        static.lowercase_game_search = static.lowercase_buffer[0..i];
+                        break;
+                    }
+                    static.lowercase_buffer[i] = std.ascii.toLower(static.display_game_search[i]);
+                }
             }
-        }
-        zgui.sameLine(.{});
-        if (zgui.button(Icons.Xmark, .{})) static.reset();
-        // TODO: Set active on startup when this API is added to ImGui (https://github.com/ocornut/imgui/issues/3949)
-        // if (zgui.isWindowAppearing()) zgui.setActive("##Search");
-        zgui.sameLine(.{ .spacing = 24.0 });
-        zgui.alignTextToFramePadding();
-        if (d.config.game_directory) |dir| {
-            zgui.text("Directory: {s}", .{dir});
-        } else {
-            zgui.textUnformatted("Directory: None");
-        }
-        const change_dir = zgui.isItemClicked(.left);
-        if (zgui.isItemHovered(.{})) zgui.setMouseCursor(.hand);
-        zgui.sameLine(.{ .spacing = 24.0 });
-        if (zgui.button(Icons.ArrowRotateLeft, .{})) {
-            try self.deecy.launch_async(refresh_games, .{self});
-        }
-        zgui.sameLine(.{});
-        if (zgui.button(Icons.FolderOpen, .{}) or change_dir)
-            try self.select_game_directory();
-        zgui.sameLine(.{ .offset_from_start_x = zgui.getContentRegionAvail()[0] - 80.0 });
-        zgui.setNextItemWidth(80.0);
-        _ = zgui.comboFromEnum("##Display", &d.config.library_display);
+            zgui.sameLine(.{});
+            if (zgui.button(Icons.Xmark, .{})) static.reset();
+            zgui.sameLine(.{ .spacing = 24.0 });
+            zgui.alignTextToFramePadding();
+            zgui.text("Directory: {s}", .{game_directory});
+            const change_dir = zgui.isItemClicked(.left);
+            if (zgui.isItemHovered(.{})) zgui.setMouseCursor(.hand);
+            zgui.sameLine(.{ .spacing = 24.0 });
+            if (zgui.button(Icons.ArrowRotateLeft, .{}))
+                try self.deecy.launch_async(refresh_games, .{self});
+            if (zgui.isItemHovered(.{})) zgui.setMouseCursor(.hand);
+            zgui.setItemTooltip("Refresh the library", .{});
+            zgui.sameLine(.{});
+            if (zgui.button(Icons.FolderOpen, .{}) or change_dir)
+                try self.select_game_directory();
+            if (zgui.isItemHovered(.{})) zgui.setMouseCursor(.hand);
+            zgui.setItemTooltip("Change the library directory", .{});
+            zgui.sameLine(.{ .offset_from_start_x = zgui.getContentRegionAvail()[0] - 80.0 });
+            zgui.setNextItemWidth(80.0);
+            _ = zgui.comboFromEnum("##Display", &d.config.library_display);
 
-        const draw_list = zgui.getWindowDrawList();
-
-        {
             self.disc_files_mutex.lockUncancelable(self.deecy.io);
             defer self.disc_files_mutex.unlock(self.deecy.io);
 
             _ = zgui.beginChild("Games", .{});
             defer zgui.endChild();
 
-            switch (d.config.library_display) {
-                .List => {
-                    if (zgui.beginTable("##Games", .{ .column = 3, .flags = .{ .row_bg = true } })) {
-                        const FontSize = 16.0;
-                        const RowHeight = 32.0;
-                        const ImageWidth = 32.0;
-                        zgui.pushStyleVar2f(.{ .idx = .cell_padding, .v = .{ 0.0, 0.0 } });
-                        zgui.pushStyleVar2f(.{ .idx = .frame_padding, .v = .{ 6.0, (RowHeight - FontSize) / 2.0 } });
-                        defer zgui.popStyleVar(.{ .count = 2 });
-                        zgui.pushFont(null, FontSize);
-                        defer zgui.popFont();
-                        zgui.tableSetupColumn("##Image", .{ .init_width_or_height = 32, .flags = .{ .width_fixed = true } });
-                        zgui.tableSetupColumn("Name", .{ .flags = .{ .width_stretch = true } });
-                        zgui.tableSetupColumn("Type", .{ .flags = .{ .width_fixed = true } });
-                        for (self.disc_files.items) |entry| {
+            if (self.disc_files.items.len > 0) {
+                const draw_list = zgui.getWindowDrawList();
+                switch (d.config.library_display) {
+                    .List => {
+                        if (zgui.beginTable("##Games", .{ .column = 3, .flags = .{ .row_bg = true } })) {
+                            const FontSize = 16.0;
+                            const RowHeight = 32.0;
+                            const ImageWidth = 32.0;
+                            zgui.pushStyleVar2f(.{ .idx = .cell_padding, .v = .{ 0.0, 0.0 } });
+                            zgui.pushStyleVar2f(.{ .idx = .frame_padding, .v = .{ 6.0, (RowHeight - FontSize) / 2.0 } });
+                            defer zgui.popStyleVar(.{ .count = 2 });
+                            zgui.pushFont(null, FontSize);
+                            defer zgui.popFont();
+                            zgui.tableSetupColumn("##Image", .{ .init_width_or_height = 32, .flags = .{ .width_fixed = true } });
+                            zgui.tableSetupColumn("Name", .{ .flags = .{ .width_stretch = true } });
+                            zgui.tableSetupColumn("Type", .{ .flags = .{ .width_fixed = true } });
+                            for (self.disc_files.items) |entry| {
+                                if (!static.match(entry.name)) continue;
+
+                                zgui.tableNextRow(.{});
+
+                                _ = zgui.tableNextColumn();
+                                if (entry.view) |view| {
+                                    const uv = 0.25 * RowHeight / ImageWidth;
+                                    zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(self.deecy.gctx.lookupResource(view).?)) }, .{ .w = ImageWidth, .h = RowHeight, .uv0 = .{ 0.5, 0.5 - uv }, .uv1 = .{ 1.0, 0.5 + uv } });
+                                }
+                                _ = zgui.tableNextColumn();
+                                zgui.alignTextToFramePadding();
+                                if (zgui.selectable(entry.name, .{ .selected = false, .flags = .{ .span_all_columns = true } }))
+                                    try d.load_and_start(entry.path);
+                                if (zgui.isItemHovered(.{})) zgui.setMouseCursor(.hand);
+
+                                _ = zgui.tableNextColumn();
+                                zgui.alignTextToFramePadding();
+                                if (entry.path.len > 3) zgui.text("{s} ", .{entry.path[entry.path.len - 3 ..]});
+
+                                // TODO: Button to open game settings
+                            }
+                            zgui.endTable();
+                        }
+                    },
+                    .Grid => {
+                        const clip_min = zgui.getWindowPos();
+                        const clip_max = .{ clip_min[0] + zgui.getContentRegionAvail()[0], clip_min[1] + zgui.getContentRegionAvail()[1] };
+                        draw_list.pushClipRect(.{ .pmin = clip_min, .pmax = clip_max });
+                        defer draw_list.popClipRect();
+
+                        var truncated_name: [28:0]u8 = undefined;
+                        zgui.pushStyleVar2f(.{ .idx = .frame_padding, .v = .{ 0, 0 } });
+                        zgui.pushStyleVar2f(.{ .idx = .item_spacing, .v = .{ 8.0, 8.0 } });
+                        zgui.pushStyleVar1f(.{ .idx = .frame_rounding, .v = 8.0 });
+                        defer zgui.popStyleVar(.{ .count = 3 });
+                        var displayed_count: usize = 0;
+                        for (self.disc_files.items, 0..) |*entry, idx| {
                             if (!static.match(entry.name)) continue;
-
-                            zgui.tableNextRow(.{});
-
-                            _ = zgui.tableNextColumn();
-                            if (entry.view) |view| {
-                                const uv = 0.25 * RowHeight / ImageWidth;
-                                zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(self.deecy.gctx.lookupResource(view).?)) }, .{ .w = ImageWidth, .h = RowHeight, .uv0 = .{ 0.5, 0.5 - uv }, .uv1 = .{ 1.0, 0.5 + uv } });
-                            }
-                            _ = zgui.tableNextColumn();
-                            zgui.alignTextToFramePadding();
-                            if (zgui.selectable(entry.name, .{ .selected = false, .flags = .{ .span_all_columns = true } }))
-                                try d.load_and_start(entry.path);
-                            if (zgui.isItemHovered(.{})) zgui.setMouseCursor(.hand);
-
-                            _ = zgui.tableNextColumn();
-                            zgui.alignTextToFramePadding();
-                            if (entry.path.len > 3) zgui.text("{s} ", .{entry.path[entry.path.len - 3 ..]});
-
-                            // TODO: Button to open game settings
-                        }
-                        zgui.endTable();
-                    }
-                },
-                .Grid => {
-                    const clip_min = zgui.getWindowPos();
-                    const clip_max = .{ clip_min[0] + zgui.getContentRegionAvail()[0], clip_min[1] + zgui.getContentRegionAvail()[1] };
-                    draw_list.pushClipRect(.{ .pmin = clip_min, .pmax = clip_max });
-                    defer draw_list.popClipRect();
-
-                    var truncated_name: [28:0]u8 = undefined;
-                    zgui.pushStyleVar2f(.{ .idx = .frame_padding, .v = .{ 0, 0 } });
-                    zgui.pushStyleVar2f(.{ .idx = .item_spacing, .v = .{ 8.0, 8.0 } });
-                    zgui.pushStyleVar1f(.{ .idx = .frame_rounding, .v = 8.0 });
-                    defer zgui.popStyleVar(.{ .count = 3 });
-                    var displayed_count: usize = 0;
-                    for (self.disc_files.items, 0..) |*entry, idx| {
-                        if (!static.match(entry.name)) continue;
-                        {
-                            zgui.beginGroup();
-                            defer zgui.endGroup();
-                            zgui.pushIntId(@intCast(idx));
-                            defer zgui.popId();
-
-                            const cursor_pos = zgui.getCursorScreenPos();
-                            zgui.setNextItemAllowOverlap();
-                            if (zgui.button("##Launch", .{ .w = 256.0, .h = 256.0 + 8.0 + title_height }))
-                                try d.load_and_start(entry.path);
-                            zgui.setCursorScreenPos(.{ cursor_pos[0] + text_padding[0], cursor_pos[1] + text_padding[1] });
-
-                            if (entry.view) |view| {
-                                @memset(&truncated_name, 0);
-                                @memcpy(truncated_name[0..@min(entry.name.len, truncated_name.len - 1)], entry.name[0..@min(entry.name.len, truncated_name.len - 1)]);
-                                zgui.text("{s}", .{truncated_name});
-                                zgui.setCursorScreenPos(.{ cursor_pos[0], cursor_pos[1] + text_padding[1] + title_height });
-                                zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(((self.deecy.gctx.lookupResource(view).?)))) }, .{ .w = 256, .h = 256 });
-                            } else {
-                                const p = .{ cursor_pos[0] + 128.0, cursor_pos[1] + text_padding[1] + title_height + 128.0 };
-                                draw_list.addCircleFilled(.{ .p = p, .r = 96.0, .col = 0x80FFFFFF, .num_segments = 0 });
-                                draw_list.addCircleFilled(.{ .p = p, .r = 92.0, .col = GameColors[entry.name.len % GameColors.len], .num_segments = 0 });
-                                draw_list.addCircleFilled(.{ .p = p, .r = 24.0, .col = 0x80FFFFFF, .num_segments = 0 });
-                                {
-                                    zgui.pushFont(null, 130.0);
-                                    defer zgui.popFont();
-                                    draw_list.addText(.{ p[0] - 65.0, p[1] - 65.0 }, 0x80808080, "{s}", .{entry.name[0..2]});
-                                }
-                                draw_list.addCircleFilled(.{ .p = .{ cursor_pos[0] + 128.0, cursor_pos[1] + text_padding[1] + title_height + 128.0 }, .r = 16.0, .col = bg_color, .num_segments = 0 });
-
-                                zgui.pushTextWrapPos(zgui.getCursorPosX() + 256.0 - 2 * text_padding[0]);
-                                defer zgui.popTextWrapPos();
-                                zgui.textWrapped("{s}", .{entry.name});
-                            }
-                            if (entry.path.len > 3) {
-                                zgui.pushFont(null, 20.0);
-                                defer zgui.popFont();
-                                var ext: [3]u8 = undefined;
-                                for (0..ext.len) |i| ext[i] = std.ascii.toUpper(entry.path[entry.path.len - 3 + i]);
-                                draw_list.addText(.{ cursor_pos[0] + 8.0, cursor_pos[1] + 264.0 }, 0x80808080, "{s}", .{ext});
-                            }
                             {
-                                zgui.pushFont(null, 24.0);
-                                defer zgui.popFont();
-                                zgui.setCursorScreenPos(.{ cursor_pos[0] + 228.0, cursor_pos[1] + 260.0 });
-                                if (zgui.button(Icons.Gear, .{})) {
-                                    try self.game_settings.setup(self.allocator, self.deecy.io, entry);
-                                    open_game_settings = true;
+                                zgui.beginGroup();
+                                defer zgui.endGroup();
+                                zgui.pushIntId(@intCast(idx));
+                                defer zgui.popId();
+
+                                const cursor_pos = zgui.getCursorScreenPos();
+                                zgui.setNextItemAllowOverlap();
+                                if (zgui.button("##Launch", .{ .w = 256.0, .h = 256.0 + 8.0 + title_height }))
+                                    try d.load_and_start(entry.path);
+                                zgui.setCursorScreenPos(.{ cursor_pos[0] + text_padding[0], cursor_pos[1] + text_padding[1] });
+
+                                if (entry.view) |view| {
+                                    @memset(&truncated_name, 0);
+                                    @memcpy(truncated_name[0..@min(entry.name.len, truncated_name.len - 1)], entry.name[0..@min(entry.name.len, truncated_name.len - 1)]);
+                                    zgui.text("{s}", .{truncated_name});
+                                    zgui.setCursorScreenPos(.{ cursor_pos[0], cursor_pos[1] + text_padding[1] + title_height });
+                                    zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(((self.deecy.gctx.lookupResource(view).?)))) }, .{ .w = 256, .h = 256 });
+                                } else {
+                                    const p = .{ cursor_pos[0] + 128.0, cursor_pos[1] + text_padding[1] + title_height + 128.0 };
+                                    draw_list.addCircleFilled(.{ .p = p, .r = 96.0, .col = 0x80FFFFFF, .num_segments = 0 });
+                                    draw_list.addCircleFilled(.{ .p = p, .r = 92.0, .col = GameColors[entry.name.len % GameColors.len], .num_segments = 0 });
+                                    draw_list.addCircleFilled(.{ .p = p, .r = 24.0, .col = 0x80FFFFFF, .num_segments = 0 });
+                                    {
+                                        zgui.pushFont(null, 130.0);
+                                        defer zgui.popFont();
+                                        draw_list.addText(.{ p[0] - 65.0, p[1] - 65.0 }, 0x80808080, "{s}", .{entry.name[0..2]});
+                                    }
+                                    draw_list.addCircleFilled(.{ .p = .{ cursor_pos[0] + 128.0, cursor_pos[1] + text_padding[1] + title_height + 128.0 }, .r = 16.0, .col = bg_color, .num_segments = 0 });
+
+                                    zgui.pushTextWrapPos(zgui.getCursorPosX() + 256.0 - 2 * text_padding[0]);
+                                    defer zgui.popTextWrapPos();
+                                    zgui.textWrapped("{s}", .{entry.name});
+                                }
+                                if (entry.path.len > 3) {
+                                    zgui.pushFont(null, 20.0);
+                                    defer zgui.popFont();
+                                    var ext: [3]u8 = undefined;
+                                    for (0..ext.len) |i| ext[i] = std.ascii.toUpper(entry.path[entry.path.len - 3 + i]);
+                                    draw_list.addText(.{ cursor_pos[0] + 8.0, cursor_pos[1] + 264.0 }, 0x80808080, "{s}", .{ext});
+                                }
+                                {
+                                    zgui.pushFont(null, 24.0);
+                                    defer zgui.popFont();
+                                    zgui.setCursorScreenPos(.{ cursor_pos[0] + 228.0, cursor_pos[1] + 260.0 });
+                                    if (zgui.button(Icons.Gear, .{})) {
+                                        try self.game_settings.setup(self.allocator, self.deecy.io, entry);
+                                        open_game_settings = true;
+                                    }
                                 }
                             }
-                        }
 
-                        if (zgui.isItemHovered(.{})) {
-                            zgui.setMouseCursor(.hand);
-                            if (zgui.beginTooltip()) {
-                                zgui.text("{s}", .{entry.name});
-                                zgui.text("Name: '{s}'", .{entry.product_name orelse "<Unknown>"});
-                                zgui.text("ID:   '{s}'", .{entry.product_id orelse "<Unknown>"});
-                                zgui.endTooltip();
+                            if (zgui.isItemHovered(.{})) {
+                                zgui.setMouseCursor(.hand);
+                                if (zgui.beginTooltip()) {
+                                    zgui.text("{s}", .{entry.name});
+                                    zgui.text("Name: '{s}'", .{entry.product_name orelse "<Unknown>"});
+                                    zgui.text("ID:   '{s}'", .{entry.product_id orelse "<Unknown>"});
+                                    zgui.endTooltip();
+                                }
                             }
-                        }
 
-                        if (displayed_count % 4 != 3) zgui.sameLine(.{});
-                        displayed_count += 1;
-                    }
-                },
+                            if (displayed_count % 4 != 3) zgui.sameLine(.{});
+                            displayed_count += 1;
+                        }
+                    },
+                }
+                if (open_game_settings) self.game_settings.open();
+                try self.game_settings.draw(self.allocator, self.deecy.io);
+            } else {
+                zgui.dummy(.{ .w = 0, .h = 64 });
+                zgui.pushFont(null, 80);
+                centered_text("∅");
+                zgui.popFont();
+                zgui.pushFont(null, 28);
+                centered_text("No games found in your library.");
+                zgui.popFont();
             }
+        } else {
+            {
+                zgui.beginGroup();
+                defer zgui.endGroup();
+                zgui.dummy(.{ .w = 0, .h = 64 });
+                zgui.pushFont(null, 80);
+                centered_text(Icons.FolderPlus);
+                zgui.popFont();
+                zgui.pushFont(null, 28);
+                centered_text("Select Library Directory");
+                zgui.popFont();
+            }
+            zgui.setCursorPos(.{ 0, 0 });
+            if (zgui.invisibleButton("##SelectLibraryDirectory", .{ .w = zgui.getContentRegionAvail()[0], .h = zgui.getContentRegionAvail()[1] }))
+                try self.select_game_directory();
+            if (zgui.isItemHovered(.{})) zgui.setMouseCursor(.hand);
         }
-        if (open_game_settings) self.game_settings.open();
-        try self.game_settings.draw(self.allocator, self.deecy.io);
     }
+}
+
+fn centered_text(comptime text: []const u8) void {
+    const width = zgui.getContentRegionAvail()[0];
+    const size = zgui.calcTextSize(text, .{});
+    const offset = @max(0, (width - size[0]) / 2);
+    zgui.setCursorPosX(offset);
+    zgui.textWrapped(text, .{});
 }
 
 fn select_game_directory(self: *@This()) !void {
@@ -1579,3 +1634,142 @@ fn select_game_directory(self: *@This()) !void {
         try self.deecy.launch_async(refresh_games, .{self});
     }
 }
+
+const VMUScreenDefault: [4][48 * 32 / 8]u8 = .{
+    .{
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00110000, 0b11000000, 0b00001111, 0b00001100, 0b00110000, 0b01100000,
+        0b00110000, 0b11000000, 0b00011001, 0b10001100, 0b00110000, 0b01100000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110000, 0b11110000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110000, 0b11110000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00111111, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001101, 0b10110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001101, 0b10110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001111, 0b11110011, 0b00001100,
+        0b00111111, 0b11000000, 0b00110000, 0b11001110, 0b01110011, 0b00001100,
+        0b00011111, 0b10000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+    },
+    .{
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00011111, 0b11000000, 0b00001111, 0b00001100, 0b00110000, 0b01100000,
+        0b00110000, 0b11000000, 0b00011001, 0b10001100, 0b00110000, 0b01100000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110000, 0b11110000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110000, 0b11110000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00001111, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001101, 0b10110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001101, 0b10110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001111, 0b11110011, 0b00001100,
+        0b00111111, 0b11000000, 0b00110000, 0b11001110, 0b01110011, 0b00001100,
+        0b00011111, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+    },
+    .{
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00111111, 0b10000000, 0b00001111, 0b00001100, 0b00110000, 0b01100000,
+        0b00000000, 0b11000000, 0b00011001, 0b10001100, 0b00110000, 0b01100000,
+        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110000, 0b11110000,
+        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110000, 0b11110000,
+        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
+        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
+        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
+        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
+        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00000000, 0b11000000, 0b00110000, 0b11001101, 0b10110011, 0b00001100,
+        0b00000000, 0b11000000, 0b00110000, 0b11001101, 0b10110011, 0b00001100,
+        0b00000000, 0b11000000, 0b00110000, 0b11001111, 0b11110011, 0b00001100,
+        0b00111111, 0b11000000, 0b00110000, 0b11001110, 0b01110011, 0b00001100,
+        0b00111111, 0b10000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+    },
+    .{
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000011, 0b11000000, 0b00001111, 0b00001100, 0b00110000, 0b01100000,
+        0b00001100, 0b11000000, 0b00011001, 0b10001100, 0b00110000, 0b01100000,
+        0b00011000, 0b11000000, 0b00110000, 0b11001100, 0b00110000, 0b11110000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110000, 0b11110000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001101, 0b10110011, 0b00001100,
+        0b00110000, 0b11000000, 0b00110000, 0b11001101, 0b10110011, 0b00001100,
+        0b00011000, 0b11000000, 0b00110000, 0b11001111, 0b11110011, 0b00001100,
+        0b00001100, 0b11000000, 0b00110000, 0b11001110, 0b01110011, 0b00001100,
+        0b00000011, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+    },
+};
