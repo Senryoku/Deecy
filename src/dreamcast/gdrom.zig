@@ -741,6 +741,14 @@ fn pio_prep_complete(self: *@This()) void {
     });
 }
 
+pub fn dma_cycles(len: u32) u32 {
+    return if (len <= 128 * 1024) // Transfer fit in GD-ROM 128k buffer. Advertised speed from the buffer: 13.3 MB/s
+        14 * len
+    else // GDROM speed: 1.8 MB/s
+        // FIXME: Added a maximum amount of cycles here, as very large DMA were causing visible freezes in Soul Calibur.
+        @as(u32, 14) * 128 * 1024 + @as(u32, 111) * (@min(len, 0x40000) - 128 * 1024);
+}
+
 pub fn dma(self: *@This(), dst: []u8, len: u32) usize {
     // Get as much as possible from what's left in the 'cache' from previous DMA transfer.
     var copied: usize = self.dma_data_queue.read(dst);

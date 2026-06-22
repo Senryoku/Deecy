@@ -563,19 +563,33 @@ pub const Dreamcast = struct {
         return .@"60Hz";
     }
 
-    pub inline fn hw_register(self: *@This(), comptime T: type, r: HardwareRegister) *T {
+    pub inline fn hw_register(self: *const @This(), comptime T: type, r: HardwareRegister) *T {
         return self.hw_register_addr(T, @intFromEnum(r));
     }
-    pub inline fn hw_register_addr(self: *@This(), comptime T: type, addr: u32) *T {
+    pub inline fn hw_register_addr(self: *const @This(), comptime T: type, addr: u32) *T {
         std.debug.assert(addr >= 0x005F6800 and addr < 0x005F6800 + self.hardware_registers.len);
         return @as(*T, @ptrCast(@alignCast(&self.hardware_registers[addr - 0x005F6800])));
     }
-    pub inline fn read_hw_register_addr(self: *const @This(), comptime T: type, addr: u32) T {
-        std.debug.assert(addr >= 0x005F6800 and addr < 0x005F6800 + self.hardware_registers.len);
-        return @as(*const T, @ptrCast(@alignCast(&self.hardware_registers[addr - 0x005F6800]))).*;
-    }
     pub inline fn read_hw_register(self: *const @This(), comptime T: type, r: HardwareRegister) T {
-        return self.read_hw_register_addr(T, @intFromEnum(r));
+        switch (r) {
+            .SB_GDLEND => {
+                var it = @constCast(self).scheduled_events.iterator();
+                while (it.next()) |event| {
+                    if (event.event == .EndGDDMA) {
+                        const len = self.hw_register(u32, .SB_GDLEN).* & 0x01FFFFE0;
+                        const value: T = if (event.trigger_cycle >= self._global_cycles)
+                            @truncate(len)
+                        else
+                            @intCast((len * (event.trigger_cycle - self._global_cycles)) / GDROM.dma_cycles(len));
+                        log.info("Read({}) to SB_GDLEND while DMA is in progress: {X}", .{ T, value });
+                        self.hw_register(T, .SB_GDLEN).* = value;
+                        return value;
+                    }
+                }
+            },
+            else => {},
+        }
+        return self.hw_register(T, r).*;
     }
     pub fn write_hw_register(self: *@This(), comptime T: type, addr: u32, value: T) void {
         const reg: HardwareRegister = @enumFromInt(addr);
@@ -662,8 +676,8 @@ pub const Dreamcast = struct {
                     0x00000000...0x001FFFFF => return &self.boot[area_0_addr],
                     0x00200000...0x0021FFFF => return &self.flash.data[area_0_addr & 0x1FFFF],
                     0x005F6800...0x005F6FFF => return self.hw_register_addr(u8, area_0_addr),
-                    0x005F7000...0x005F709C => @panic("_get_memory to GDROM Register. This should be handled in read/write functions."),
-                    0x005F709D...0x005F7FFF => return self.hw_register_addr(u8, area_0_addr),
+                    0x005F7000...0x005F709C => std.debug.panic("_get_memory to GDROM Register {X:0>8}. This should be handled in read/write functions.", .{addr}),
+                    0x005F709D...0x005F7FFF => std.debug.panic("_get_memory to GDROM DMA Register {X:0>8}. This should be handled in read/write functions.", .{addr}),
                     0x005F8000...0x005F9FFF => return self.gpu._get_register_from_addr(u8, area_0_addr),
                     0x005FA000...0x005FFFFF => return self.hw_register_addr(u8, area_0_addr),
                     0x00600000...0x006007FF => {
@@ -745,9 +759,9 @@ pub const Dreamcast = struct {
                                 // Too spammy even for debugging.
                                 if (addr != @intFromEnum(HardwareRegister.SB_ISTNRM) and addr != @intFromEnum(HardwareRegister.SB_FFST))
                                     log.debug("  Read({any}) to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{
-                                        T, addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @ptrCast(@alignCast(@constCast(self)._get_memory(addr)))).*,
+                                        T, addr, HardwareRegisters.getRegisterName(addr), @constCast(self).hw_register_addr(T, addr).*,
                                     });
-                                return self.read_hw_register_addr(T, addr);
+                                return self.read_hw_register(T, @enumFromInt(addr));
                             },
                         }
                     },
@@ -1066,9 +1080,6 @@ pub const Dreamcast = struct {
 
             self.hw_register(u32, .SB_GDST).* = 1;
             self.hw_register(u32, .SB_GDLEND).* = 0;
-            // FIXME: This should start at 0 and count up, but for some reason Jet Set Radio has issues when I try to do this properly (no music in menu; infinite loading screen...).
-            //        This is clearly not a proper fix, I just don't know what the actual cause is, and how to properly fix it.
-            self.hw_register(u32, .SB_GDLEND).* = len;
             self.hw_register(u32, .SB_GDSTARD).* = dst_addr;
 
             log.info("GD-ROM-DMA! {X:0>8} ({X:0>8} bytes / {X:0>8} in queue)", .{ dst_addr, len, self.gdrom.dma_data_queue.count });
@@ -1092,15 +1103,7 @@ pub const Dreamcast = struct {
             self.cpu.p4_register(u32, .DAR0).* = dst_addr;
             self.cpu.p4_register(u32, .DMATCR0).* = @divExact(len, 32);
 
-            self.schedule_int_event(
-                .{ .EoD_GDROM = 1 },
-                .EndGDDMA,
-                if (len <= 128 * 1024) // Transfer fit in GD-ROM 128k buffer. Advertised speed from the buffer: 13.3 MB/s
-                    14 * len
-                else // GDROM speed: 1.8 MB/s
-                    // FIXME: Added a maximum amount of cycles here, as very large DMA were causing visible freezes in Soul Calibur.
-                    @as(u32, 14) * 128 * 1024 + @as(u32, 111) * (@min(len, 0x40000) - 128 * 1024),
-            );
+            self.schedule_int_event(.{ .EoD_GDROM = 1 }, .EndGDDMA, GDROM.dma_cycles(len));
 
             self.sh4_jit.invalidate(dst_addr, dst_addr + len);
         }
