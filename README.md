@@ -118,7 +118,6 @@ sudo apt install libgtk-3-dev libudev-dev
 ### Nice to have
 
 -   Some (rendering) performance metrics directly in the emulator?
--   GDROM-DMA: Uses a superfluous memcpy (gdrom -> dma-queue -> ram). Not a huge deal on my main system, but I bet it's noticeable on lower end devices.
 
 ## Some sources
 

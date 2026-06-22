@@ -195,6 +195,59 @@ const SPIPacketCommand = enum(u8) {
     _,
 };
 
+/// "Selects the desired data by a combination of the above bits.
+///  Data combinations must use a continuous area. For example, in a format that includes a subheader, it is not possible to omit the subheader.
+///    * When the "Other" bit is selected, all data (2352 bytes) are output.
+///    * When Data Type is CD-DA, this specification is invalid, and 2352 bytes are always transferred."
+const DataSelect = packed struct(u4) {
+    other: u1 = 0,
+    data: u1 = 0,
+    sub_header: u1 = 0,
+    header: u1 = 0,
+
+    /// Raw data (all 2352 bytes of each sector)
+    const Raw: @This() = .{ .other = 1 };
+    /// Data (no header or subheader)
+    const Data: @This() = .{ .data = 1 };
+};
+
+/// "The expected sector type is used to limit information read by the host. If the requested sector
+///  does not conform to the specified type, the command terminates with an error. It the disc is an XA
+///  disc type, an error is generated if mode 2nonXA is specified.""
+const ExpectedDataType = enum(u3) {
+    /// "No check for sector type.
+    ///  However, if reading of mode 2 track or Form 1/Form 2 is
+    ///  attempted in the case of a disc which is not a CD-ROM XA,
+    ///  the Mode 2 disc reading will fail."
+    Any = 0b000,
+    /// "Error if sector other than CD-DA is read.""
+    @"CD-DA" = 0b001,
+    /// "Error if sector other than 2048 byte (Yellow Book) is read"
+    @"Mode 1" = 0b010,
+    /// "Mode 2, Form 1 or Mode 2, Form 2
+    ///  Error if sector other than 2352 byte (Yellow Book) is read"
+    @"Mode 2" = 0b011,
+    /// "Error if sector other than 2048 byte (Green Book) is read"
+    @"Mode 2, Form 1" = 0b100,
+    /// "Error if sector other than 2324 byte (Green Book) is read"
+    @"Mode 2, Form 2" = 0b101,
+    /// "Mode 2 of non-CD-ROM XA disc
+    ///  2336 bytes are read. No sector type check is performed"
+    @"Mode 2 Non XA" = 0b110,
+
+    pub fn expected_size(self: @This()) u32 {
+        switch (self) {
+            .Any => return 2352,
+            .@"CD-DA" => return 2352,
+            .@"Mode 1" => return 2048,
+            .@"Mode 2" => return 2352,
+            .@"Mode 2, Form 1" => return 2048,
+            .@"Mode 2, Form 2" => return 2324,
+            .@"Mode 2 Non XA" => return 2336,
+        }
+    }
+};
+
 pub fn msf_to_lba(minutes: u8, seconds: u8, frame: u8) u32 {
     return @as(u32, minutes) * 60 * 75 + @as(u32, seconds) * 75 + @as(u32, frame);
 }
@@ -270,8 +323,8 @@ audio_state: struct {
 cd_read_state: struct {
     fad: u32 = 0,
     remaining_sectors: u32 = 0,
-    data_select: u4 = 0,
-    expected_data_type: u3 = 0,
+    data_select: DataSelect = .Raw,
+    expected_data_type: ExpectedDataType = .Any,
 } = .{},
 
 _dc: *Dreamcast,
@@ -378,22 +431,31 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
             gdrom_log.debug("Read Alternate Status @{X:0>8} = {}", .{ addr, self.status_register });
             // NOTE: Alternate status reads do NOT clear the pending interrupt signal.
 
-            // FIXME: CDI Hack - See issue #70
+            // FIXME: Multi-Read DMA Hack - See issue #70
             //        IP.BIN (using boot ROM syscalls) is stuck waiting for the GD drive with data in DMA queue.
             const static = struct {
                 var consecutive_busy_reads: u64 = 0;
                 var last_dma_data_queue_count: u64 = 0;
+                var last_remaining_sectors: u64 = 0;
             };
-            if (self.status_register.bsy == 1 and self.dma_data_queue.count > 0 and self.dma_data_queue.count == static.last_dma_data_queue_count) {
+            if (self.status_register.bsy == 1 and
+                (self.dma_data_queue.count > 0 or self.cd_read_state.remaining_sectors > 0) and
+                self.dma_data_queue.count == static.last_dma_data_queue_count and
+                self.cd_read_state.remaining_sectors == static.last_remaining_sectors)
+            {
                 static.consecutive_busy_reads += 1;
-                if (static.consecutive_busy_reads >= 10_000) {
-                    gdrom_log.err(termcolor.red("CDI Hack: Stuck with data in dma queue, discarding."), .{});
+                if ((static.consecutive_busy_reads >= 1_000 and self.dma_data_queue.count > 0) or
+                    (static.consecutive_busy_reads >= 100 and self.cd_read_state.remaining_sectors > 0))
+                {
+                    gdrom_log.err(termcolor.red("Multi-Read DMA Hack: Stuck with data in dma queue ({d} bytes, {d} sectors), discarding."), .{ self.dma_data_queue.count, self.cd_read_state.remaining_sectors });
                     self.dma_data_queue.discard(self.dma_data_queue.count);
+                    self.cd_read_state.remaining_sectors = 0;
                     self.status_register.bsy = 0;
                     self.status_register.drdy = 1;
                 }
             } else static.consecutive_busy_reads = 0;
             static.last_dma_data_queue_count = self.dma_data_queue.count;
+            static.last_remaining_sectors = self.cd_read_state.remaining_sectors;
 
             return @intCast(@as(u8, @bitCast(self.status_register)));
         },
@@ -679,10 +741,52 @@ fn pio_prep_complete(self: *@This()) void {
     });
 }
 
+pub fn dma_cycles(len: u32) u32 {
+    return if (len <= 128 * 1024) // Transfer fit in GD-ROM 128k buffer. Advertised speed from the buffer: 13.3 MB/s
+        14 * len
+    else // GDROM speed: 1.8 MB/s
+        // FIXME: Added a maximum amount of cycles here, as very large DMA were causing visible freezes in Soul Calibur.
+        @as(u32, 14) * 128 * 1024 + @as(u32, 111) * (@min(len, 0x40000) - 128 * 1024);
+}
+
+pub fn dma(self: *@This(), dst: []u8, len: u32) usize {
+    // Get as much as possible from what's left in the 'cache' from previous DMA transfer.
+    var copied: usize = self.dma_data_queue.read(dst);
+
+    // Copy whole sectors directly to distination.
+    // NOTE: `expected_size` isn't garanteed to be accurate here, but in practice I don't think this is an issue.
+    //       Mismatch should trigger an error anyway (which are not emulated), except maybe in the `Mode 2 Non XA` case?
+    //       Could use 2352 to be extra safe (always underestimating the number of requested sectors).
+    const whole_sectors = @min((len - copied) / self.cd_read_state.expected_data_type.expected_size(), self.cd_read_state.remaining_sectors);
+    if (whole_sectors > 0) {
+        const bytes = self.cd_read_fetch(dst[copied..], self.cd_read_state.data_select, self.cd_read_state.expected_data_type, self.cd_read_state.fad, whole_sectors) catch |err| {
+            gdrom_log.err("Error reading sectors [{X}-{X}]: {}", .{ self.cd_read_state.fad, self.cd_read_state.fad + whole_sectors, err });
+            return copied;
+        };
+        self.cd_read_state.fad += whole_sectors;
+        self.cd_read_state.remaining_sectors -= whole_sectors;
+        copied += bytes;
+    }
+
+    // Get to `len` bytes sector by sector, leaving the extra in `dma_data_queue` for next DMA transfer.
+    while (copied < len) {
+        if (self.cd_read_state.remaining_sectors > 0) {
+            self.cd_read_fetch_queue(&self.dma_data_queue, self.cd_read_state.data_select, self.cd_read_state.expected_data_type, self.cd_read_state.fad, 1) catch |err| {
+                gdrom_log.err("Error reading sector {X}: {}", .{ self.cd_read_state.fad, err });
+                return copied;
+            };
+            self.cd_read_state.fad += 1;
+            self.cd_read_state.remaining_sectors -= 1;
+            copied += self.dma_data_queue.read(dst[copied..]);
+        } else return copied;
+    }
+    return copied;
+}
+
 pub fn on_dma_end(self: *@This(), dc: *Dreamcast) void {
     // When the device is ready to send the status, it writes the final status (IO, CoD, DRDY set, BSY,
     // DRQ cleared) to the "Status" register before making INTRQ valid.
-    if (self.dma_data_queue.count == 0) {
+    if (self.cd_read_state.remaining_sectors == 0 and self.dma_data_queue.count == 0) {
         self.status_register.drq = 0;
         self.status_register.bsy = 0;
         self.status_register.drdy = 1;
@@ -971,7 +1075,7 @@ fn cd_read_pio_fetch(self: *@This()) !void {
     if (self.cd_read_state.remaining_sectors > 0) {
         // If more data are to be sent, the device sets the BSY bit and repeats the above sequence from step 7.
         self.status_register.bsy = 1;
-        try self.cd_read_fetch(&self.pio_data_queue, self.cd_read_state.data_select, self.cd_read_state.expected_data_type, self.cd_read_state.fad, 1);
+        try self.cd_read_fetch_queue(&self.pio_data_queue, self.cd_read_state.data_select, self.cd_read_state.expected_data_type, self.cd_read_state.fad, 1);
         self.cd_read_state.fad += 1;
         self.cd_read_state.remaining_sectors -= 1;
         self.pio_prep_complete();
@@ -986,66 +1090,33 @@ fn cd_read_pio_fetch(self: *@This()) !void {
     }
 }
 
-fn cd_read_fetch(self: *@This(), data_queue: *fifo.LinearFifo(u8, .Dynamic), data_select: u4, expected_data_type: u3, start_addr: u32, transfer_length: u32) !void {
+fn cd_read_fetch_queue(self: *@This(), data_queue: *fifo.LinearFifo(u8, .Dynamic), data_select: DataSelect, expected_data_type: ExpectedDataType, start_addr: u32, transfer_length: u32) !void {
+    const dst = try data_queue.writableWithSize(2352 * transfer_length);
+    const bytes_written = try self.cd_read_fetch(dst, data_select, expected_data_type, start_addr, transfer_length);
+    data_queue.update(bytes_written);
+}
+
+fn cd_read_fetch(self: *@This(), dst: []u8, data_select: DataSelect, expected_data_type: ExpectedDataType, start_addr: u32, transfer_length: u32) !u32 {
     if (self.disc) |*disc| {
-        if (data_select == 0b0001) {
-            // Raw data (all 2352 bytes of each sector)
-            const bytes_written = disc.load_sectors_raw(start_addr, transfer_length, try data_queue.writableWithSize(2352 * transfer_length));
-            data_queue.update(bytes_written);
-        } else {
-            // FIXME: Everything else isn't implemented
-            if (data_select != 0b0010) // Data (no header or subheader)
-                gdrom_log.err("Unimplemented data_select: {b:0>4}", .{data_select});
+        switch (data_select) {
+            .Raw => return disc.load_sectors_raw(start_addr, transfer_length, dst),
+            .Data => {
+                const expected_sector_size = expected_data_type.expected_size();
 
-            var expected_sector_size: u32 = 2352;
+                const bytes_written = disc.load_sectors(start_addr, transfer_length, dst);
 
-            switch (expected_data_type) {
-                0b000 => {
-                    // No check for sector type.
-                    // However, if reading of mode 2 track or Form 1/Form 2 is
-                    // attempted in the case of a disc which is not a CD-ROM XA,
-                    // the Mode 2 disc reading will fail.
-                },
-                0b001 => {
-                    // CD-DA
-                    // Error if sector other than CD-DA is read.
-                },
-                0b010 => {
-                    // Mode 1
-                    // Error if sector other than 2048 byte (Yellow Book) is read
-                    expected_sector_size = 2048;
-                },
-                0b011 => {
-                    // Mode 2, Form 1 or Mode 2, Form 1
-                    // Error if sector other than 2352 byte (Yellow Book) is read
-                    expected_sector_size = 2352;
-                },
-                0b100 => {
-                    // Mode 2, Form 1.
-                    // Error if sector other than 2048 byte (Green Book) is read
-                    expected_sector_size = 2048;
-                },
-                0b101 => {
-                    // Mode 2, Form 2
-                    // Error if sector other than 2324 byte (Green Book) is read
-                    expected_sector_size = 2324;
-                },
-                0b110 => {
-                    // Mode 2 of non-CD-ROM XA disc
-                    // 2336 bytes are read. No sector type check is performed
-                    expected_sector_size = 2336;
-                },
-                else => unreachable,
-            }
-
-            const bytes_written = disc.load_sectors(start_addr, transfer_length, try data_queue.writableWithSize(2352 * transfer_length));
-            data_queue.update(bytes_written);
-
-            if (bytes_written != transfer_length * expected_sector_size)
-                gdrom_log.err(termcolor.red("  Unexpected sector size: {d} written out of {d} * {d} = {d} expected."), .{ bytes_written, transfer_length, expected_sector_size, transfer_length * expected_sector_size });
-            gdrom_log.debug("First 0x20 bytes read: {X}", .{data_queue.readableSlice(0)[0..0x20]});
+                if (bytes_written != transfer_length * expected_sector_size)
+                    gdrom_log.err(termcolor.red("  Unexpected sector size: {d} written out of {d} * {d} = {d} expected."), .{ bytes_written, transfer_length, expected_sector_size, transfer_length * expected_sector_size });
+                gdrom_log.debug("First bytes read: {X}", .{dst[0..@min(0x20, dst.len, bytes_written)]});
+                return bytes_written;
+            },
+            else => {
+                // FIXME: Everything else isn't implemented
+                gdrom_log.err("Unimplemented data_select: {}", .{data_select});
+            },
         }
     }
+    return 0;
 }
 
 fn cd_read(self: *@This()) !void {
@@ -1054,7 +1125,7 @@ fn cd_read(self: *@This()) !void {
     const data_select: u4 = @truncate((self.packet_command[1] >> 4) & 0xF);
 
     self.state = .Paused;
-    self.audio_state.status = .Paused;
+    self.audio_state.status = .NoInfo;
 
     const start_addr: u32 = if (parameter_type == 0)
         (@as(u32, self.packet_command[2]) << 16) | (@as(u32, self.packet_command[3]) << 8) | self.packet_command[4] // Start FAD
@@ -1068,17 +1139,19 @@ fn cd_read(self: *@This()) !void {
 
     const transfer_type: enum { PIO, DMA } = if (self.features.DMA == 1) .DMA else .PIO;
 
+    self.pio_data_queue.discard(self.pio_data_queue.count);
+    self.dma_data_queue.discard(self.dma_data_queue.count);
+    self.cd_read_state = .{
+        .fad = start_addr,
+        .remaining_sectors = transfer_length,
+        .data_select = @bitCast(data_select),
+        .expected_data_type = @enumFromInt(expected_data_type),
+    };
     if (transfer_type == .PIO) {
         gdrom_log.debug("SPI Packet CDRead PIO mode: start_addr: {X:0>8}, transfer_length: {X:0>4}", .{ start_addr, transfer_length });
-        self.cd_read_state = .{
-            .fad = start_addr,
-            .remaining_sectors = transfer_length,
-            .data_select = data_select,
-            .expected_data_type = expected_data_type,
-        };
         try self.cd_read_pio_fetch();
     } else {
-        try self.cd_read_fetch(&self.dma_data_queue, data_select, expected_data_type, start_addr, transfer_length);
+        // TODO: Prefetch a sector?
     }
 }
 

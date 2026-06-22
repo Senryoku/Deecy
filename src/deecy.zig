@@ -1998,6 +1998,7 @@ fn dc_thread_loop(self: *@This()) void {
     while (self.running) {
         const refresh_rate = self.dc.target_refresh_rate();
         self.run_for(refresh_rate.cycles_per_frame());
+        if (self._stop_request) return;
         self.rewind_tick() catch |err| deecy_log.err("Error serializing state: {}", .{err});
     }
 }
@@ -2008,6 +2009,7 @@ fn dc_thread_loop_realtime(self: *@This()) void {
     while (self.running) {
         const refresh_rate = self.dc.target_refresh_rate();
         self.run_for(refresh_rate.cycles_per_frame());
+        if (self._stop_request) return;
         self.rewind_tick() catch |err| deecy_log.err("Error serializing state: {}", .{err});
         precise_sleep.wait_for_interval(self.io, refresh_rate.ns_per_frame());
     }

@@ -38,13 +38,18 @@ const VirtualAddressSpaceBaseRegister = if (FastMem) Architecture.Register.rbp e
 const RAMBaseRegister = if (!FastMem) Architecture.Register.rbp else @compileError("RAMBaseRegister isn't available when FastMem is enabled");
 const SH4PtrRegister = SavedRegisters[0];
 
-// Enable or Disable some optimizations
-const Optimizations = .{
-    .div1_simplification = true,
-    .inline_small_forward_jumps = true,
-    .inline_backwards_bra = true, // Inlining of backward inconditional branches, before current block entry point. This isn't correctly supported and implementation is very hackish.
-    .mmu_translation_cache = true, // EXPERIMENTAL: Check virtual addresses against the last successful translation for a possible fast path.
-    .chain_previous_hashed_blocks = true, // When using hash to invalidate blocks, jump to the previous compiled version of this block if available before re-compiling it.
+/// Enable or Disable some optimizations
+const Optimizations = struct {
+    const div1_simplification: bool = true;
+    const inline_small_forward_jumps: bool = true;
+    /// Inlining of backward inconditional branches, before current block entry point. This isn't correctly supported and implementation is very hackish.
+    const inline_backwards_bra: bool = true;
+    /// EXPERIMENTAL: Check virtual addresses against the last successful translation for a possible fast path.
+    const mmu_translation_cache: bool = true;
+    /// When using hash to invalidate blocks, jump to the previous compiled version of this block if available before re-compiling it.
+    const chain_previous_hashed_blocks: bool = true;
+    /// Controls block chaining when an interrupt is pending.
+    const early_exit_on_interrupts: enum { No, MMUOnly, Yes } = .MMUOnly;
 };
 
 const VirtualAddressSpace = if (FastMem) switch (builtin.os.tag) {
@@ -990,9 +995,10 @@ pub const SH4JIT = struct {
         // Jump to the next block (Disabled when instrumentation is on, otherwise it would be a hassle to measure individual blocks)
         if (!ctx.force_exit and ctx.cycles < MaxCyclesPerExecution and ctx.fpscr_pr != .Unknown and ctx.fpscr_sz != .Unknown and !BasicBlock.EnableInstrumentation) {
             try b.append(.{ .Jmp = .{ .condition = .Sign, .dst = .{ .abs = exit_ptr } } });
-            try b.cmp(.{ .mem = .{ .base = SH4PtrRegister, .displacement = @offsetOf(sh4.SH4, "interrupt_requests"), .size = 64 } }, .{ .imm8 = 0 });
-            try b.append(.{ .Jmp = .{ .condition = .NotEqual, .dst = .{ .abs = exit_ptr } } });
-
+            if (Optimizations.early_exit_on_interrupts == .Yes or (Optimizations.early_exit_on_interrupts == .MMUOnly and ctx.mmu_enabled)) {
+                try b.cmp(.{ .mem = .{ .base = SH4PtrRegister, .displacement = @offsetOf(sh4.SH4, "interrupt_requests"), .size = 64 } }, .{ .imm8 = 0 });
+                try b.append(.{ .Jmp = .{ .condition = .NotEqual, .dst = .{ .abs = exit_ptr } } });
+            }
             const const_key: u32 = @bitCast(BlockCache.Key{
                 .addr = 0,
                 .ram = 0,
