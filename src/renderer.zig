@@ -876,6 +876,57 @@ pub const Renderer = struct {
     const DepthClearValue = 0.0;
     const DepthCompareFunction: wgpu.CompareFunction = .greater;
 
+    const RenderPassTimestamp = enum(u32) {
+        const MaxPasses = 32;
+        /// Maximum number of slices for the translucent pass.
+        const MaxSlices = 32;
+        /// Maximum number of queries per render pass.
+        const MaxQueries = 32 + 4 * MaxSlices;
+
+        // Unique
+        Opaque = 0,
+        @"Depth Resolve" = 2,
+        @"Modifier Volume Stencil" = 4,
+        @"Modifier Volume Apply" = 6,
+        @"Presorted Translucent pass" = 8,
+        // Per translucent slice
+        @"Translucent Modifier Volumes" = 32,
+        @"Translucent Merge Modifier Volumes" = 32 + MaxSlices,
+        @"Translucent Pass" = 32 + 2 * MaxSlices,
+        @"Translucent Blend Pass" = 32 + 3 * MaxSlices,
+        _,
+
+        pub fn begin(self: @This()) u32 {
+            return @intFromEnum(self);
+        }
+
+        pub fn end(self: @This()) u32 {
+            return @intFromEnum(self) + 1;
+        }
+
+        pub inline fn writes(self: @This(), set: ?wgpu.QuerySet) ?wgpu.PassTimestampWrites {
+            return if (set) |qs| .{
+                .query_set = qs,
+                .beginning_of_pass_write_index = self.begin(),
+                .end_of_pass_write_index = self.end(),
+            } else null;
+        }
+
+        pub fn translucent(slice: u8) struct {
+            modifier_volumes: RenderPassTimestamp,
+            merge_modifier_volumes: RenderPassTimestamp,
+            fragments: RenderPassTimestamp,
+            blend: RenderPassTimestamp,
+        } {
+            return .{
+                .modifier_volumes = @enumFromInt(@intFromEnum(@This().@"Translucent Modifier Volumes") + slice),
+                .merge_modifier_volumes = @enumFromInt(@intFromEnum(@This().@"Translucent Merge Modifier Volumes") + slice),
+                .fragments = @enumFromInt(@intFromEnum(@This().@"Translucent Pass") + slice),
+                .blend = @enumFromInt(@intFromEnum(@This().@"Translucent Blend Pass") + slice),
+            };
+        }
+    };
+
     DebugDisableTextureCacheAcrossFrames: bool = false,
 
     /// Owned by Deecy.
@@ -1026,6 +1077,11 @@ pub const Renderer = struct {
             return s;
         }
     } = .{},
+
+    render_passes_query_sets: []wgpu.QuerySet,
+    render_query_set: wgpu.QuerySet,
+    query_resolve_buffer: zgpu.BufferHandle,
+    query_map_buffer: zgpu.BufferHandle,
 
     _scratch_pad: []u8 align(4), // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
 
@@ -1216,6 +1272,16 @@ pub const Renderer = struct {
             .modifier_volume_vertices = try .initCapacity(allocator, 4096),
 
             .last_frame_timestamp = std.Io.Clock.awake.now(io).toMicroseconds(),
+            .render_query_set = gctx.device.createQuerySet(.{ .label = .init("Timestamp Query Set"), .query_type = .timestamp, .count = RenderPassTimestamp.MaxQueries }),
+            .render_passes_query_sets = try allocator.alloc(wgpu.QuerySet, RenderPassTimestamp.MaxPasses),
+            .query_resolve_buffer = gctx.createBuffer(.{
+                .usage = .{ .query_resolve = true, .copy_src = true },
+                .size = 8 * (RenderPassTimestamp.MaxPasses + 1) * RenderPassTimestamp.MaxQueries,
+            }),
+            .query_map_buffer = gctx.createBuffer(.{
+                .usage = .{ .copy_dst = true, .map_read = true },
+                .size = 8 * (RenderPassTimestamp.MaxPasses + 1) * RenderPassTimestamp.MaxQueries,
+            }),
 
             .render_passes = .empty,
             .ta_lists = .empty,
@@ -1229,6 +1295,8 @@ pub const Renderer = struct {
             .io = io,
         };
         try renderer.ta_lists.append(allocator, .init());
+        for (renderer.render_passes_query_sets) |*q|
+            q.* = gctx.device.createQuerySet(.{ .label = .init("Render Pass Query Set"), .query_type = .timestamp, .count = RenderPassTimestamp.MaxQueries });
 
         renderer.create_textures_bind_group();
 
@@ -1418,6 +1486,15 @@ pub const Renderer = struct {
         // self._gctx.releaseResource(self.blit_pipeline);
 
         for (self.texture_metadata) |arr| self._allocator.free(arr);
+
+        self.render_query_set.destroy();
+        if (self.render_passes_query_sets.len > 0) {
+            for (self.render_passes_query_sets) |query_set|
+                query_set.destroy();
+            self._allocator.free(self.render_passes_query_sets);
+        }
+        self._gctx.releaseResource(self.query_resolve_buffer);
+        self._gctx.releaseResource(self.query_map_buffer);
 
         self._allocator.destroy(self);
     }
@@ -2906,6 +2983,11 @@ pub const Renderer = struct {
             const vb_info = gctx.lookupResourceInfo(self.vertex_buffer).?;
             const ib_info = gctx.lookupResourceInfo(self.index_buffer).?;
 
+            // var query_index: u32 = 0;
+
+            // encoder.writeTimestamp(self.render_query_set, query_index);
+            // query_index += 1;
+
             const uniform_mem = gctx.uniformsAllocate(Uniforms, 1);
             uniform_mem.slice[0] = .{
                 .depth_min = self.min_depth,
@@ -2952,6 +3034,11 @@ pub const Renderer = struct {
                         .stencil_clear_value = 0,
                         .stencil_read_only = .false,
                     },
+                    .timestamp_writes = &.{
+                        .query_set = self.render_query_set,
+                        .beginning_of_pass_write_index = 0,
+                        .end_of_pass_write_index = 1,
+                    },
                 });
                 defer {
                     pass.end();
@@ -2974,6 +3061,16 @@ pub const Renderer = struct {
                 if (self.ta_lists.items.len <= pass_idx) break;
                 const ta_lists = &self.ta_lists.items[pass_idx];
 
+                const query_set = if (render_to_texture) null else if (pass_idx < self.render_passes_query_sets.len) self.render_passes_query_sets[pass_idx] else null;
+                defer {
+                    if (query_set) |qs| encoder.resolveQuerySet(
+                        qs,
+                        0,
+                        RenderPassTimestamp.MaxQueries,
+                        gctx.lookupResource(self.query_resolve_buffer).?,
+                        8 * (1 + pass_idx) * RenderPassTimestamp.MaxQueries,
+                    );
+                }
                 if (!render_pass.opaque_list_pointer.empty or !render_pass.punchthrough_list_pointer.empty) {
                     {
                         const color_attachments = [_]wgpu.RenderPassColorAttachment{
@@ -2990,6 +3087,7 @@ pub const Renderer = struct {
                                 .resolve_target = opaque_attachements.resolve_1,
                             },
                         };
+                        const timestamp_writes = RenderPassTimestamp.Opaque.writes(query_set);
                         const pass = encoder.beginRenderPass(.{
                             .label = .init("Opaque pass"),
                             .color_attachment_count = color_attachments.len,
@@ -3004,6 +3102,7 @@ pub const Renderer = struct {
                                 .stencil_clear_value = 0,
                                 .stencil_read_only = .false,
                             },
+                            .timestamp_writes = if (timestamp_writes) |w| &w else null,
                         });
                         defer {
                             pass.end();
@@ -3044,6 +3143,7 @@ pub const Renderer = struct {
                     // MSAA: Resolve the depth buffer to a single sampled depth texture used for the translucent pipeline.
                     if (self.config.msaa != .Off) {
                         if (gctx.lookupResource(self.depth_resolve_pipeline)) |pipeline| {
+                            const timestamp_writes = RenderPassTimestamp.@"Depth Resolve".writes(query_set);
                             const pass = encoder.beginRenderPass(.{
                                 .label = .init("Depth Resolve"),
                                 .color_attachment_count = 0,
@@ -3059,6 +3159,7 @@ pub const Renderer = struct {
                                     .stencil_clear_value = 0,
                                     .stencil_read_only = .false,
                                 },
+                                .timestamp_writes = if (timestamp_writes) |w| &w else null,
                             });
                             defer {
                                 pass.end();
@@ -3096,6 +3197,7 @@ pub const Renderer = struct {
                                 .framebuffer_height = @floatFromInt(target_size.height),
                             };
 
+                            const timestamp_writes = RenderPassTimestamp.@"Modifier Volume Stencil".writes(query_set);
                             const pass = encoder.beginRenderPass(.{
                                 .label = .init("Modifier Volume Stencil"),
                                 .color_attachment_count = 0,
@@ -3111,6 +3213,7 @@ pub const Renderer = struct {
                                     .stencil_clear_value = 0,
                                     .stencil_read_only = .false,
                                 },
+                                .timestamp_writes = if (timestamp_writes) |w| &w else null,
                             });
                             defer {
                                 pass.end();
@@ -3156,6 +3259,8 @@ pub const Renderer = struct {
                                 .load_op = .load,
                                 .store_op = .store,
                             }};
+
+                            const timestamp_writes = RenderPassTimestamp.@"Modifier Volume Apply".writes(query_set);
                             const pass = encoder.beginRenderPass(.{
                                 .label = .init("Modifier Volume Apply"),
                                 .color_attachment_count = color_attachments.len,
@@ -3171,6 +3276,7 @@ pub const Renderer = struct {
                                     .stencil_clear_value = 0,
                                     .stencil_read_only = .true,
                                 },
+                                .timestamp_writes = if (timestamp_writes) |w| &w else null,
                             });
                             defer {
                                 pass.end();
@@ -3220,6 +3326,7 @@ pub const Renderer = struct {
                                 .store_op = .store,
                             },
                         };
+                        const timestamp_writes = RenderPassTimestamp.@"Presorted Translucent pass".writes(query_set);
                         const pass = encoder.beginRenderPass(.{
                             .label = .init("Presorted Translucent pass"),
                             .color_attachment_count = color_attachments.len,
@@ -3233,6 +3340,7 @@ pub const Renderer = struct {
                                 .stencil_clear_value = 0,
                                 .stencil_read_only = .false,
                             },
+                            .timestamp_writes = if (timestamp_writes) |w| &w else null,
                         });
                         defer {
                             pass.end();
@@ -3293,6 +3401,8 @@ pub const Renderer = struct {
                         for (0..self.oit_horizontal_slices) |i| {
                             const start_y: u32 = @as(u32, @intCast(i)) * slice_size;
 
+                            const timestamps = RenderPassTimestamp.translucent(@intCast(i));
+
                             // Render Translucent Modifier Volumes
                             if (ta_lists.translucent_modifier_volumes.items.len > 0) {
                                 const oit_mv_uniform_mem = gctx.uniformsAllocate(OITTMVUniforms, 1);
@@ -3305,6 +3415,7 @@ pub const Renderer = struct {
                                 };
 
                                 {
+                                    const timestamp_writes = timestamps.modifier_volumes.writes(query_set);
                                     const pass = encoder.beginRenderPass(.{
                                         .label = .init("Translucent Modifier Volumes"),
                                         .color_attachment_count = 0,
@@ -3314,6 +3425,7 @@ pub const Renderer = struct {
                                             .depth_read_only = .true,
                                             .stencil_read_only = .true,
                                         },
+                                        .timestamp_writes = if (timestamp_writes) |w| &w else null,
                                     });
                                     defer {
                                         pass.end();
@@ -3344,7 +3456,11 @@ pub const Renderer = struct {
                                 }
 
                                 {
-                                    const pass = encoder.beginComputePass(.{ .label = .init("Merge Modifier Volumes"), .timestamp_writes = null });
+                                    const timestamp_writes = timestamps.merge_modifier_volumes.writes(query_set);
+                                    const pass = encoder.beginComputePass(.{
+                                        .label = .init("Merge Modifier Volumes"),
+                                        .timestamp_writes = if (timestamp_writes) |w| &w else null,
+                                    });
                                     defer {
                                         pass.end();
                                         pass.release();
@@ -3375,11 +3491,13 @@ pub const Renderer = struct {
                                     .load_op = .load,
                                     .store_op = .store,
                                 }};
+                                const timestamp_writes = timestamps.fragments.writes(query_set);
                                 const pass = encoder.beginRenderPass(.{
                                     .label = .init("Translucent Pass"),
                                     .color_attachment_count = oit_color_attachments.len,
                                     .color_attachments = &oit_color_attachments,
                                     .depth_stencil_attachment = null, // TODO: Use the depth buffer rather than discarding the fragments manually?
+                                    .timestamp_writes = if (timestamp_writes) |w| &w else null,
                                 });
                                 defer {
                                     pass.end();
@@ -3428,7 +3546,11 @@ pub const Renderer = struct {
 
                             // Blend the results of the translucent pass
                             if (gctx.lookupResource(self.blend_pipeline)) |pipeline| {
-                                const pass = encoder.beginComputePass(null);
+                                const timestamp_writes = timestamps.blend.writes(query_set);
+                                const pass = encoder.beginComputePass(.{
+                                    .label = .init("Blend Pass"),
+                                    .timestamp_writes = if (timestamp_writes) |w| &w else null,
+                                });
                                 defer {
                                     pass.end();
                                     pass.release();
@@ -3471,6 +3593,11 @@ pub const Renderer = struct {
                     .label = .init("Framebuffer Blit"),
                     .color_attachment_count = color_attachments.len,
                     .color_attachments = &color_attachments,
+                    .timestamp_writes = &.{
+                        .query_set = self.render_query_set,
+                        .beginning_of_pass_write_index = 2,
+                        .end_of_pass_write_index = 3,
+                    },
                 });
                 defer {
                     pass.end();
@@ -3626,7 +3753,19 @@ pub const Renderer = struct {
                 }
             }
 
-            break :commands encoder.finish(null);
+            // encoder.writeTimestamp(self.render_query_set, query_index);
+            // query_index += 1;
+
+            // encoder.resolveQuerySet(self.render_query_set, 0, 2, self.query_resolve_buffer, 0);
+            encoder.copyBufferToBuffer(
+                gctx.lookupResource(self.query_resolve_buffer).?,
+                0,
+                gctx.lookupResource(self.query_map_buffer).?,
+                0,
+                8 * (1 + self.render_passes.items.len) * RenderPassTimestamp.MaxQueries,
+            );
+
+            break :commands encoder.finish(.{ .label = .init("Render") });
         };
         defer commands.release();
 
@@ -3666,6 +3805,33 @@ pub const Renderer = struct {
             const now = std.Io.Clock.awake.now(self.io).toMicroseconds();
             self.last_n_frametimes.push(now - self.last_frame_timestamp);
             self.last_frame_timestamp = now;
+
+            const static = struct {
+                var result: zgpu.wgpu.MapAsyncStatus = .@"error";
+                fn signal_query_buffer_mapped(status: zgpu.wgpu.MapAsyncStatus, message: zgpu.wgpu.StringView.C, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
+                    result = status;
+                    if (status != .success)
+                        log.err(termcolor.red("Failed to map query buffer: {t} ({s})"), .{ status, message.data[0..message.length] });
+                }
+            };
+
+            const query_buffer = gctx.lookupResource(self.query_map_buffer).?;
+            const size = (1 + self.render_passes.items.len) * RenderPassTimestamp.MaxQueries;
+            const future = query_buffer.mapAsync(.{ .read = true }, 0, 8 * size, .{ .callback = &static.signal_query_buffer_mapped, .mode = .wait_any_only });
+            var wait_info = [_]wgpu.FutureWaitInfo{.{ .future = future }};
+            if (gctx.instance.waitAny(&wait_info, std.math.maxInt(u64)) == .success) {
+                if (static.result == .success) {
+                    defer query_buffer.unmap();
+                    const mapped = query_buffer.getConstMappedRange(u64, 0, size);
+                    if (mapped) |timestamps| {
+                        for (self.render_passes.items, 0..) |_, i| {
+                            for (0..RenderPassTimestamp.MaxQueries) |j| {
+                                std.debug.print("[{d: >3}] [{d: >3}] {d}\n", .{ i, j, timestamps[RenderPassTimestamp.MaxQueries * (i + 1) + j] });
+                            }
+                        }
+                    } else log.err("Failed to map query buffer", .{});
+                } // Error logged in the callback
+            } else log.err("Failed to wait for query mapping to be available.", .{});
         }
     }
 

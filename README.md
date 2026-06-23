@@ -108,10 +108,6 @@ sudo apt install libgtk-3-dev libudev-dev
     -   Mipmaps for palette textures?
     -   Follow ISP_FEED_CFG discard mode flag? (Find a game that turns it off)
 
-### Nice to have
-
--   Some (rendering) performance metrics directly in the emulator?
-
 ## Some sources
 
 -   http://www.shared-ptr.com/sh_insns.html

@@ -572,7 +572,7 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
                 .fn_getCocoaWindow = @ptrCast(&zglfw.getCocoaWindow),
             }, .{
                 .present_mode = config.present_mode.toWGPU(),
-                .required_features = &[_]zgpu.wgpu.FeatureName{ .bgra8_unorm_storage, .depth32_float_stencil8 },
+                .required_features = &[_]zgpu.wgpu.FeatureName{ .bgra8_unorm_storage, .depth32_float_stencil8, .timestamp_query },
                 // Increasing max_texture_array_layers is required: The renderer uses a single texture array for each size.
                 // 2048 is a big jump from the WebGPU default of 256, but it seems to be widely supported, especially on desktop.
                 // (support for Vulkan: https://vulkan.gpuinfo.org/displaydevicelimit.php?name=maxImageArrayLayers)
