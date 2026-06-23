@@ -6,8 +6,8 @@
     .paths = .{""},
     .dependencies = .{
         .zgpu = .{
-            .url = "git+https://github.com/Senryoku/zgpu.git#943141736bec63521669bffa8130852627fce991",
-            .hash = "zgpu-0.15.0-dev-nqFT5HcjzAUTfFv_SBBNhhYz5q9CUmrqYl7U1etN8EKV",
+            .url = "git+https://github.com/Senryoku/zgpu#cf3ec96da5c5a814b427d6bc826e880727620b14",
+            .hash = "zgpu-0.15.0-dev-nqFT5NYmzAWJMswBiXrNHEYicJRO-p-PArE3WO1L2E17",
         },
         .zgui = .{
             .url = "git+https://github.com/Senryoku/zgui.git#f41450b0b57571cc86a34a049a121c23cd4bd382",

@@ -1,5 +1,6 @@
 const std = @import("std");
 const termcolor = @import("termcolor");
+const deecy_config = @import("config");
 
 const log = std.log.scoped(.renderer);
 const Once = @import("helpers").Once;
@@ -904,6 +905,21 @@ pub const Renderer = struct {
             return @intFromEnum(self) + 1;
         }
 
+        pub fn @"type"(idx: u32) @This() {
+            return switch ((idx >> 1) << 1) {
+                0 => .Opaque,
+                2 => .@"Depth Resolve",
+                4 => .@"Modifier Volume Stencil",
+                6 => .@"Modifier Volume Apply",
+                8 => .@"Presorted Translucent pass",
+                32...63 => .@"Translucent Modifier Volumes",
+                64...95 => .@"Translucent Merge Modifier Volumes",
+                96...127 => .@"Translucent Pass",
+                128...159 => .@"Translucent Blend Pass",
+                else => @enumFromInt(idx),
+            };
+        }
+
         pub inline fn writes(self: @This(), set: ?wgpu.QuerySet) ?wgpu.PassTimestampWrites {
             return if (set) |qs| .{
                 .query_set = qs,
@@ -912,18 +928,102 @@ pub const Renderer = struct {
             } else null;
         }
 
-        pub fn translucent(slice: u8) struct {
+        pub fn per_slice(slice: u8) struct {
             modifier_volumes: RenderPassTimestamp,
             merge_modifier_volumes: RenderPassTimestamp,
             fragments: RenderPassTimestamp,
             blend: RenderPassTimestamp,
         } {
             return .{
-                .modifier_volumes = @enumFromInt(@intFromEnum(@This().@"Translucent Modifier Volumes") + slice),
-                .merge_modifier_volumes = @enumFromInt(@intFromEnum(@This().@"Translucent Merge Modifier Volumes") + slice),
-                .fragments = @enumFromInt(@intFromEnum(@This().@"Translucent Pass") + slice),
-                .blend = @enumFromInt(@intFromEnum(@This().@"Translucent Blend Pass") + slice),
+                .modifier_volumes = @enumFromInt(@intFromEnum(@This().@"Translucent Modifier Volumes") + 2 * slice),
+                .merge_modifier_volumes = @enumFromInt(@intFromEnum(@This().@"Translucent Merge Modifier Volumes") + 2 * slice),
+                .fragments = @enumFromInt(@intFromEnum(@This().@"Translucent Pass") + 2 * slice),
+                .blend = @enumFromInt(@intFromEnum(@This().@"Translucent Blend Pass") + 2 * slice),
             };
+        }
+
+        const FrameTime = struct {
+            pass_count: u8,
+            passes: [MaxPasses]struct {
+                const Slice = struct {
+                    modifier_volumes: std.Io.Duration,
+                    merge_modifier_volumes: std.Io.Duration,
+                    fragments: std.Io.Duration,
+                    blend: std.Io.Duration,
+
+                    pub fn total(self: @This()) std.Io.Duration {
+                        return .{ .nanoseconds = self.modifier_volumes.nanoseconds + self.merge_modifier_volumes.nanoseconds + self.fragments.nanoseconds + self.blend.nanoseconds };
+                    }
+                };
+
+                slice_count: u8,
+                @"opaque": std.Io.Duration,
+                depth_resolve: std.Io.Duration,
+                modifier_volume_stencil: std.Io.Duration,
+                modifier_volume_apply: std.Io.Duration,
+                presorted_translucent: std.Io.Duration,
+                slices: [MaxSlices]Slice,
+
+                pub fn total(self: @This()) std.Io.Duration {
+                    var sum = std.Io.Duration.fromNanoseconds(self.@"opaque".nanoseconds + self.depth_resolve.nanoseconds + self.modifier_volume_stencil.nanoseconds + self.modifier_volume_apply.nanoseconds);
+                    for (0..self.slice_count) |i| {
+                        sum.nanoseconds += self.slices[i].total().nanoseconds;
+                    }
+                    return sum;
+                }
+
+                pub fn summed_slices(self: @This()) Slice {
+                    var sum = Slice{
+                        .modifier_volumes = std.Io.Duration.zero,
+                        .merge_modifier_volumes = std.Io.Duration.zero,
+                        .fragments = std.Io.Duration.zero,
+                        .blend = std.Io.Duration.zero,
+                    };
+                    for (0..self.slice_count) |i| {
+                        sum.modifier_volumes.nanoseconds += self.slices[i].modifier_volumes.nanoseconds;
+                        sum.merge_modifier_volumes.nanoseconds += self.slices[i].merge_modifier_volumes.nanoseconds;
+                        sum.fragments.nanoseconds += self.slices[i].fragments.nanoseconds;
+                        sum.blend.nanoseconds += self.slices[i].blend.nanoseconds;
+                    }
+                    return sum;
+                }
+
+                pub fn translucent_pass(self: @This()) std.Io.Duration {
+                    var sum = self.presorted_translucent;
+                    for (0..self.slice_count) |i| {
+                        sum.nanoseconds += self.slices[i].total().nanoseconds;
+                    }
+                    return sum;
+                }
+            },
+
+            pub fn total(self: @This()) std.Io.Duration {
+                var sum = std.Io.Duration.zero;
+                for (0..self.pass_count) |i| {
+                    sum.nanoseconds += self.passes[i].total().nanoseconds;
+                }
+                return sum;
+            }
+        };
+        pub fn parse(pass_count: u8, slice_count: u8, timestamps: []const u64) FrameTime {
+            var r: FrameTime = .{ .pass_count = pass_count, .passes = undefined };
+            for (0..pass_count) |i| {
+                const range = timestamps[(i + 1) * MaxQueries ..];
+                r.passes[i].@"opaque" = .fromNanoseconds(range[@This().Opaque.end()] - range[@This().Opaque.begin()]);
+                r.passes[i].depth_resolve = .fromNanoseconds(range[@This().@"Depth Resolve".end()] - range[@This().@"Depth Resolve".begin()]);
+                r.passes[i].modifier_volume_stencil = .fromNanoseconds(range[@This().@"Modifier Volume Stencil".end()] - range[@This().@"Modifier Volume Stencil".begin()]);
+                r.passes[i].modifier_volume_apply = .fromNanoseconds(range[@This().@"Modifier Volume Apply".end()] - range[@This().@"Modifier Volume Apply".begin()]);
+                r.passes[i].presorted_translucent = .fromNanoseconds(range[@This().@"Presorted Translucent pass".end()] - range[@This().@"Presorted Translucent pass".begin()]);
+                r.passes[i].slice_count = slice_count;
+                for (0..slice_count) |j| {
+                    const ps = @This().per_slice(@intCast(j));
+                    r.passes[i].slices[j].modifier_volumes = .fromNanoseconds(range[ps.modifier_volumes.end()] - range[ps.modifier_volumes.begin()]);
+                    r.passes[i].slices[j].merge_modifier_volumes = .fromNanoseconds(range[ps.merge_modifier_volumes.end()] - range[ps.merge_modifier_volumes.begin()]);
+                    r.passes[i].slices[j].fragments = .fromNanoseconds(range[ps.fragments.end()] - range[ps.fragments.begin()]);
+                    r.passes[i].slices[j].blend = .fromNanoseconds(range[ps.blend.end()] - range[ps.blend.begin()]);
+                }
+            }
+            return r;
         }
     };
 
@@ -1272,6 +1372,7 @@ pub const Renderer = struct {
             .modifier_volume_vertices = try .initCapacity(allocator, 4096),
 
             .last_frame_timestamp = std.Io.Clock.awake.now(io).toMicroseconds(),
+
             .render_query_set = gctx.device.createQuerySet(.{ .label = .init("Timestamp Query Set"), .query_type = .timestamp, .count = RenderPassTimestamp.MaxQueries }),
             .render_passes_query_sets = try allocator.alloc(wgpu.QuerySet, RenderPassTimestamp.MaxPasses),
             .query_resolve_buffer = gctx.createBuffer(.{
@@ -2976,17 +3077,14 @@ pub const Renderer = struct {
             },
         };
 
+        const profiling = deecy_config.gpu_profiling and !render_to_texture;
+
         const commands = commands: {
             const encoder = gctx.device.createCommandEncoder(null);
             defer encoder.release();
 
             const vb_info = gctx.lookupResourceInfo(self.vertex_buffer).?;
             const ib_info = gctx.lookupResourceInfo(self.index_buffer).?;
-
-            // var query_index: u32 = 0;
-
-            // encoder.writeTimestamp(self.render_query_set, query_index);
-            // query_index += 1;
 
             const uniform_mem = gctx.uniformsAllocate(Uniforms, 1);
             uniform_mem.slice[0] = .{
@@ -3034,11 +3132,11 @@ pub const Renderer = struct {
                         .stencil_clear_value = 0,
                         .stencil_read_only = .false,
                     },
-                    .timestamp_writes = &.{
+                    .timestamp_writes = if (profiling) &.{
                         .query_set = self.render_query_set,
                         .beginning_of_pass_write_index = 0,
                         .end_of_pass_write_index = 1,
-                    },
+                    } else null,
                 });
                 defer {
                     pass.end();
@@ -3061,7 +3159,7 @@ pub const Renderer = struct {
                 if (self.ta_lists.items.len <= pass_idx) break;
                 const ta_lists = &self.ta_lists.items[pass_idx];
 
-                const query_set = if (render_to_texture) null else if (pass_idx < self.render_passes_query_sets.len) self.render_passes_query_sets[pass_idx] else null;
+                const query_set = if (profiling and pass_idx < self.render_passes_query_sets.len) self.render_passes_query_sets[pass_idx] else null;
                 defer {
                     if (query_set) |qs| encoder.resolveQuerySet(
                         qs,
@@ -3401,7 +3499,7 @@ pub const Renderer = struct {
                         for (0..self.oit_horizontal_slices) |i| {
                             const start_y: u32 = @as(u32, @intCast(i)) * slice_size;
 
-                            const timestamps = RenderPassTimestamp.translucent(@intCast(i));
+                            const timestamps = RenderPassTimestamp.per_slice(@intCast(i));
 
                             // Render Translucent Modifier Volumes
                             if (ta_lists.translucent_modifier_volumes.items.len > 0) {
@@ -3593,11 +3691,11 @@ pub const Renderer = struct {
                     .label = .init("Framebuffer Blit"),
                     .color_attachment_count = color_attachments.len,
                     .color_attachments = &color_attachments,
-                    .timestamp_writes = &.{
+                    .timestamp_writes = if (profiling) &.{
                         .query_set = self.render_query_set,
                         .beginning_of_pass_write_index = 2,
                         .end_of_pass_write_index = 3,
-                    },
+                    } else null,
                 });
                 defer {
                     pass.end();
@@ -3753,17 +3851,16 @@ pub const Renderer = struct {
                 }
             }
 
-            // encoder.writeTimestamp(self.render_query_set, query_index);
-            // query_index += 1;
-
-            // encoder.resolveQuerySet(self.render_query_set, 0, 2, self.query_resolve_buffer, 0);
-            encoder.copyBufferToBuffer(
-                gctx.lookupResource(self.query_resolve_buffer).?,
-                0,
-                gctx.lookupResource(self.query_map_buffer).?,
-                0,
-                8 * (1 + self.render_passes.items.len) * RenderPassTimestamp.MaxQueries,
-            );
+            if (profiling) {
+                encoder.resolveQuerySet(self.render_query_set, 0, RenderPassTimestamp.MaxQueries, gctx.lookupResource(self.query_resolve_buffer).?, 0);
+                encoder.copyBufferToBuffer(
+                    gctx.lookupResource(self.query_resolve_buffer).?,
+                    0,
+                    gctx.lookupResource(self.query_map_buffer).?,
+                    0,
+                    8 * (1 + self.render_passes.items.len) * RenderPassTimestamp.MaxQueries,
+                );
+            }
 
             break :commands encoder.finish(.{ .label = .init("Render") });
         };
@@ -3805,7 +3902,9 @@ pub const Renderer = struct {
             const now = std.Io.Clock.awake.now(self.io).toMicroseconds();
             self.last_n_frametimes.push(now - self.last_frame_timestamp);
             self.last_frame_timestamp = now;
+        }
 
+        if (profiling) {
             const static = struct {
                 var result: zgpu.wgpu.MapAsyncStatus = .@"error";
                 fn signal_query_buffer_mapped(status: zgpu.wgpu.MapAsyncStatus, message: zgpu.wgpu.StringView.C, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
@@ -3824,9 +3923,44 @@ pub const Renderer = struct {
                     defer query_buffer.unmap();
                     const mapped = query_buffer.getConstMappedRange(u64, 0, size);
                     if (mapped) |timestamps| {
-                        for (self.render_passes.items, 0..) |_, i| {
-                            for (0..RenderPassTimestamp.MaxQueries) |j| {
-                                std.debug.print("[{d: >3}] [{d: >3}] {d}\n", .{ i, j, timestamps[RenderPassTimestamp.MaxQueries * (i + 1) + j] });
+                        // for (self.render_passes.items, 0..) |_, i| {
+                        //     for (0..RenderPassTimestamp.MaxQueries / 2) |j| {
+                        //         const start = timestamps[RenderPassTimestamp.MaxQueries * (i + 1) + 2 * j + 0];
+                        //         const end = timestamps[RenderPassTimestamp.MaxQueries * (i + 1) + 2 * j + 1];
+                        //         if (start != 0 or end != 0) {
+                        //             std.debug.print("[{d: >3}] [{d: >3}] {d} -> {d} = {d} ({})\n", .{
+                        //                 i,
+                        //                 2 * j,
+                        //                 start,
+                        //                 end,
+                        //                 end -% start,
+                        //                 RenderPassTimestamp.type(@intCast(2 * j)),
+                        //             });
+                        //         }
+                        //     }
+                        // }
+                        const parsed = RenderPassTimestamp.parse(@intCast(self.render_passes.items.len), @intCast(self.oit_horizontal_slices), timestamps);
+                        std.debug.print("Frame Time: {f}\n", .{parsed.total()});
+                        for (0..parsed.pass_count) |i| {
+                            std.debug.print("[{d: >2}] Pass: {f}\n", .{ i, parsed.passes[i].total() });
+                            std.debug.print("[{d: >2}]   Opaque: {f}\n", .{ i, parsed.passes[i].@"opaque" });
+                            std.debug.print("[{d: >2}]   Depth resolve: {f}\n", .{ i, parsed.passes[i].depth_resolve });
+                            std.debug.print("[{d: >2}]   Modifier Volume Stencil: {f}\n", .{ i, parsed.passes[i].modifier_volume_stencil });
+                            std.debug.print("[{d: >2}]   Modifier Volume Apply: {f}\n", .{ i, parsed.passes[i].modifier_volume_apply });
+
+                            std.debug.print("[{d: >2}]   Total Translucent: {f}\n", .{ i, parsed.passes[i].translucent_pass() });
+                            std.debug.print("[{d: >2}]     Pre-Sort: {f}\n", .{ i, parsed.passes[i].presorted_translucent });
+                            const summed_slices = parsed.passes[i].summed_slices();
+                            std.debug.print("[{d: >2}]     Summed Modifier Volumes: {f}\n", .{ i, summed_slices.modifier_volumes });
+                            std.debug.print("[{d: >2}]     Summed Merge Modifier Volumes: {f}\n", .{ i, summed_slices.merge_modifier_volumes });
+                            std.debug.print("[{d: >2}]     Summed Fragments: {f}\n", .{ i, summed_slices.fragments });
+                            std.debug.print("[{d: >2}]     Summed Blend: {f}\n", .{ i, summed_slices.blend });
+                            for (0..parsed.passes[i].slice_count) |j| {
+                                const slice = parsed.passes[i].slices[j];
+                                std.debug.print("[{d: >2}]     [{d: >3}] Modifier Volumes: {f}\n", .{ i, j, slice.modifier_volumes });
+                                std.debug.print("[{d: >2}]     [{d: >3}] Merge Modifier Volumes: {f}\n", .{ i, j, slice.merge_modifier_volumes });
+                                std.debug.print("[{d: >2}]     [{d: >3}] Fragments: {f}\n", .{ i, j, slice.fragments });
+                                std.debug.print("[{d: >2}]     [{d: >3}] Blend: {f}\n", .{ i, j, slice.blend });
                             }
                         }
                     } else log.err("Failed to map query buffer", .{});

@@ -23,6 +23,7 @@ pub fn build(b: *std.Build) !void {
     const use_appdata_dir = b.option(bool, "use_appdata_dir", "Prepend the platform specific AppData directory to data_path and userdata_path (default: false)") orelse false;
     const no_console = if (target.result.os.tag == .windows) b.option(bool, "no_console", "Do not open the console on Windows (default: false for debug builds, true otherwise)") orelse (optimize != .Debug) else false;
     const git_commit = b.option([]const u8, "git_commit", "Current git commit hash (default: auto detect)") orelse get_git_commit(b);
+    const gpu_profiling = b.option(bool, "gpu_profiling", "Enable GPU profiling using timestamp queries (default: true for debug builds, false otherwise)") orelse (optimize == .Debug);
 
     const dc_options = b.addOptions();
     dc_options.addOption(bool, "mmu", mmu);
@@ -79,6 +80,7 @@ pub fn build(b: *std.Build) !void {
     deecy_options.addOption([]const u8, "git_commit", git_commit);
     deecy_options.addOption(std.builtin.OptimizeMode, "optimize", optimize);
     deecy_options.addOption(bool, "no_console", no_console);
+    deecy_options.addOption(bool, "gpu_profiling", gpu_profiling);
 
     const deecy_module = b.createModule(.{
         .target = target,
@@ -186,7 +188,13 @@ pub fn build(b: *std.Build) !void {
         if (target.result.os.tag == .windows) {
             zgpu.installDxcFrom(exe, "zgpu");
         }
-        const zgpu_dep = b.dependency("zgpu", .{ .target = target, .optimize = optimize, .max_num_bindings_per_group = 12 });
+        const zgpu_dep = b.dependency("zgpu", .{
+            .target = target,
+            .optimize = optimize,
+            .max_num_bindings_per_group = 12,
+            .dawn_allow_unsafe_apis = gpu_profiling,
+            .dawn_disable_timestamp_quantization = gpu_profiling,
+        });
         const zgpu_module = zgpu_dep.module("root");
         deecy_module.addImport("zgpu", zgpu_module);
 
