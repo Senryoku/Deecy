@@ -1404,6 +1404,7 @@ pub fn draw_game_library(self: *@This()) !void {
                 var display_game_search: [63:0]u8 = @splat(0);
                 var lowercase_buffer: [64]u8 = @splat(0);
                 var lowercase_game_search: []u8 = lowercase_buffer[0..0];
+                var best_match: ?usize = null;
 
                 pub fn reset() void {
                     display_game_search = @splat(0);
@@ -1412,16 +1413,22 @@ pub fn draw_game_library(self: *@This()) !void {
                 }
 
                 pub fn match(name: []const u8) bool {
+                    if (lowercase_game_search.len == 0) return true;
                     var lowercase_name: [256]u8 = @splat(0);
                     for (0..@min(name.len, lowercase_name.len)) |i| lowercase_name[i] = std.ascii.toLower(name[i]);
-                    if (lowercase_game_search.len > 0 and std.mem.indexOf(u8, &lowercase_name, lowercase_game_search) == null) return false;
-                    return true;
+                    return common.word_filter(lowercase_game_search, &lowercase_name);
+                }
+
+                pub fn score(name: []const u8) i32 {
+                    var lowercase_name: [256]u8 = @splat(0);
+                    for (0..@min(name.len, lowercase_name.len)) |i| lowercase_name[i] = std.ascii.toLower(name[i]);
+                    return common.word_filter_score(lowercase_game_search, &lowercase_name);
                 }
             };
             var open_game_settings = false;
-            // TODO: Set active on startup when this API is added to ImGui (https://github.com/ocornut/imgui/issues/3949)
-            // if (zgui.isWindowAppearing()) zgui.setActive("##Search");
             zgui.setNextItemWidth(150.0);
+            if (Once(@src())) // Set search input active on startup for quick launch
+                zgui.setKeyboardFocusHere(0);
             if (zgui.inputTextWithHint("##Search", .{ .hint = "Search file...", .buf = @ptrCast(&static.display_game_search), .flags = .{ .auto_select_all = true } })) {
                 static.lowercase_buffer = @splat(0);
                 for (0..static.display_game_search.len) |i| {
@@ -1431,7 +1438,27 @@ pub fn draw_game_library(self: *@This()) !void {
                     }
                     static.lowercase_buffer[i] = std.ascii.toLower(static.display_game_search[i]);
                 }
+                static.best_match = null;
+                var best_score: i32 = std.math.minInt(i32);
+                for (self.disc_files.items[0..], 0..) |entry, idx| {
+                    if (static.match(entry.name)) {
+                        const score = static.score(entry.name);
+                        if (static.best_match == null or score > best_score) {
+                            static.best_match = idx;
+                            best_score = score;
+                        }
+                    }
+                }
             }
+            // Launch best matching game on Enter
+            if (zgui.isItemDeactivatedAfterEdit() and (zgui.isKeyPressed(.enter, false) or zgui.isKeyPressed(.keypad_enter, false))) {
+                if (static.best_match) |idx| {
+                    if (idx < self.disc_files.items.len) {
+                        try d.load_and_start(self.disc_files.items[idx].path);
+                    } else static.best_match = null;
+                }
+            }
+            if (!zgui.isItemActive()) static.best_match = null;
             zgui.sameLine(.{});
             if (zgui.button(Icons.Xmark, .{})) static.reset();
             zgui.sameLine(.{ .spacing = 24.0 });
@@ -1461,6 +1488,11 @@ pub fn draw_game_library(self: *@This()) !void {
 
             if (self.disc_files.items.len > 0) {
                 const draw_list = zgui.getWindowDrawList();
+                const clip_min = zgui.getWindowPos();
+                const clip_max = .{ clip_min[0] + zgui.getContentRegionAvail()[0], clip_min[1] + zgui.getContentRegionAvail()[1] };
+                draw_list.pushClipRect(.{ .pmin = clip_min, .pmax = clip_max });
+                defer draw_list.popClipRect();
+
                 switch (d.config.library_display) {
                     .List => {
                         if (zgui.beginTable("##Games", .{ .column = 3, .flags = .{ .row_bg = true } })) {
@@ -1475,10 +1507,16 @@ pub fn draw_game_library(self: *@This()) !void {
                             zgui.tableSetupColumn("##Image", .{ .init_width_or_height = 32, .flags = .{ .width_fixed = true } });
                             zgui.tableSetupColumn("Name", .{ .flags = .{ .width_stretch = true } });
                             zgui.tableSetupColumn("Type", .{ .flags = .{ .width_fixed = true } });
-                            for (self.disc_files.items) |entry| {
+                            for (self.disc_files.items, 0..) |entry, idx| {
                                 if (!static.match(entry.name)) continue;
 
+                                zgui.pushIntId(@intCast(idx));
+                                defer zgui.popId();
+
                                 zgui.tableNextRow(.{});
+                                var pmin = zgui.getItemRectMin();
+                                pmin[0] -= zgui.getScrollX();
+                                pmin[1] -= zgui.getScrollY();
 
                                 _ = zgui.tableNextColumn();
                                 if (entry.view) |view| {
@@ -1495,22 +1533,30 @@ pub fn draw_game_library(self: *@This()) !void {
                                 zgui.alignTextToFramePadding();
                                 if (entry.path.len > 3) zgui.text("{s} ", .{entry.path[entry.path.len - 3 ..]});
 
+                                if (static.best_match) |best_match| {
+                                    if (best_match == idx) {
+                                        var pmax = pmin;
+                                        pmax[0] = zgui.getItemRectMax()[0] - zgui.getScrollX();
+                                        pmax[1] += RowHeight;
+                                        draw_list.addRect(.{ .pmin = pmin, .pmax = pmax, .col = common.DCBlueU });
+                                    }
+                                }
+
                                 // TODO: Button to open game settings
                             }
                             zgui.endTable();
                         }
                     },
                     .Grid => {
-                        const clip_min = zgui.getWindowPos();
-                        const clip_max = .{ clip_min[0] + zgui.getContentRegionAvail()[0], clip_min[1] + zgui.getContentRegionAvail()[1] };
-                        draw_list.pushClipRect(.{ .pmin = clip_min, .pmax = clip_max });
-                        defer draw_list.popClipRect();
+                        const Rounding = 8.0;
+                        const CardSize = .{ 256.0, 256.0 + 8.0 + title_height };
 
                         var truncated_name: [28:0]u8 = undefined;
                         zgui.pushStyleVar2f(.{ .idx = .frame_padding, .v = .{ 0, 0 } });
                         zgui.pushStyleVar2f(.{ .idx = .item_spacing, .v = .{ 8.0, 8.0 } });
-                        zgui.pushStyleVar1f(.{ .idx = .frame_rounding, .v = 8.0 });
-                        defer zgui.popStyleVar(.{ .count = 3 });
+                        zgui.pushStyleVar1f(.{ .idx = .frame_rounding, .v = Rounding });
+                        zgui.pushStyleVar1f(.{ .idx = .frame_border_size, .v = 0 });
+                        defer zgui.popStyleVar(.{ .count = 4 });
                         var displayed_count: usize = 0;
                         for (self.disc_files.items, 0..) |*entry, idx| {
                             if (!static.match(entry.name)) continue;
@@ -1522,7 +1568,7 @@ pub fn draw_game_library(self: *@This()) !void {
 
                                 const cursor_pos = zgui.getCursorScreenPos();
                                 zgui.setNextItemAllowOverlap();
-                                if (zgui.button("##Launch", .{ .w = 256.0, .h = 256.0 + 8.0 + title_height }))
+                                if (zgui.button("##Launch", .{ .w = CardSize[0], .h = CardSize[1] }))
                                     try d.load_and_start(entry.path);
                                 zgui.setCursorScreenPos(.{ cursor_pos[0] + text_padding[0], cursor_pos[1] + text_padding[1] });
 
@@ -1544,7 +1590,7 @@ pub fn draw_game_library(self: *@This()) !void {
                                     }
                                     draw_list.addCircleFilled(.{ .p = .{ cursor_pos[0] + 128.0, cursor_pos[1] + text_padding[1] + title_height + 128.0 }, .r = 16.0, .col = bg_color, .num_segments = 0 });
 
-                                    zgui.pushTextWrapPos(zgui.getCursorPosX() + 256.0 - 2 * text_padding[0]);
+                                    zgui.pushTextWrapPos(zgui.getCursorPosX() + CardSize[0] - 2 * text_padding[0]);
                                     defer zgui.popTextWrapPos();
                                     zgui.textWrapped("{s}", .{entry.name});
                                 }
@@ -1558,10 +1604,22 @@ pub fn draw_game_library(self: *@This()) !void {
                                 {
                                     zgui.pushFont(null, 24.0);
                                     defer zgui.popFont();
-                                    zgui.setCursorScreenPos(.{ cursor_pos[0] + 228.0, cursor_pos[1] + 260.0 });
-                                    if (zgui.button(Icons.Gear, .{})) {
+                                    const pos = .{ cursor_pos[0] + 228.0, cursor_pos[1] + 260.0 };
+                                    zgui.setCursorScreenPos(pos);
+                                    if (zgui.invisibleButton("##GameSettings", .{ .w = 32.0, .h = 32.0 })) {
                                         try self.game_settings.setup(self.allocator, self.deecy.io, entry);
                                         open_game_settings = true;
+                                    }
+                                    const hovered = zgui.isItemHovered(.{});
+                                    zgui.setCursorScreenPos(pos);
+                                    zgui.textColored(if (hovered) common.White else .{ 0.8, 0.8, 0.8, 1.0 }, Icons.Gear, .{});
+                                }
+                                if (static.best_match) |best_match| {
+                                    if (best_match == idx) {
+                                        var pmax = cursor_pos;
+                                        pmax[0] += CardSize[0];
+                                        pmax[1] += CardSize[1];
+                                        draw_list.addRect(.{ .pmin = cursor_pos, .pmax = pmax, .col = common.DCBlueU, .rounding = Rounding });
                                     }
                                 }
                             }
