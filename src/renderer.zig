@@ -866,8 +866,8 @@ pub const Renderer = struct {
     const MaxVolumesPerPixel = 8;
     const VolumePixelSize = MaxVolumesPerPixel * @sizeOf(f32) * 2; // See Volumes in tmv_structs.zig
 
-    const OITUniforms = packed struct { max_fragments: u32, target_width: u32, start_y: u32 };
-    const OITTMVUniforms = packed struct { square_size: u32, pixels_per_slice: u32, target_width: u32, start_y: u32 };
+    const OITUniforms = packed struct { max_fragments: u32, target_width: u32, start_y: u32, slice_height: u32 };
+    const OITTMVUniforms = packed struct { square_size: u32, pixels_per_slice: u32, target_width: u32, start_y: u32, slice_height: u32 };
     const BlitUniforms = extern struct { min: [2]f32, max: [2]f32 };
 
     const FirstVertex: u32 = 4; // The 4 first vertices are reserved for the background.
@@ -3304,6 +3304,7 @@ pub const Renderer = struct {
                                     .pixels_per_slice = @intCast(self.translucent_modvol_dimensions().pixels_per_slice),
                                     .target_width = render_area.width,
                                     .start_y = start_y,
+                                    .slice_height = slice_size,
                                 };
 
                                 {
@@ -3368,6 +3369,7 @@ pub const Renderer = struct {
                                 .max_fragments = @intCast(self.get_fragments_list_size() / OITLinkedListNodeSize),
                                 .target_width = render_area.width,
                                 .start_y = start_y,
+                                .slice_height = slice_size,
                             };
 
                             if (gctx.lookupResource(self.translucent_pipeline_no_culling)) |pipeline_no_culling| {

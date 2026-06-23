@@ -2,6 +2,7 @@ struct OITUniforms {
     max_fragments: u32,
     target_width: u32,
     start_y: u32,
+    slice_height: u32,
 };
 
 

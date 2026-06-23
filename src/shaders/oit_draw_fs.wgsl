@@ -9,7 +9,7 @@ struct Heads {
 @group(2) @binding(1) var<storage, read_write> heads: Heads;
 @group(2) @binding(2) var<storage, read_write> linked_list: LinkedList;
 @group(2) @binding(3) var opaque_depth_texture: texture_depth_2d;
-@group(2) @binding(4) var<storage, read_write> modvols: array<VolumesInterfaces>;
+@group(2) @binding(4) var<storage, read_write> modvols: array<f32>;
 
 @fragment
 fn main(
@@ -47,10 +47,12 @@ fn main(
     
     if(shadow_bit) {
         var temp_area = false;
-        var curr_depth_interface = 0u;
-        while curr_depth_interface < MaxVolumesInterfaces && modvols[heads_index].interfaces[curr_depth_interface] >= 0.0 && modvols[heads_index].interfaces[curr_depth_interface] < position_clip.z {
+        var curr_depth_interface = heads_index;
+        let stride = oit_uniforms.target_width * oit_uniforms.slice_height;
+        let end = curr_depth_interface + MaxVolumesInterfaces * stride;
+        while curr_depth_interface < end && modvols[curr_depth_interface] >= 0.0 && modvols[curr_depth_interface] < position_clip.z {
             temp_area = !temp_area;
-            curr_depth_interface += 1;
+            curr_depth_interface += stride;
         }
         if volume_bit {
             area = temp_area;

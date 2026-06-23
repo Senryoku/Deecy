@@ -6,10 +6,11 @@ const MaxVolumes = 8;
 const MaxVolumesInterfaces = 2 * MaxVolumes;
 
 struct OITTMVUniforms {
-    square_size: u32,
-    pixels_per_slice: u32,
-    target_width: u32,
-    start_y: u32,
+	square_size: u32,
+	pixels_per_slice: u32,
+	target_width: u32,
+	start_y: u32,
+	slice_height: u32,
 };
 
 struct VolumeFragmentList {
