@@ -1439,13 +1439,15 @@ pub fn draw_game_library(self: *@This()) !void {
                     static.lowercase_buffer[i] = std.ascii.toLower(static.display_game_search[i]);
                 }
                 static.best_match = null;
-                var best_score: i32 = std.math.minInt(i32);
-                for (self.disc_files.items[0..], 0..) |entry, idx| {
-                    if (static.match(entry.name)) {
-                        const score = static.score(entry.name);
-                        if (static.best_match == null or score > best_score) {
-                            static.best_match = idx;
-                            best_score = score;
+                if (static.lowercase_game_search.len > 0) {
+                    var best_score: i32 = std.math.minInt(i32);
+                    for (self.disc_files.items[0..], 0..) |entry, idx| {
+                        if (static.match(entry.name)) {
+                            const score = static.score(entry.name);
+                            if (static.best_match == null or score > best_score) {
+                                static.best_match = idx;
+                                best_score = score;
+                            }
                         }
                     }
                 }
