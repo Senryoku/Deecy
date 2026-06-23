@@ -628,7 +628,7 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
         self.dc = while (true) {
             if (Dreamcast.create(allocator, self.io)) |dc| break dc else |err| {
                 switch (err) {
-                    error.BiosNotFound => if (try self.display_missing_file_error(
+                    error.BiosNotFound => if (try self.display_missing_file_error("dc_boot.bin", 2 * 1024 * 1024,
                         \\Missing BIOS.
                         \\Please copy your bios file as 'dc_boot.bin' to '{s}'.
                         \\
@@ -641,7 +641,7 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
         };
         while (true) {
             self.dc.load_flash(self.io, config.region.to_dreamcast(), config.bios_config) catch |err| {
-                if (try self.display_missing_file_error(
+                if (try self.display_missing_file_error("dc_flash.bin", 128 * 1024,
                     \\Missing Flash.
                     \\Please copy your flash file as 'dc_flash.bin' to '{s}'.
                     \\ 
@@ -1880,8 +1880,9 @@ fn display_unrecoverable_error(self: *@This(), comptime fmt: []const u8, args: a
 }
 
 /// Display an error message for missing bios or flash files.
-fn display_missing_file_error(self: *@This(), comptime fmt: []const u8, args: anytype) !enum { retry, exit } {
+fn display_missing_file_error(self: *@This(), filename: []const u8, expected_size: usize, comptime fmt: []const u8, args: anytype) !enum { retry, exit } {
     var retry = false;
+    var file_error: ?anyerror = null;
     while (!self.window.shouldClose()) {
         zglfw.pollEvents();
 
@@ -1893,6 +1894,18 @@ fn display_missing_file_error(self: *@This(), comptime fmt: []const u8, args: an
 
         if (zgui.beginPopupModal("Error##Modal", .{ .flags = .{ .always_auto_resize = true } })) {
             zgui.text(fmt, args);
+            if (file_error) |err| {
+                zgui.separator();
+                zgui.textColored(UI.common.Red, "Error copying '{s}' file: {t}", .{ filename, err });
+            }
+            zgui.separator();
+            if (zgui.button(UI.Icons.FileArrowUp ++ " Select", .{})) {
+                retry = copy_file(self.io, filename, expected_size) catch |err| b: {
+                    file_error = err;
+                    break :b false;
+                } or retry;
+            }
+            zgui.sameLine(.{});
             if (zgui.button(UI.Icons.Folder ++ " Open folder", .{})) {
                 const absolute_path = try std.Io.Dir.cwd().realPathFileAlloc(self.io, HostPaths.get_data_path(), self._allocator);
                 defer self._allocator.free(absolute_path);
@@ -1910,7 +1923,7 @@ fn display_missing_file_error(self: *@This(), comptime fmt: []const u8, args: an
                 _ = try file_explorer.wait(self.io);
             }
             zgui.sameLine(.{});
-            retry = zgui.button(UI.Icons.Repeat ++ " Retry", .{});
+            retry = zgui.button(UI.Icons.Repeat ++ " Retry", .{}) or retry;
             zgui.sameLine(.{});
             if (zgui.button(UI.Icons.Xmark ++ " Exit", .{})) zglfw.setWindowShouldClose(self.window, true);
             zgui.endPopup();
@@ -1923,6 +1936,25 @@ fn display_missing_file_error(self: *@This(), comptime fmt: []const u8, args: an
         if (retry) return .retry;
     }
     return .exit;
+}
+
+const nfd = @import("nfd");
+fn copy_file(io: std.Io, filename: []const u8, expected_size: ?usize) !bool {
+    const open_path = try nfd.openFileDialog("*", null);
+
+    if (open_path) |path| {
+        defer nfd.freePath(path);
+        if (expected_size) |es| {
+            const stat = try std.Io.Dir.cwd().statFile(io, path, .{});
+            if (es != stat.size) return error.@"Unexpected File Size";
+        }
+        const dest_dir = try std.Io.Dir.cwd().openDir(io, HostPaths.get_data_path(), .{});
+        defer dest_dir.close(io);
+        try std.Io.Dir.cwd().copyFile(path, dest_dir, filename, io, .{});
+        return true;
+    }
+
+    return false;
 }
 
 fn apply_cheats(self: *@This()) void {

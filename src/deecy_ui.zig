@@ -22,7 +22,7 @@ const Disc = DreamcastModule.GDROM.Disc;
 const PVRFile = @import("pvr_file.zig");
 
 const Notifications = @import("./ui/notifications.zig");
-const common = @import("./ui/common.zig");
+pub const common = @import("./ui/common.zig");
 pub const Icons = common.Icons;
 const wait_for = @import("./ui/wait_for_input.zig");
 
