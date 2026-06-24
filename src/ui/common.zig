@@ -44,15 +44,14 @@ pub fn word_filter(query: []const u8, value: []const u8) bool {
 pub fn word_filter_score(query: []const u8, value: []const u8) i32 {
     var score: i32 = 0;
     var words = std.mem.tokenizeScalar(u8, query, ' ');
-    var last_index: usize = 0;
+    var last_index: usize = value.len;
     while (words.next()) |word| {
         if (std.mem.find(u8, value, word)) |index| {
-            if (index == 0) score += 5;
-            // Sequence bonus
-            if (index > last_index) score += 1;
+            if (index == 0) score += 5; // Start bonus
+            if (index > last_index) score += 1; // Sequence bonus
             // Actual word in query bonus
             if (index == 0 or !std.ascii.isAlphanumeric(value[index - 1])) score += 10;
-            if (index + word.len + 1 >= value.len or !std.ascii.isAlphanumeric(value[index + word.len + 1])) score += 10;
+            if (index + word.len >= value.len or !std.ascii.isAlphanumeric(value[index + word.len])) score += 10;
             last_index = index;
         } else return 0;
     }
