@@ -1572,6 +1572,35 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     }
     zgui.end();
 
+    if (Deecy.comptime_config.gpu_profiling) {
+        if (zgui.begin("Renderer Stats", .{})) {
+            zgui.text("Last Frame: \n{f}", .{d.renderer.profiling.history.last_frame});
+            for (d.renderer.profiling.history.passes, 0..) |pass, i| {
+                if (i > 0 and pass.@"opaque".view().len == 0) continue;
+                zgui.pushIntId(@intCast(i));
+                defer zgui.popId();
+                if (zgui.plot.beginPlot("Render Pass", .{ .flags = .{ .no_inputs = true } })) {
+                    defer zgui.plot.endPlot();
+                    zgui.plot.setupAxis(.x1, .{ .label = "Frame", .flags = .{ .auto_fit = true } });
+                    zgui.plot.setupAxis(.y1, .{ .label = "Time (ms)", .flags = .{ .auto_fit = true } });
+                    zgui.plot.setupFinish();
+                    if (i == 0)
+                        zgui.plot.plotLineValues("Frame Time", f32, .{ .v = d.renderer.profiling.history.total.view() });
+                    zgui.plot.plotLineValues("Opaque", f32, .{ .v = pass.@"opaque".view() });
+                    zgui.plot.plotLineValues("Depth Resolve", f32, .{ .v = pass.depth_resolve.view() });
+                    zgui.plot.plotLineValues("Modifier Volume Stencil", f32, .{ .v = pass.modifier_volume_stencil.view() });
+                    zgui.plot.plotLineValues("Modifier Volume Apply", f32, .{ .v = pass.modifier_volume_apply.view() });
+                    zgui.plot.plotLineValues("Presorted Translucent", f32, .{ .v = pass.presorted_translucent.view() });
+                    zgui.plot.plotLineValues("Modifier Volumes", f32, .{ .v = pass.modifier_volumes.view() });
+                    zgui.plot.plotLineValues("Merge Modifier Volumes", f32, .{ .v = pass.merge_modifier_volumes.view() });
+                    zgui.plot.plotLineValues("Fragments", f32, .{ .v = pass.fragments.view() });
+                    zgui.plot.plotLineValues("Blend", f32, .{ .v = pass.blend.view() });
+                }
+            }
+        }
+        zgui.end();
+    }
+
     if (zgui.begin("GDRom", .{})) {
         zgui.text("State: {t}", .{d.dc.gdrom.state});
         if (zgui.collapsingHeader("Status Register", .{ .default_open = true }))

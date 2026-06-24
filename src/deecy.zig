@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const comptime_config = @import("config");
+pub const comptime_config = @import("config");
 const Self = @This();
 
 pub const Rewind = @import("rewind.zig");
