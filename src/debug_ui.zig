@@ -10,6 +10,8 @@ const Grey = common.Grey;
 const Green = common.Green;
 const Red = common.Red;
 
+const CircularBuffer = @import("circular_buffer.zig").CircularBuffer;
+
 const DreamcastModule = @import("dreamcast");
 const arm7 = DreamcastModule.AICAModule.arm7;
 
@@ -35,32 +37,54 @@ const vram_height: u32 = 480;
 
 fn DebugBuffer(comptime SampleType: type) type {
     return struct {
-        start_time: u64 = 0,
-        xv: std.ArrayList(SampleType) = .empty,
-        yv: std.ArrayList(SampleType) = .empty,
-        pub fn add(self: *@This(), allocator: std.mem.Allocator, time: u64, sample: SampleType) !void {
-            if (time < self.start_time) {
-                self.xv.clearRetainingCapacity();
-                self.yv.clearRetainingCapacity();
-            } else if (time - self.start_time > 10_000) {
-                self.xv.clearRetainingCapacity();
-                self.yv.clearRetainingCapacity();
+        last_time: u64 = 0,
+        xv: CircularBuffer(SampleType),
+        yv: CircularBuffer(SampleType),
+
+        pub fn init() !@This() {
+            return .{
+                .xv = try .initAtLeast(8 * 1024),
+                .yv = try .initAtLeast(8 * 1024),
+            };
+        }
+
+        pub fn deinit(self: *@This()) void {
+            self.xv.deinit();
+            self.yv.deinit();
+        }
+
+        pub fn add(self: *@This(), time: u64, sample: SampleType) void {
+            if (time == self.last_time) return;
+            if (time < self.last_time) {
+                self.xv.clear();
+                self.yv.clear();
             }
-            if (self.xv.items.len > 0 and self.xv.items[self.xv.items.len - 1] >= time) return;
-            if (self.xv.items.len > 0) {
-                if (self.xv.items[self.xv.items.len - 1] >= time) {
-                    self.xv.clearRetainingCapacity();
-                    self.yv.clearRetainingCapacity();
-                }
-                try self.xv.append(allocator, @intCast(time - self.start_time));
-            } else {
-                self.start_time = time;
-                try self.xv.append(allocator, 0);
-            }
-            try self.yv.append(allocator, sample);
+            self.last_time = time;
+            self.xv.push(std.math.lossyCast(SampleType, time));
+            self.yv.push(sample);
         }
     };
 }
+
+const AudioChannelDebug = struct {
+    samples: DebugBuffer(i32),
+    amplitude_envelope: DebugBuffer(u32),
+    filter_envelope: DebugBuffer(u32),
+
+    pub fn init() !@This() {
+        return .{
+            .samples = try .init(),
+            .amplitude_envelope = try .init(),
+            .filter_envelope = try .init(),
+        };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.samples.deinit();
+        self.amplitude_envelope.deinit();
+        self.filter_envelope.deinit();
+    }
+};
 
 show_disabled_channels: bool = false,
 
@@ -97,23 +121,10 @@ selected_texture: struct {
 
 pixels: []u8 = undefined,
 
-audio_channels: [64]struct {
-    samples: DebugBuffer(i32) = .{},
-    amplitude_envelope: DebugBuffer(u32) = .{},
-    filter_envelope: DebugBuffer(u32) = .{},
+audio_channels: []AudioChannelDebug,
 
-    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-        self.samples.xv.deinit(allocator);
-        self.samples.yv.deinit(allocator);
-        self.amplitude_envelope.xv.deinit(allocator);
-        self.amplitude_envelope.yv.deinit(allocator);
-        self.filter_envelope.xv.deinit(allocator);
-        self.filter_envelope.yv.deinit(allocator);
-    }
-} = @splat(.{}),
-
-dsp_inputs: [16]DebugBuffer(i32) = @splat(.{}),
-dsp_outputs: [16]DebugBuffer(i32) = @splat(.{}),
+dsp_inputs: [16]DebugBuffer(i32) = undefined,
+dsp_outputs: [16]DebugBuffer(i32) = undefined,
 
 _allocator: std.mem.Allocator,
 _gctx: *zgpu.GraphicsContext,
@@ -175,6 +186,7 @@ fn text_highlighted(b: bool, comptime fmt: []const u8, args: anytype) void {
 
 pub fn init(d: *Deecy) !@This() {
     var self = @This(){
+        .audio_channels = try d._allocator.alloc(AudioChannelDebug, 64),
         ._allocator = d._allocator,
         ._gctx = d.gctx,
     };
@@ -198,6 +210,13 @@ pub fn init(d: *Deecy) !@This() {
     self.pixels = try self._allocator.alloc(u8, (vram_width * vram_height) * 4);
 
     try self.init_texture_views(d);
+
+    for (self.audio_channels) |*c|
+        c.* = try .init();
+    for (0..self.dsp_inputs.len) |i| {
+        self.dsp_inputs[i] = try .init();
+        self.dsp_outputs[i] = try .init();
+    }
 
     return self;
 }
@@ -223,21 +242,17 @@ fn init_texture_views(self: *@This(), d: *Deecy) !void {
 }
 
 pub fn deinit(self: *@This()) void {
-    for (0..self.audio_channels.len) |i|
-        self.audio_channels[i].deinit(self._allocator);
-
     for (self.renderer_texture_views) |views| {
         for (views) |view|
             self._gctx.releaseResource(view);
         self._allocator.free(views);
     }
 
-    for (0..16) |i| {
-        self.dsp_inputs[i].xv.deinit(self._allocator);
-        self.dsp_inputs[i].yv.deinit(self._allocator);
-        self.dsp_outputs[i].xv.deinit(self._allocator);
-        self.dsp_outputs[i].yv.deinit(self._allocator);
-    }
+    for (self.audio_channels) |*c| c.deinit();
+    self._allocator.free(self.audio_channels);
+
+    for (&self.dsp_inputs) |*i| i.deinit();
+    for (&self.dsp_outputs) |*o| o.deinit();
 
     self._gctx.releaseResource(self.vram_texture_view);
     self._gctx.releaseResource(self.vram_texture);
@@ -925,12 +940,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             zgui.plot.endPlot();
                         }
                     } else {
-                        try self.audio_channels[i].samples.add(self._allocator, dc_time, state.curr_sample);
+                        self.audio_channels[i].samples.add(dc_time, state.curr_sample);
                         if (zgui.plot.beginPlot("Samples", .{ .flags = plot_flags })) {
-                            zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
+                            zgui.plot.setupAxis(.x1, .{ .flags = .{ .auto_fit = true } });
                             zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) });
                             zgui.plot.setupFinish();
-                            zgui.plot.plotLine("samples", i32, .{ .xv = self.audio_channels[i].samples.xv.items, .yv = self.audio_channels[i].samples.yv.items });
+                            zgui.plot.plotLine("samples", i32, .{ .xv = self.audio_channels[i].samples.xv.view(), .yv = self.audio_channels[i].samples.yv.view() });
                             zgui.plot.endPlot();
                         }
                     }
@@ -949,12 +964,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         channel.amp_env_1.sustain_rate,
                         channel.amp_env_2.release_rate,
                     });
-                    try self.audio_channels[i].amplitude_envelope.add(self._allocator, dc_time, state.amp_env_level);
+                    self.audio_channels[i].amplitude_envelope.add(dc_time, state.amp_env_level);
                     if (zgui.plot.beginPlot("Amplitude Envelope", .{ .flags = plot_flags, .h = 128.0 })) {
-                        zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
+                        zgui.plot.setupAxis(.x1, .{ .flags = .{ .auto_fit = true } });
                         zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 0x400 });
                         zgui.plot.setupFinish();
-                        zgui.plot.plotLine("attenuation", u32, .{ .xv = self.audio_channels[i].amplitude_envelope.xv.items, .yv = self.audio_channels[i].amplitude_envelope.yv.items });
+                        zgui.plot.plotLine("attenuation", u32, .{ .xv = self.audio_channels[i].amplitude_envelope.xv.view(), .yv = self.audio_channels[i].amplitude_envelope.yv.view() });
                         zgui.plot.endPlot();
                     }
 
@@ -962,12 +977,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     zgui.sameLine(.{});
                     zgui.text("{s: >7} - level: {X: >4} - Q: {X: >2}", .{ @tagName(state.filter_env_state), state.filter_env_level, channel.env_settings.q });
                     zgui.text("Steps: {X: >4} - {X: >4} - {X: >4} - {X: >4} - {X: >4}", .{ channel.flv0, channel.flv1, channel.flv2, channel.flv3, channel.flv4 });
-                    try self.audio_channels[i].filter_envelope.add(self._allocator, dc_time, state.filter_env_level);
+                    self.audio_channels[i].filter_envelope.add(dc_time, state.filter_env_level);
                     if (zgui.plot.beginPlot("Filter Envelope", .{ .flags = plot_flags, .h = 128.0 })) {
-                        zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
+                        zgui.plot.setupAxis(.x1, .{ .flags = .{ .auto_fit = true } });
                         zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 0x1FFF });
                         zgui.plot.setupFinish();
-                        zgui.plot.plotLine("level", u32, .{ .xv = self.audio_channels[i].filter_envelope.xv.items, .yv = self.audio_channels[i].filter_envelope.yv.items });
+                        zgui.plot.plotLine("level", u32, .{ .xv = self.audio_channels[i].filter_envelope.xv.view(), .yv = self.audio_channels[i].filter_envelope.yv.view() });
                         zgui.plot.endPlot();
                     }
                 }
@@ -996,12 +1011,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 zgui.pushIntId(i);
                 defer zgui.popId();
                 zgui.text("MIXS #{d}", .{i});
-                try self.dsp_inputs[i].add(self._allocator, dc_time, dc.aica.dsp.read_mixs(i));
+                self.dsp_inputs[i].add(dc_time, dc.aica.dsp.read_mixs(i));
                 if (zgui.plot.beginPlot("DSPInput", .{ .flags = zgui.plot.Flags.canvas_only, .h = 128.0 })) {
-                    zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
+                    zgui.plot.setupAxis(.x1, .{ .flags = .{ .auto_fit = true } });
                     zgui.plot.setupAxisLimits(.y1, .{ .min = @floatFromInt(std.math.minInt(i20)), .max = @floatFromInt(std.math.maxInt(i20)) });
                     zgui.plot.setupFinish();
-                    zgui.plot.plotLine("Input", i32, .{ .xv = self.dsp_inputs[i].xv.items, .yv = self.dsp_inputs[i].yv.items });
+                    zgui.plot.plotLine("Input", i32, .{ .xv = self.dsp_inputs[i].xv.view(), .yv = self.dsp_inputs[i].yv.view() });
                     zgui.plot.endPlot();
                 }
             }
@@ -1012,12 +1027,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 defer zgui.popId();
                 const mix = dc.aica.get_dsp_mix_register(@intCast(i)).*;
                 zgui.text("EFREG #{d} (EFSDL: {X}, EFPAN: {X})", .{ i, mix.efsdl, mix.efpan });
-                try self.dsp_outputs[i].add(self._allocator, dc_time, dc.aica.dsp.read_efreg(i));
+                self.dsp_outputs[i].add(dc_time, dc.aica.dsp.read_efreg(i));
                 if (zgui.plot.beginPlot("DSPOutput", .{ .flags = zgui.plot.Flags.canvas_only, .h = 128.0 })) {
-                    zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
+                    zgui.plot.setupAxis(.x1, .{ .flags = .{ .auto_fit = true } });
                     zgui.plot.setupAxisLimits(.y1, .{ .min = @floatFromInt(std.math.minInt(i16)), .max = @floatFromInt(std.math.maxInt(i16)) });
                     zgui.plot.setupFinish();
-                    zgui.plot.plotLine("Output", i32, .{ .xv = self.dsp_outputs[i].xv.items, .yv = self.dsp_outputs[i].yv.items });
+                    zgui.plot.plotLine("Output", i32, .{ .xv = self.dsp_outputs[i].xv.view(), .yv = self.dsp_outputs[i].yv.view() });
                     zgui.plot.endPlot();
                 }
             }

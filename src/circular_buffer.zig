@@ -34,14 +34,14 @@ pub fn CircularBuffer(comptime T: type) type {
                         _ = VirtualFree(reserve, 0, MEM_RELEASE);
 
                         const first = MapViewOfFileEx(fd, FILE_MAP_ALL_ACCESS, 0, 0, byte_capacity, reserve) orelse continue;
-                        _ = MapViewOfFileEx(fd, FILE_MAP_ALL_ACCESS, 0, 0, byte_capacity, @as([*]u8, @ptrCast(reserve))[byte_capacity..].ptr) orelse {
+                        _ = MapViewOfFileEx(fd, FILE_MAP_ALL_ACCESS, 0, 0, byte_capacity, &@as([*]u8, @ptrCast(reserve))[byte_capacity]) orelse {
                             _ = UnmapViewOfFile(first);
                             continue;
                         };
 
                         return .{
                             .capacity = capacity,
-                            .buffer = std.mem.bytesAsSlice(T, @as([*]u8, @ptrCast(reserve))[0 .. 2 * byte_capacity]),
+                            .buffer = @alignCast(std.mem.bytesAsSlice(T, @as([*]u8, @ptrCast(reserve))[0 .. 2 * byte_capacity])),
                         };
                     }
                 },
@@ -82,6 +82,11 @@ pub fn CircularBuffer(comptime T: type) type {
                 .linux => std.posix.munmap(std.mem.sliceAsBytes(self.buffer)),
                 else => @compileError("Unsupported OS"),
             }
+        }
+
+        pub fn clear(self: *@This()) void {
+            self.read_offset = 0;
+            self.write_offset = 0;
         }
 
         pub fn push(self: *@This(), data: T) void {
