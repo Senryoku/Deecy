@@ -1589,12 +1589,13 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
     if (Deecy.comptime_config.gpu_profiling) {
         if (zgui.begin("Renderer Stats", .{})) {
-            zgui.text("Last Frame: \n{f}", .{d.renderer.profiling.history.last_frame});
+            if (zgui.collapsingHeader("Last Frame Complete Stats", .{ .default_open = false }))
+                zgui.text("{f}", .{d.renderer.profiling.history.last_frame});
             for (d.renderer.profiling.history.passes, 0..) |pass, i| {
                 if (i > 0 and pass.@"opaque".view().len == 0) continue;
                 zgui.pushIntId(@intCast(i));
                 defer zgui.popId();
-                if (zgui.plot.beginPlot("Render Pass", .{ .flags = .{ .no_inputs = true } })) {
+                if (zgui.plot.beginPlot("Render Pass", .{ .flags = .{} })) {
                     defer zgui.plot.endPlot();
                     zgui.plot.setupAxis(.x1, .{ .label = "Frame", .flags = .{ .auto_fit = true } });
                     zgui.plot.setupAxis(.y1, .{ .label = "Time (ms)", .flags = .{ .auto_fit = true } });

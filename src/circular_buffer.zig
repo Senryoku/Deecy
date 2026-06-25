@@ -46,7 +46,7 @@ pub fn CircularBuffer(comptime T: type) type {
                     }
                 },
                 .linux => {
-                    const fd = try std.posix.memfd_create("Ring Buffer", 0);
+                    const fd = try std.posix.memfd_create("Circular Buffer", 0);
                     defer _ = std.os.linux.close(fd);
                     switch (std.os.linux.errno(std.os.linux.ftruncate(fd, @intCast(byte_capacity)))) {
                         .SUCCESS => {},

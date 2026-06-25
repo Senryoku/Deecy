@@ -172,17 +172,31 @@ pub const RenderPassTimestamp = enum(u32) {
                 try writer.print("[{d: >2}]   Total Translucent: {f}\n", .{ i, self.passes[i].translucent_pass() });
                 try writer.print("[{d: >2}]     Pre-Sort: {f}\n", .{ i, self.passes[i].presorted_translucent });
                 const summed_slices = self.passes[i].summed_slices();
-                try writer.print("[{d: >2}]     Summed Modifier Volumes: {f}\n", .{ i, summed_slices.modifier_volumes });
-                try writer.print("[{d: >2}]     Summed Merge Modifier Volumes: {f}\n", .{ i, summed_slices.merge_modifier_volumes });
-                try writer.print("[{d: >2}]     Summed Fragments: {f}\n", .{ i, summed_slices.fragments });
-                try writer.print("[{d: >2}]     Summed Blend: {f}\n", .{ i, summed_slices.blend });
-                for (0..self.passes[i].slice_count) |j| {
-                    const slice = self.passes[i].slices[j];
-                    try writer.print("[{d: >2}]     [{d: >3}] Modifier Volumes: {f}\n", .{ i, j, slice.modifier_volumes });
-                    try writer.print("[{d: >2}]     [{d: >3}] Merge Modifier Volumes: {f}\n", .{ i, j, slice.merge_modifier_volumes });
-                    try writer.print("[{d: >2}]     [{d: >3}] Fragments: {f}\n", .{ i, j, slice.fragments });
-                    try writer.print("[{d: >2}]     [{d: >3}] Blend: {f}\n", .{ i, j, slice.blend });
+                const slices = self.passes[i].slices[0..self.passes[i].slice_count];
+                try writer.print("[{d: >2}]     Modifier Volumes: {f} (", .{ i, summed_slices.modifier_volumes });
+                for (slices, 0..) |slice, j| {
+                    if (j > 0) try writer.print(", ", .{});
+                    try writer.print("{f}", .{slice.modifier_volumes});
                 }
+                try writer.print(")\n", .{});
+                try writer.print("[{d: >2}]     Merge Modifier Volumes: {f} (", .{ i, summed_slices.merge_modifier_volumes });
+                for (slices, 0..) |slice, j| {
+                    if (j > 0) try writer.print(", ", .{});
+                    try writer.print("{f}", .{slice.merge_modifier_volumes});
+                }
+                try writer.print(")\n", .{});
+                try writer.print("[{d: >2}]     Fragments: {f} (", .{ i, summed_slices.fragments });
+                for (slices, 0..) |slice, j| {
+                    if (j > 0) try writer.print(", ", .{});
+                    try writer.print("{f}", .{slice.fragments});
+                }
+                try writer.print(")\n", .{});
+                try writer.print("[{d: >2}]     Blend: {f} (", .{ i, summed_slices.blend });
+                for (slices, 0..) |slice, j| {
+                    if (j > 0) try writer.print(", ", .{});
+                    try writer.print("{f}", .{slice.blend});
+                }
+                try writer.print(")\n", .{});
             }
         }
     };

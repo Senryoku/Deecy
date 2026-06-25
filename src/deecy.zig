@@ -759,7 +759,7 @@ fn audio_init(self: *@This()) !void {
 }
 
 fn ui_init(self: *@This()) !void {
-    zgui.init(self._allocator, self.io);
+    zgui.init(self._allocator);
     zgui.io.setConfigFlags(.{ .dock_enable = true });
 
     _ = zgui.io.addFontFromMemory(DefaultFont, std.math.floor(16.0 * self.scale_factor));
@@ -1705,7 +1705,7 @@ pub fn draw_ui(self: *@This()) !void {
         const fb_size = self.window.getFramebufferSize();
         zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
     }
-    _ = zgui.DockSpaceOverViewport(0, zgui.getMainViewport(), .{ .passthru_central_node = true });
+    _ = zgui.dockSpaceOverViewport(0, zgui.getMainViewport(), .{ .passthru_central_node = true });
 
     self.ui.draw_vmu_screens(self.display_ui);
 
