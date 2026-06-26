@@ -73,6 +73,7 @@ selected_strip_focus: bool = false, // Element has been clicked and remain in fo
 selected_strip_list: Holly.ListType = .Opaque,
 selected_strip_index: u32 = 0xFFFFFFFF,
 selected_strip_pass_idx: usize = 0,
+selected_strip_scroll_request: bool = false,
 
 // Vertex Debug Display
 selected_vertex_focus: bool = false,
@@ -1255,8 +1256,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             }
         }
 
-        var buffer: [256]u8 = @splat(0);
+        zgui.textColored(.{ 0.5, 0.5, 0.5, 1.0 }, "Click on the scene to cycle through strips, or hover the list to see the corresponding strip in the scene.", .{});
+        if (!zgui.io.getWantCaptureMouse() and (zgui.isMouseClicked(.left) or zgui.isMouseClicked(.right))) {
+            self.select_strip(d, d.renderer.ta_lists.items);
+        }
 
+        var buffer: [256]u8 = @splat(0);
         // NOTE: We're looking at the last list used during a START_RENDER.
         for (d.renderer.render_passes.items, 0..) |render_pass, pass_idx| {
             zgui.text("Pass #{d}:", .{pass_idx});
@@ -1266,6 +1271,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             defer zgui.unindent(.{});
             zgui.pushIntId(@intCast(pass_idx));
             defer zgui.popId();
+            if (self.selected_strip_focus) zgui.setNextItemOpen(.{ .is_open = true });
             if (zgui.collapsingHeader("Polygons", .{ .frame_padding = true })) {
                 zgui.indent(.{});
                 inline for (.{ Holly.ListType.Opaque, Holly.ListType.Translucent, Holly.ListType.PunchThrough }) |list_type| {
@@ -1273,6 +1279,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     const name = @tagName(@as(Holly.ListType, list_type));
                     const header = try std.fmt.bufPrintZ(&buffer, name ++ " ({d})###" ++ name, .{list.vertex_strips.items.len});
 
+                    const is_list_selected = self.selected_strip_focus and self.selected_strip_list == list_type;
+                    if (is_list_selected) zgui.setNextItemOpen(.{ .is_open = true });
                     if (zgui.collapsingHeader(header, .{})) {
                         zgui.pushIntId(@intFromEnum(list_type));
                         defer zgui.popId();
@@ -1286,10 +1294,25 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             });
                             {
                                 zgui.beginGroup();
+
+                                const is_selected = is_list_selected and self.selected_strip_index == idx;
+                                if (is_selected) {
+                                    zgui.pushStyleColor1u(.{ .idx = .header, .c = common.DCBlueU });
+                                    zgui.pushStyleColor1u(.{ .idx = .header_active, .c = common.DCBlueU });
+                                    zgui.pushStyleColor1u(.{ .idx = .header_hovered, .c = common.DCBlueU });
+                                    if (self.selected_strip_scroll_request) {
+                                        self.selected_strip_scroll_request = false;
+                                        zgui.setScrollHereY(.{});
+                                        zgui.setNextItemOpen(.{ .is_open = true });
+                                    }
+                                }
                                 const node_open = zgui.treeNodeFlags(strip_header, .{
                                     .open_on_double_click = true,
                                     .open_on_arrow = true,
+                                    .selected = is_selected,
+                                    .framed = is_selected,
                                 });
+                                if (is_selected) zgui.popStyleColor(.{ .count = 3 });
                                 if (zgui.isItemClicked(.left) and !zgui.isItemToggledOpen()) {
                                     self.selected_strip_focus = true;
                                     self.selected_strip_list = list_type;
@@ -1636,38 +1659,7 @@ fn draw_modifier_volume(d: *Deecy, draw_list: zgui.DrawList, volume: *const Holl
 fn draw_overlay(self: *@This(), d: *Deecy) void {
     const draw_list = zgui.getBackgroundDrawList();
 
-    const native_resolution = [2]f32{ 640.0, 480.0 };
-    const aspect_ratio = native_resolution[0] / native_resolution[1];
-    const fb_size = d.window.getFramebufferSize();
-    const window_size = [2]f32{ @floatFromInt(fb_size[0]), @floatFromInt(fb_size[1]) };
-    const resolution = [2]f32{ @floatFromInt(d.renderer.resolution.width), @floatFromInt(d.renderer.resolution.height) };
-
-    const size = switch (d.config.renderer.display_mode) {
-        .Center, .Fit => if (d.config.renderer.display_mode == .Fit or resolution[0] > window_size[0] or resolution[1] > window_size[1])
-            (if (window_size[0] / window_size[1] < aspect_ratio) [2]f32{
-                window_size[0],
-                window_size[0] / aspect_ratio,
-            } else [2]f32{
-                aspect_ratio * window_size[1],
-                window_size[1],
-            })
-        else
-            resolution,
-        .Stretch => window_size,
-    };
-    const scaler_ctl = d.dc.gpu.read_register(Holly.SCALER_CTL, .SCALER_CTL);
-    // Scale of inner render compared to native DC resolution.
-    const scale = [2]f32{
-        scaler_ctl.get_x_scale_factor() * size[0] / native_resolution[0],
-        scaler_ctl.get_y_scale_factor() * size[1] / native_resolution[1],
-    };
-    const min = switch (d.config.renderer.display_mode) {
-        .Stretch => [2]f32{ 0, 0 },
-        else => [2]f32{
-            window_size[0] / 2.0 - size[0] / 2.0,
-            window_size[1] / 2.0 - size[1] / 2.0,
-        },
-    };
+    const min, const scale = dc_to_window_transform(d);
 
     if (self.draw_wireframe) {
         for (d.renderer.ta_lists.items) |list| {
@@ -1899,4 +1891,145 @@ fn display_vertex_data(self: *@This(), vertex: *const Holly.VertexParameter) voi
     if (!self.selected_vertex_focus and zgui.isItemHovered(.{})) {
         self.selected_vertex = position[0..2].*;
     }
+}
+
+fn select_strip(self: *@This(), d: *Deecy, lists: []Holly.TALists) void {
+    var mouse = zgui.getMousePos();
+    const min, const scale = dc_to_window_transform(d);
+    mouse[0] = (mouse[0] - min[0]) / scale[0];
+    mouse[1] = (mouse[1] - min[1]) / scale[1];
+    if (mouse[0] < 0 or mouse[0] > 640 or mouse[1] < 0 or mouse[1] > 480) return;
+
+    var previous_hit: ?struct { list: Holly.ListType, pass_idx: usize, strip_idx: u32 } = null;
+    var passed_previous_hit = true;
+
+    if (self.selected_strip_focus and self.selected_strip_pass_idx < lists.len and self.selected_strip_index < lists[self.selected_strip_pass_idx].get_list(self.selected_strip_list).vertex_strips.items.len) {
+        const l = lists[self.selected_strip_pass_idx].get_list(self.selected_strip_list);
+        const parameters = l.vertex_parameters.items;
+        const strip = l.vertex_strips.items[self.selected_strip_index];
+        if (point_in_strip(parameters, strip, mouse)) {
+            previous_hit = .{ .list = self.selected_strip_list, .pass_idx = self.selected_strip_pass_idx, .strip_idx = self.selected_strip_index };
+            passed_previous_hit = false;
+        }
+    }
+
+    var first_hit: ?struct { list: Holly.ListType, pass_idx: usize, strip_idx: u32 } = null;
+
+    for (lists, 0..) |*list, pass_idx| {
+        inline for (.{ Holly.ListType.Opaque, Holly.ListType.Translucent, Holly.ListType.PunchThrough }) |list_type| {
+            const l = list.get_list(list_type);
+            const parameters = l.vertex_parameters.items;
+            for (l.vertex_strips.items, 0..) |strip, strip_idx| {
+                if (point_in_strip(parameters, strip, mouse)) {
+                    if (first_hit == null)
+                        first_hit = .{ .list = list_type, .pass_idx = @intCast(pass_idx), .strip_idx = @intCast(strip_idx) };
+                    // Look for the next match
+                    if (previous_hit) |prev| {
+                        if (prev.list == list_type and prev.pass_idx == pass_idx and prev.strip_idx == strip_idx) {
+                            passed_previous_hit = true;
+                            continue;
+                        }
+                        if (!passed_previous_hit) continue;
+                    }
+                    self.selected_strip_focus = true;
+                    self.selected_strip_list = list_type;
+                    self.selected_strip_index = @intCast(strip_idx);
+                    self.selected_strip_pass_idx = pass_idx;
+                    self.selected_strip_scroll_request = true;
+                    return;
+                }
+            }
+        }
+    }
+
+    // `previous_hit` was invalid (not found), or the last in the list.
+    if (first_hit) |hit| {
+        self.selected_strip_focus = true;
+        self.selected_strip_list = hit.list;
+        self.selected_strip_index = hit.strip_idx;
+        self.selected_strip_pass_idx = hit.pass_idx;
+        self.selected_strip_scroll_request = true;
+    }
+}
+
+fn sign(a: [2]f32, b: [2]f32, c: [2]f32) f32 {
+    return (a[0] - c[0]) * (b[1] - c[1]) - (a[1] - c[1]) * (b[0] - c[0]);
+}
+
+fn point_in_triangle(triangle: [3][2]f32, point: [2]f32) bool {
+    const d1 = sign(point, triangle[0], triangle[1]);
+    const d2 = sign(point, triangle[1], triangle[2]);
+    const d3 = sign(point, triangle[2], triangle[0]);
+    return (d1 > 0 and d2 > 0 and d3 > 0) or (d1 < 0 and d2 < 0 and d3 < 0);
+}
+
+fn point_in_parallelogram(parallelogram: [4][2]f32, point: [2]f32) bool {
+    const d1 = sign(point, parallelogram[0], parallelogram[1]);
+    const d2 = sign(point, parallelogram[1], parallelogram[2]);
+    const d3 = sign(point, parallelogram[2], parallelogram[3]);
+    const d4 = sign(point, parallelogram[3], parallelogram[0]);
+    return (d1 > 0 and d2 > 0 and d3 > 0 and d4 > 0) or (d1 < 0 and d2 < 0 and d3 < 0 and d4 < 0);
+}
+
+fn point_in_strip(parameters: []Holly.VertexParameter, strip: Holly.VertexStrip, point: [2]f32) bool {
+    switch (strip.global_parameters.polygon) {
+        .Sprite => {
+            const pos = parameters[strip.vertex_parameter_index + 0].sprite_positions();
+            if (point_in_parallelogram([4][2]f32{ pos[0][0..2].*, pos[1][0..2].*, pos[2][0..2].*, pos[3][0..2].* }, point))
+                return true;
+        },
+        else => {
+            var triangle = [3][2]f32{
+                parameters[strip.vertex_parameter_index + 0].position()[0..2].*,
+                parameters[strip.vertex_parameter_index + 1].position()[0..2].*,
+                parameters[strip.vertex_parameter_index + 2].position()[0..2].*,
+            };
+            if (point_in_triangle(triangle, point))
+                return true;
+            for (3..strip.vertex_parameter_count) |i| {
+                triangle[0] = triangle[1];
+                triangle[1] = triangle[2];
+                triangle[2] = parameters[strip.vertex_parameter_index + i].position()[0..2].*;
+                if (point_in_triangle(triangle, point))
+                    return true;
+            }
+        },
+    }
+    return false;
+}
+
+fn dc_to_window_transform(d: *Deecy) struct { [2]f32, [2]f32 } {
+    const native_resolution = [2]f32{ 640.0, 480.0 };
+    const aspect_ratio = native_resolution[0] / native_resolution[1];
+    const fb_size = d.window.getFramebufferSize();
+    const window_size = [2]f32{ @floatFromInt(fb_size[0]), @floatFromInt(fb_size[1]) };
+    const resolution = [2]f32{ @floatFromInt(d.renderer.resolution.width), @floatFromInt(d.renderer.resolution.height) };
+
+    const size = switch (d.config.renderer.display_mode) {
+        .Center, .Fit => if (d.config.renderer.display_mode == .Fit or resolution[0] > window_size[0] or resolution[1] > window_size[1])
+            (if (window_size[0] / window_size[1] < aspect_ratio) [2]f32{
+                window_size[0],
+                window_size[0] / aspect_ratio,
+            } else [2]f32{
+                aspect_ratio * window_size[1],
+                window_size[1],
+            })
+        else
+            resolution,
+        .Stretch => window_size,
+    };
+    const scaler_ctl = d.dc.gpu.read_register(Holly.SCALER_CTL, .SCALER_CTL);
+    // Scale of inner render compared to native DC resolution.
+    const scale = [2]f32{
+        scaler_ctl.get_x_scale_factor() * size[0] / native_resolution[0],
+        scaler_ctl.get_y_scale_factor() * size[1] / native_resolution[1],
+    };
+    const min = switch (d.config.renderer.display_mode) {
+        .Stretch => [2]f32{ 0, 0 },
+        else => [2]f32{
+            window_size[0] / 2.0 - size[0] / 2.0,
+            window_size[1] / 2.0 - size[1] / 2.0,
+        },
+    };
+    return .{ min, scale };
 }
