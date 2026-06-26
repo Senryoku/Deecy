@@ -11,13 +11,12 @@ pub fn CircularBuffer(comptime T: type) type {
         read_offset: usize = 0,
         write_offset: usize = 0,
 
-        /// `capacity` * sizeof(T) must be a multiple of page size.
+        /// `capacity` * sizeof(T) must be a multiple of page size on Linux (most likely 4k) or allocation granularity on Windows (most likely 64k).
         pub fn init(capacity: usize) !@This() {
             const byte_capacity = capacity * @sizeOf(T);
-            if (byte_capacity % std.heap.pageSize() != 0) return error.InvalidSize;
+            if (byte_capacity % allocation_granularity() != 0) return error.InvalidSize;
             switch (builtin.os.tag) {
                 .windows => {
-                    // FIXME: UNTESTED!
                     const fd = CreateFileMappingA(
                         std.os.windows.INVALID_HANDLE_VALUE,
                         null,
@@ -29,7 +28,7 @@ pub fn CircularBuffer(comptime T: type) type {
                     defer _ = std.os.windows.CloseHandle(fd);
 
                     // FIXME: Use placeholders instead of the retry loop...
-                    while (true) {
+                    for (0..8) |_| {
                         const reserve = VirtualAlloc(null, 2 * byte_capacity, MEM_RESERVE, PAGE_NOACCESS) orelse return error.VirtualAllocError;
                         _ = VirtualFree(reserve, 0, MEM_RELEASE);
 
@@ -44,6 +43,8 @@ pub fn CircularBuffer(comptime T: type) type {
                             .buffer = @alignCast(std.mem.bytesAsSlice(T, @as([*]u8, @ptrCast(reserve))[0 .. 2 * byte_capacity])),
                         };
                     }
+                    std.log.err("Failed to allocate Circular Buffer: {}", .{std.os.windows.GetLastError()});
+                    return error.MapViewOfFileExError;
                 },
                 .linux => {
                     const fd = try std.posix.memfd_create("Circular Buffer", 0);
@@ -66,10 +67,10 @@ pub fn CircularBuffer(comptime T: type) type {
         }
 
         /// Initializes the buffer with at least `capacity` elements.
-        /// Actual capacity may be greater to be a multiple of page size.
+        /// Actual capacity may be greater to be a multiple of the required alignement.
         pub fn initAtLeast(capacity: usize) !@This() {
             const byte_capacity = capacity * @sizeOf(T);
-            return init(std.mem.alignForward(usize, byte_capacity, std.heap.pageSize()) / @sizeOf(T));
+            return init(std.mem.alignForward(usize, byte_capacity, allocation_granularity()) / @sizeOf(T));
         }
 
         pub fn deinit(self: *@This()) void {
@@ -109,6 +110,18 @@ pub fn CircularBuffer(comptime T: type) type {
         pub fn view(self: *const @This()) []const T {
             return self.buffer[self.read_offset..self.write_offset];
         }
+
+        fn allocation_granularity() usize {
+            switch (builtin.os.tag) {
+                .windows => {
+                    var system_info: SYSTEM_INFO = undefined;
+                    GetSystemInfo(&system_info);
+                    return system_info.dwAllocationGranularity;
+                },
+                .linux => return std.heap.pageSize(),
+                else => @compileError("Unsupported OS"),
+            }
+        }
     };
 }
 
@@ -117,6 +130,29 @@ pub const MEM_RESERVE: std.os.windows.DWORD = 0x00002000;
 pub const MEM_RELEASE: std.os.windows.DWORD = 0x00008000;
 pub const PAGE_NOACCESS: std.os.windows.DWORD = 0x01;
 pub const PAGE_READWRITE: std.os.windows.DWORD = 0x04;
+
+pub const SYSTEM_INFO = extern struct {
+    id: extern union {
+        dwOemId: std.os.windows.DWORD,
+        other: extern struct {
+            wProcessorArchitecture: std.os.windows.WORD,
+            wReserved: std.os.windows.WORD,
+        },
+    },
+    dwPageSize: std.os.windows.DWORD,
+    lpMinimumApplicationAddress: std.os.windows.LPVOID,
+    lpMaximumApplicationAddress: std.os.windows.LPVOID,
+    dwActiveProcessorMask: std.os.windows.DWORD_PTR,
+    dwNumberOfProcessors: std.os.windows.DWORD,
+    dwProcessorType: std.os.windows.DWORD,
+    dwAllocationGranularity: std.os.windows.DWORD,
+    wProcessorLevel: std.os.windows.WORD,
+    wProcessorRevision: std.os.windows.WORD,
+};
+
+pub extern "kernel32" fn GetSystemInfo(
+    lpSystemInfo: *SYSTEM_INFO,
+) callconv(.winapi) void;
 
 pub extern "kernel32" fn CreateFileMappingA(
     hFile: std.os.windows.HANDLE,
