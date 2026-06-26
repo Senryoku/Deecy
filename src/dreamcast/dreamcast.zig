@@ -572,18 +572,25 @@ pub const Dreamcast = struct {
     }
     pub inline fn read_hw_register(self: *const @This(), comptime T: type, r: HardwareRegister) T {
         switch (r) {
-            .SB_GDLEND => {
+            .SB_GDSTARD, .SB_GDLEND => {
                 var it = @constCast(self).scheduled_events.iterator();
                 while (it.next()) |event| {
                     if (event.event == .EndGDDMA) {
-                        const len = self.hw_register(u32, .SB_GDLEN).* & 0x01FFFFE0;
-                        const value: T = if (event.trigger_cycle >= self._global_cycles)
-                            @truncate(len)
-                        else
-                            @intCast((len * (event.trigger_cycle - self._global_cycles)) / GDROM.dma_cycles(len));
-                        log.info("Read({}) to SB_GDLEND while DMA is in progress: {X}", .{ T, value });
-                        self.hw_register(T, .SB_GDLEN).* = value;
-                        return value;
+                        const start = self.read_hw_register(u32, .SB_GDSTAR) & 0x01FFFFE0;
+                        const len = self.read_hw_register(u32, .SB_GDLEN) & 0x01FFFFE0;
+                        const value: u32 = if (event.trigger_cycle <= self._global_cycles) // Done but not processed yet.
+                            len
+                        else b: { // In progress
+                            // FIXME: Jet Set Radio issue #95.
+                            break :b len;
+                            // const remaining_cycles = event.trigger_cycle - self._global_cycles;
+                            // const transfered = std.mem.alignForward(usize, (len * remaining_cycles) / GDROM.dma_cycles(len), 32);
+                            // break :b @intCast(transfered);
+                        };
+                        self.hw_register(u32, .SB_GDSTARD).* = start + value;
+                        self.hw_register(u32, .SB_GDLEND).* = value;
+                        log.warn("Read({}) to {} while DMA is in progress: SB_GDSTARD={X}, SB_GDLEND={X}", .{ T, r, self.hw_register(u32, .SB_GDSTARD).*, self.hw_register(u32, .SB_GDLEND).* });
+                        return self.hw_register(T, r).*;
                     }
                 }
             },
@@ -1110,11 +1117,12 @@ pub const Dreamcast = struct {
     }
 
     fn end_gd_dma(self: *@This()) void {
+        const start = self.read_hw_register(u32, .SB_GDSTAR) & 0x01FFFFE0;
         const len = self.read_hw_register(u32, .SB_GDLEN) & 0x01FFFFE0;
         self.cpu.end_dmac(0);
         self.hw_register(u32, .SB_GDST).* = 0;
         self.hw_register(u32, .SB_GDLEND).* = len;
-        self.hw_register(u32, .SB_GDSTARD).* += len;
+        self.hw_register(u32, .SB_GDSTARD).* = start + len;
         self.gdrom.on_dma_end(self);
     }
 
