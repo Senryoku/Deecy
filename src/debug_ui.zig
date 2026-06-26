@@ -1658,36 +1658,38 @@ fn draw_strip(draw_list: zgui.DrawList, min: [2]f32, scale: [2]f32, display_list
     if (index < display_list.vertex_strips.items.len) {
         const parameters = display_list.vertex_parameters.items;
         const strip = &display_list.vertex_strips.items[index];
-        switch (strip.global_parameters.polygon) {
-            .Sprite => {
-                for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count) |i| {
-                    const pos = parameters[i].sprite_positions();
-                    draw_list.addTriangle(.{
-                        .p1 = add(mul(scale, pos[0][0..2].*), min),
-                        .p2 = add(mul(scale, pos[3][0..2].*), min),
-                        .p3 = add(mul(scale, pos[1][0..2].*), min),
-                        .col = color,
-                        .thickness = 1.0,
-                    });
-                    draw_list.addTriangle(.{
-                        .p1 = add(mul(scale, pos[3][0..2].*), min),
-                        .p2 = add(mul(scale, pos[2][0..2].*), min),
-                        .p3 = add(mul(scale, pos[1][0..2].*), min),
-                        .col = color,
-                        .thickness = 1.0,
-                    });
-                }
-            },
-            else => {
-                if (strip.vertex_parameter_count >= 3) {
-                    for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count - 2) |i| {
-                        const p1 = add(mul(scale, parameters[i].position()[0..2].*), min);
-                        const p2 = add(mul(scale, parameters[i + 1].position()[0..2].*), min);
-                        const p3 = add(mul(scale, parameters[i + 2].position()[0..2].*), min);
-                        draw_list.addTriangle(.{ .p1 = p1, .p2 = p2, .p3 = p3, .col = color, .thickness = 1.0 });
+        if (strip.vertex_parameter_index < parameters.len) {
+            switch (strip.global_parameters.polygon) {
+                .Sprite => {
+                    for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count) |i| {
+                        const pos = parameters[i].sprite_positions();
+                        draw_list.addTriangle(.{
+                            .p1 = add(mul(scale, pos[0][0..2].*), min),
+                            .p2 = add(mul(scale, pos[3][0..2].*), min),
+                            .p3 = add(mul(scale, pos[1][0..2].*), min),
+                            .col = color,
+                            .thickness = 1.0,
+                        });
+                        draw_list.addTriangle(.{
+                            .p1 = add(mul(scale, pos[3][0..2].*), min),
+                            .p2 = add(mul(scale, pos[2][0..2].*), min),
+                            .p3 = add(mul(scale, pos[1][0..2].*), min),
+                            .col = color,
+                            .thickness = 1.0,
+                        });
                     }
-                }
-            },
+                },
+                else => {
+                    if (strip.vertex_parameter_count >= 3) {
+                        for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count - 2) |i| {
+                            const p1 = add(mul(scale, parameters[i].position()[0..2].*), min);
+                            const p2 = add(mul(scale, parameters[i + 1].position()[0..2].*), min);
+                            const p3 = add(mul(scale, parameters[i + 2].position()[0..2].*), min);
+                            draw_list.addTriangle(.{ .p1 = p1, .p2 = p2, .p3 = p3, .col = color, .thickness = 1.0 });
+                        }
+                    }
+                },
+            }
         }
     }
 }
@@ -2001,26 +2003,22 @@ fn sign(a: [2]f32, b: [2]f32, c: [2]f32) f32 {
     return (a[0] - c[0]) * (b[1] - c[1]) - (a[1] - c[1]) * (b[0] - c[0]);
 }
 
-fn point_in_triangle(triangle: [3][2]f32, point: [2]f32) bool {
-    const d1 = sign(point, triangle[0], triangle[1]);
-    const d2 = sign(point, triangle[1], triangle[2]);
-    const d3 = sign(point, triangle[2], triangle[0]);
-    return (d1 > 0 and d2 > 0 and d3 > 0) or (d1 < 0 and d2 < 0 and d3 < 0);
-}
-
-fn point_in_parallelogram(parallelogram: [4][2]f32, point: [2]f32) bool {
-    const d1 = sign(point, parallelogram[0], parallelogram[1]);
-    const d2 = sign(point, parallelogram[1], parallelogram[2]);
-    const d3 = sign(point, parallelogram[2], parallelogram[3]);
-    const d4 = sign(point, parallelogram[3], parallelogram[0]);
-    return (d1 > 0 and d2 > 0 and d3 > 0 and d4 > 0) or (d1 < 0 and d2 < 0 and d3 < 0 and d4 < 0);
+fn point_in_polygon(comptime sides: u8, polygon: [sides][2]f32, point: [2]f32) bool {
+    var positive = true;
+    var negative = true;
+    inline for (0..sides) |i| {
+        const s = sign(point, polygon[i], polygon[(i + 1) % sides]);
+        positive = positive and s > 0;
+        negative = negative and s < 0;
+    }
+    return positive or negative;
 }
 
 fn point_in_strip(parameters: []Holly.VertexParameter, strip: Holly.VertexStrip, point: [2]f32) bool {
     switch (strip.global_parameters.polygon) {
         .Sprite => {
             const pos = parameters[strip.vertex_parameter_index + 0].sprite_positions();
-            if (point_in_parallelogram([4][2]f32{ pos[0][0..2].*, pos[1][0..2].*, pos[2][0..2].*, pos[3][0..2].* }, point))
+            if (point_in_polygon(4, [4][2]f32{ pos[0][0..2].*, pos[1][0..2].*, pos[2][0..2].*, pos[3][0..2].* }, point))
                 return true;
         },
         else => {
@@ -2029,13 +2027,13 @@ fn point_in_strip(parameters: []Holly.VertexParameter, strip: Holly.VertexStrip,
                 parameters[strip.vertex_parameter_index + 1].position()[0..2].*,
                 parameters[strip.vertex_parameter_index + 2].position()[0..2].*,
             };
-            if (point_in_triangle(triangle, point))
+            if (point_in_polygon(3, triangle, point))
                 return true;
             for (3..strip.vertex_parameter_count) |i| {
                 triangle[0] = triangle[1];
                 triangle[1] = triangle[2];
                 triangle[2] = parameters[strip.vertex_parameter_index + i].position()[0..2].*;
-                if (point_in_triangle(triangle, point))
+                if (point_in_polygon(3, triangle, point))
                     return true;
             }
         },
