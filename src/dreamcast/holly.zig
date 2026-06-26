@@ -2518,11 +2518,16 @@ pub const Holly = struct {
         };
     }
 
+    inline fn fb_pixel_addr(comptime pixel_size: u32, base_addr: u32, x: anytype, y: anytype, stride: u32) u32 {
+        var addr: u32 = (base_addr & VRAMMask) + @as(u32, @intCast(y)) * stride + pixel_size * @as(u32, @intCast(x));
+        if (base_addr & 0x1000000 == 0) addr = translate_32bit_path_addr(addr);
+        return addr;
+    }
+
     pub fn write_framebuffer(self: *@This(), parameters: WritebackParameters, size: struct { width: u32, height: u32 }, pixels: []const u8) void {
         const interlaced = parameters.scaler_ctl.interlace;
         const field = if (interlaced) parameters.scaler_ctl.field_select else 0;
         const fb_addr = if (field == 0) parameters.fb_w_sof1 else parameters.fb_w_sof2;
-        const access_32bit = fb_addr & 0x1000000 == 0;
 
         const stride = 8 * (parameters.fb_w_linestride & 0x1FF);
         const line_offset = field;
@@ -2530,35 +2535,49 @@ pub const Holly = struct {
         const line_count = size.height / line_stride;
         for (parameters.y_clip.min..@min(line_count, parameters.y_clip.max + 1)) |y| {
             for (parameters.x_clip.min..@min(size.width, parameters.x_clip.max + 1)) |x| {
-                const idx = ((line_stride * y + line_offset) * size.width + x) * 4;
+                const src = pixels[((line_stride * y + line_offset) * size.width + x) * 4 ..][0..4];
                 switch (parameters.w_ctrl.fb_packmode) {
                     .RGB565 => {
-                        var addr: u32 = (fb_addr & VRAMMask) + @as(u32, @intCast(y)) * stride + 2 * @as(u32, @intCast(x));
-                        if (access_32bit) addr = translate_32bit_path_addr(addr);
+                        const addr = fb_pixel_addr(2, fb_addr, x, y, stride);
                         var pixel: *Colors.Color16 = @ptrCast(@alignCast(&self.vram[addr]));
-                        pixel.rgb565.r = @truncate(pixels[idx + 2] >> 3);
-                        pixel.rgb565.g = @truncate(pixels[idx + 1] >> 2);
-                        pixel.rgb565.b = @truncate(pixels[idx + 0] >> 3);
+                        pixel.rgb565.r = @truncate(src[2] >> 3);
+                        pixel.rgb565.g = @truncate(src[1] >> 2);
+                        pixel.rgb565.b = @truncate(src[0] >> 3);
                     },
-                    .ARGB1555 => {
-                        var addr: u32 = (fb_addr & VRAMMask) + @as(u32, @intCast(y)) * stride + 2 * @as(u32, @intCast(x));
-                        if (access_32bit) addr = translate_32bit_path_addr(addr);
+                    .ARGB4444 => {
+                        const addr = fb_pixel_addr(2, fb_addr, x, y, stride);
                         var pixel: *Colors.Color16 = @ptrCast(@alignCast(&self.vram[addr]));
-                        pixel.argb1555.r = @truncate(pixels[idx + 2] >> 3);
-                        pixel.argb1555.g = @truncate(pixels[idx + 1] >> 3);
-                        pixel.argb1555.b = @truncate(pixels[idx + 0] >> 3);
-                        pixel.argb1555.a = 1;
+                        pixel.argb4444.a = @truncate(src[3] >> 4);
+                        pixel.argb4444.r = @truncate(src[2] >> 4);
+                        pixel.argb4444.g = @truncate(src[1] >> 4);
+                        pixel.argb4444.b = @truncate(src[0] >> 4);
+                    },
+                    .KRGB0555, .ARGB1555 => |pm| {
+                        const addr = fb_pixel_addr(2, fb_addr, x, y, stride);
+                        var pixel: *Colors.Color16 = @ptrCast(@alignCast(&self.vram[addr]));
+                        pixel.argb1555.r = @truncate(src[2] >> 3);
+                        pixel.argb1555.g = @truncate(src[1] >> 3);
+                        pixel.argb1555.b = @truncate(src[0] >> 3);
+                        pixel.argb1555.a = switch (pm) {
+                            .KRGB0555 => @truncate(parameters.w_ctrl.fb_kval >> 7),
+                            .ARGB1555 => if (src[3] >= parameters.w_ctrl.fb_alpha_threshold) 1 else 0,
+                            else => unreachable,
+                        };
                     },
                     .RGB888 => {
-                        var addr = (fb_addr & VRAMMask) + @as(u32, @intCast(y)) * stride + 3 * @as(u32, @intCast(x));
-                        if (access_32bit) addr = translate_32bit_path_addr(addr);
-                        self.vram[addr + 0] = pixels[idx + 2];
-                        self.vram[addr + 1] = pixels[idx + 1];
-                        self.vram[addr + 2] = pixels[idx + 0];
+                        const addr = fb_pixel_addr(3, fb_addr, x, y, stride);
+                        self.vram[addr + 0] = src[2];
+                        self.vram[addr + 1] = src[1];
+                        self.vram[addr + 2] = src[0];
                     },
-                    else => {
-                        std.log.warn("TODO: {t}", .{parameters.w_ctrl.fb_packmode});
+                    .ARGB8888 => {
+                        const addr = fb_pixel_addr(4, fb_addr, x, y, stride);
+                        self.vram[addr + 0] = src[3];
+                        self.vram[addr + 1] = src[2];
+                        self.vram[addr + 2] = src[1];
+                        self.vram[addr + 3] = src[0];
                     },
+                    else => std.log.warn("Invalid framebuffer packmode: {t}", .{parameters.w_ctrl.fb_packmode}),
                 }
             }
         }
