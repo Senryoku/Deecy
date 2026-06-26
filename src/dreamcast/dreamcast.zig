@@ -1117,7 +1117,7 @@ pub const Dreamcast = struct {
     }
 
     fn end_gd_dma(self: *@This()) void {
-        const start = self.read_hw_register(u32, .SB_GDSTAR) & 0x01FFFFE0;
+        const start = self.read_hw_register(u32, .SB_GDSTAR) & 0x1FFFFFE0;
         const len = self.read_hw_register(u32, .SB_GDLEN) & 0x01FFFFE0;
         self.cpu.end_dmac(0);
         self.hw_register(u32, .SB_GDST).* = 0;
