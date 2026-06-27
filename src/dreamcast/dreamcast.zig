@@ -570,6 +570,7 @@ pub const Dreamcast = struct {
         std.debug.assert(addr >= 0x005F6800 and addr < 0x005F6800 + self.hardware_registers.len);
         return @as(*T, @ptrCast(@alignCast(&self.hardware_registers[addr - 0x005F6800])));
     }
+    /// Intended be called from read handlers. May have side effects.
     pub inline fn read_hw_register(self: *const @This(), comptime T: type, r: HardwareRegister) T {
         switch (r) {
             .SB_GDSTARD, .SB_GDLEND => {
@@ -589,7 +590,7 @@ pub const Dreamcast = struct {
                         };
                         self.hw_register(u32, .SB_GDSTARD).* = start + value;
                         self.hw_register(u32, .SB_GDLEND).* = value;
-                        log.warn("Read({}) to {} while DMA is in progress: SB_GDSTARD={X}, SB_GDLEND={X}", .{ T, r, self.hw_register(u32, .SB_GDSTARD).*, self.hw_register(u32, .SB_GDLEND).* });
+                        log.warn("Read({}) from {} while DMA is in progress: SB_GDSTARD={X}, SB_GDLEND={X}", .{ T, r, self.hw_register(u32, .SB_GDSTARD).*, self.hw_register(u32, .SB_GDLEND).* });
                         return self.hw_register(T, r).*;
                     }
                 }
@@ -598,13 +599,13 @@ pub const Dreamcast = struct {
         }
         return self.hw_register(T, r).*;
     }
+    /// Intended be called from write handlers. May have side effects.
     pub fn write_hw_register(self: *@This(), comptime T: type, addr: u32, value: T) void {
         const reg: HardwareRegister = @enumFromInt(addr);
         if (addr >= 0x005F7000 and addr <= 0x005F709C) {
             if (T != u8 and T != u16) return log.err("Invalid Write({any}) to 0x{X:0>8} (GDROM)\n", .{ T, addr });
             return self.gdrom.write_register(T, addr, value);
         }
-        // Hardware registers
         switch (reg) {
             .SB_SFRES => { // Software Reset
                 if (T != u32) return log.err("Invalid Write({any}) to 0x{X:0>8} (SB_SFRES)\n", .{ T, addr });
@@ -1045,8 +1046,8 @@ pub const Dreamcast = struct {
     }
 
     fn check_sb_interrupts(self: *@This()) void {
-        const istext = self.read_hw_register(u32, .SB_ISTEXT);
-        const isterr = self.read_hw_register(u32, .SB_ISTERR);
+        const istext = self.hw_register(u32, .SB_ISTEXT).*;
+        const isterr = self.hw_register(u32, .SB_ISTERR).*;
         const istnrm_ptr = self.hw_register(HardwareRegisters.SB_ISTNRM, .SB_ISTNRM);
         istnrm_ptr._ = 0;
         istnrm_ptr.ExtStatus = if (istext != 0) 1 else 0;
@@ -1055,11 +1056,11 @@ pub const Dreamcast = struct {
         self.cpu.clear_interrupt(.IRL9);
         self.cpu.clear_interrupt(.IRL11);
         self.cpu.clear_interrupt(.IRL13);
-        if ((istnrm & self.read_hw_register(u32, .SB_IML6NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML6EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML6ERR)) != 0) {
+        if ((istnrm & self.hw_register(u32, .SB_IML6NRM).*) != 0 or (istext & self.hw_register(u32, .SB_IML6EXT).*) != 0 or (isterr & self.hw_register(u32, .SB_IML6ERR).*) != 0) {
             self.cpu.request_interrupt(.IRL9);
-        } else if ((istnrm & self.read_hw_register(u32, .SB_IML4NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML4EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML4ERR)) != 0) {
+        } else if ((istnrm & self.hw_register(u32, .SB_IML4NRM).*) != 0 or (istext & self.hw_register(u32, .SB_IML4EXT).*) != 0 or (isterr & self.hw_register(u32, .SB_IML4ERR).*) != 0) {
             self.cpu.request_interrupt(.IRL11);
-        } else if ((istnrm & self.read_hw_register(u32, .SB_IML2NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML2EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML2ERR)) != 0) {
+        } else if ((istnrm & self.hw_register(u32, .SB_IML2NRM).*) != 0 or (istext & self.hw_register(u32, .SB_IML2EXT).*) != 0 or (isterr & self.hw_register(u32, .SB_IML2ERR).*) != 0) {
             self.cpu.request_interrupt(.IRL13);
         }
     }
