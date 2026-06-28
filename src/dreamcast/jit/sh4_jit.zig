@@ -2879,8 +2879,13 @@ pub fn mova_atDispPC_R0(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bo
 
 pub fn movw_atDispPC_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const d = bit_manip.zero_extend(instr.nd8.d) << 1;
-    // NOTE: Target isn't guaranteed to lie in the same page. Bail to the interpreter in this case.
-    if (ctx.mmu_enabled and cross_page(ctx.current_pc, ctx.current_pc + 4 + d)) return interpreter_fallback_cached(block, ctx, instr);
+    const virtual_addr = ctx.current_pc + 4 + d;
+    if (ctx.mmu_enabled and cross_page(ctx.current_pc, virtual_addr)) {
+        try block.mov(.{ .reg = ReturnRegister }, .{ .imm32 = virtual_addr });
+        try load_mem(block, ctx, .{ .HostReg = ReturnRegister }, 0, 16);
+        try block.movsx(.{ .reg = try ctx.guest_reg_cache(block, instr.nd8.n, false, true) }, .{ .reg16 = ReturnRegister });
+        return false;
+    }
 
     const addr = ctx.current_physical_pc + 4 + d;
     std.debug.assert(addr < 0x00200000 or (addr >= 0x0C000000 and addr < 0x10000000));
@@ -2899,8 +2904,13 @@ pub fn movw_atDispPC_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bo
 
 pub fn movl_atDispPC_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const d = bit_manip.zero_extend(instr.nd8.d) << 2;
-    if (ctx.mmu_enabled and cross_page(ctx.current_pc, ctx.current_pc + 4 + d)) return interpreter_fallback_cached(block, ctx, instr);
-
+    const virtual_addr = (ctx.current_pc & 0xFFFFFFFC) + 4 + d;
+    if (ctx.mmu_enabled and cross_page(ctx.current_pc, virtual_addr)) {
+        try block.mov(.{ .reg = ReturnRegister }, .{ .imm32 = virtual_addr });
+        try load_mem(block, ctx, .{ .HostReg = ReturnRegister }, 0, 32);
+        try store_register(block, ctx, instr.nd8.n, .{ .reg = ReturnRegister });
+        return false;
+    }
     const addr = (ctx.current_physical_pc & 0xFFFFFFFC) + 4 + d;
     std.debug.assert(addr < 0x00200000 or (addr >= 0x0C000000 and addr < 0x10000000));
     if (addr < 0x00200000) { // We're in ROM.
