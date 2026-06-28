@@ -671,34 +671,20 @@ const PatchableJump = struct {
     }
 };
 
-const PatchableJumpList = struct {
-    items: [128]PatchableJump = @splat(.{ .size = .r32 }),
-
-    pub fn add(self: *@This(), patchable_jump: PatchableJump) !void {
-        std.debug.assert(!patchable_jump.invalid());
-
-        for (&self.items) |*item| {
-            if (item.invalid()) {
-                item.* = patchable_jump;
-                return;
-            }
-        }
-        return error.PatchableJumpFull;
-    }
-};
-
 pub const Emitter = struct {
     block_buffer: []u8 = undefined,
     block_size: u32 = 0,
 
-    forward_jumps_to_patch: std.AutoHashMap(u32, PatchableJumpList),
+    forward_jumps_to_patch: std.ArrayList(std.ArrayList(PatchableJump)),
 
     _instruction_offsets: []u32,
     _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !@This() {
+        var forward_jumps_to_patch = try std.ArrayList(std.ArrayList(PatchableJump)).initCapacity(allocator, 1024);
+        for (0..1024) |_| try forward_jumps_to_patch.append(allocator, .empty);
         return .{
-            .forward_jumps_to_patch = .init(allocator),
+            .forward_jumps_to_patch = forward_jumps_to_patch,
             ._instruction_offsets = try allocator.alloc(u32, 64),
             ._allocator = allocator,
         };
@@ -708,40 +694,42 @@ pub const Emitter = struct {
     pub fn set_buffer(self: *@This(), block_buffer: []u8) void {
         self.block_buffer = block_buffer;
         self.block_size = 0;
-        std.debug.assert(self.forward_jumps_to_patch.count() == 0);
     }
 
     pub fn deinit(self: *@This()) void {
         self._allocator.free(self._instruction_offsets);
-        self.forward_jumps_to_patch.deinit();
+        for (self.forward_jumps_to_patch.items) |*jumps| jumps.deinit(self._allocator);
+        self.forward_jumps_to_patch.deinit(self._allocator);
     }
 
     pub fn emit_instructions(self: *@This(), instructions: []const Instruction) !void {
         if (self._instruction_offsets.len < instructions.len)
             self._instruction_offsets = try self._allocator.realloc(self._instruction_offsets, instructions.len);
 
+        try self.forward_jumps_to_patch.ensureTotalCapacity(self._allocator, instructions.len);
+        while (self.forward_jumps_to_patch.items.len < instructions.len)
+            self.forward_jumps_to_patch.appendAssumeCapacity(.empty);
+
         for (instructions, 0..) |instr, idx| {
             self._instruction_offsets[idx] = self.block_size;
 
-            if (self.forward_jumps_to_patch.get(@intCast(idx))) |jumps| {
-                for (jumps.items) |jump| {
-                    if (!jump.invalid()) {
-                        switch (jump.size) {
-                            .r8 => {
-                                if (self.block_size - jump.source >= 128)
-                                    return error.InvalidShortForwardJump;
-                                const rel: u8 = @intCast(self.block_size - jump.source);
-                                self.block_buffer[jump.address_to_patch] = rel;
-                            },
-                            .r32 => {
-                                const rel: u32 = @intCast(self.block_size - jump.source);
-                                @memcpy(self.block_buffer[jump.address_to_patch..][0..4], std.mem.asBytes(&rel));
-                            },
-                        }
+            for (self.forward_jumps_to_patch.items[idx].items) |jump| {
+                if (!jump.invalid()) {
+                    switch (jump.size) {
+                        .r8 => {
+                            if (self.block_size - jump.source >= 128)
+                                return error.InvalidShortForwardJump;
+                            const rel: u8 = @intCast(self.block_size - jump.source);
+                            self.block_buffer[jump.address_to_patch] = rel;
+                        },
+                        .r32 => {
+                            const rel: u32 = @intCast(self.block_size - jump.source);
+                            @memcpy(self.block_buffer[jump.address_to_patch..][0..4], std.mem.asBytes(&rel));
+                        },
                     }
                 }
-                _ = self.forward_jumps_to_patch.remove(@intCast(idx));
             }
+            _ = self.forward_jumps_to_patch.items[idx].clearRetainingCapacity();
 
             switch (instr) {
                 .Nop => {},
@@ -804,10 +792,6 @@ pub const Emitter = struct {
                     }
                 },
             }
-        }
-        if (self.forward_jumps_to_patch.count() > 0) {
-            std.debug.print("Jumps left to patch: {d}\n", .{self.forward_jumps_to_patch.count()});
-            @panic("Error: Unpatched jumps!");
         }
     }
 
@@ -1848,11 +1832,8 @@ pub const Emitter = struct {
                     }
                     const address_to_patch = self.block_size + 1;
                     try self.emit_jmp_rel8(condition, 0);
-                    const jumps = try self.forward_jumps_to_patch.getOrPut(target_idx);
-                    if (!jumps.found_existing)
-                        jumps.value_ptr.* = .{};
 
-                    try jumps.value_ptr.add(.{
+                    try self.forward_jumps_to_patch.items[target_idx].append(self._allocator, .{
                         .size = .r8,
                         .source = self.block_size,
                         .address_to_patch = address_to_patch,
@@ -1869,11 +1850,7 @@ pub const Emitter = struct {
                 } else {
                     try self.emit_jmp_rel32(condition, 0x10C0FFEE);
 
-                    const jumps = try self.forward_jumps_to_patch.getOrPut(target_idx);
-                    if (!jumps.found_existing)
-                        jumps.value_ptr.* = .{};
-
-                    try jumps.value_ptr.add(.{
+                    try self.forward_jumps_to_patch.items[target_idx].append(self._allocator, .{
                         .size = .r32,
                         .source = self.block_size,
                         .address_to_patch = self.block_size - 4,
