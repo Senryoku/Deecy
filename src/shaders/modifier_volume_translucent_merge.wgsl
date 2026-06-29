@@ -78,17 +78,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(local_invo
             }
         }
     }
-
-    // Mark other volumes as unused
-    for(var i = volumes.count; i < MaxVolumes; i++) {
-        volumes.intervals[i] = vec2<f32>(-1.0);
-    }
     
     var pixel_offset = global_id.y * oit_tmv_uniforms.target_width + global_id.x;
     let stride = oit_tmv_uniforms.target_width * oit_tmv_uniforms.slice_height;
-    for(var i = 0u; i < MaxVolumes; i++) {
+    for(var i = 0u; i < volumes.count; i++) {
         out_modvols[(2 * i + 0) * stride + pixel_offset] = volumes.intervals[i].x;
         out_modvols[(2 * i + 1) * stride + pixel_offset] = volumes.intervals[i].y;
+    }
+    if(volumes.count < MaxVolumes) {
+        out_modvols[(2 * volumes.count + 0) * stride + pixel_offset] = -1.0;
     }
 
     // Reset the heads buffer for the next pass.
