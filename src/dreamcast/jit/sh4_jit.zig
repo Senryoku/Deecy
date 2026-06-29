@@ -412,20 +412,7 @@ pub const JITContext = struct {
         self.in_delay_slot = true;
         defer self.in_delay_slot = false;
 
-        var instr = self.instructions[self.index + 1];
-
-        // If MMU translation is enabled, make sure the delay slot instruction is the one we expect.
-        if (self.mmu_enabled and cross_page(self.current_pc, self.current_pc + 2)) {
-            const expected_physical_pc = self.current_physical_pc + 2;
-            const physical_pc = self.cpu.translate_instruction_address(self.current_pc + 2) catch |err| pc: {
-                sh4_jit_log.err("Address translation raised an exception for delay slot at {X:0>8}: {t}", .{ self.current_pc, err });
-                break :pc expected_physical_pc; // FIXME: Ignore it for now...
-            };
-            if (physical_pc != expected_physical_pc) {
-                sh4_jit_log.warn("Crossing pages in delay slot at PC={X:0>8}. Expected {X:0>8}, got {X:0>8}.\n", .{ self.current_pc, expected_physical_pc, physical_pc });
-                instr = self.cpu.read_physical(u16, physical_pc);
-            }
-        }
+        const instr = self.instructions[self.index + 1];
 
         const op = instr_lookup(instr);
         if (comptime std.log.logEnabled(.debug, .sh4_jit))
