@@ -337,7 +337,7 @@ pub const JITContext = struct {
     force_exit: bool = false,
 
     exception_hanlder_ptr: u64,
-
+    /// Filled in if the block was terminated by a conditional branch, giving only two possible next PC.
     conditional_branch: ?struct {
         taken: u32,
         not_taken: u32,
@@ -667,17 +667,14 @@ pub const SH4JIT = struct {
             b.clearRetainingCapacity();
 
             try b.sub(sh4_mem("_pending_cycles"), .{ .reg = ReturnRegister });
-            // Overkill?
             const exit_ptr = @intFromPtr(self.block_cache.buffer.ptr) + self.return_offset;
-            try b.append(.{ .Jmp = .{ .condition = .Sign, .dst = .{ .abs = exit_ptr } } });
 
             if (BasicBlock.EnableInstrumentation) {
                 // TODO: Untested
                 try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = exit_ptr } } });
             } else {
-                std.debug.assert(!BasicBlock.EnableInstrumentation);
-
-                // try b.call(runtime_instruction_mmu_translation);
+                // Overkill?
+                try b.append(.{ .Jmp = .{ .condition = .Sign, .dst = .{ .abs = exit_ptr } } });
                 try b.call(exception_handler_instruction_mmu_translation);
                 try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .imm64 = @intFromPtr(self.block_cache.blocks.ptr) });
                 try b.mov(.{ .reg = ArgRegisters[0] }, .{ .mem = .{ .base = ArgRegisters[0], .index = ReturnRegister, .scale = ._4, .size = 32 } });
@@ -1023,24 +1020,21 @@ pub const SH4JIT = struct {
                 try b.cmp(.{ .mem = .{ .base = SH4PtrRegister, .displacement = @offsetOf(sh4.SH4, "interrupt_requests"), .size = 64 } }, .{ .imm8 = 0 });
                 try b.append(.{ .Jmp = .{ .condition = .NotEqual, .dst = .{ .abs = exit_ptr } } });
             }
-            const const_key: u32 = @bitCast(BlockCache.Key{
-                .addr = 0,
-                .ram = 0,
-                .pr = if (ctx.fpscr_pr == .Single) 0 else 1,
-                .sz = if (ctx.fpscr_sz == .Single) 0 else 1,
-            });
-            const Key: JIT.Operand = .{ .reg = ArgRegisters[0] };
+
+            const sz: u1 = if (ctx.fpscr_sz == .Single) 0 else 1;
+            const pr: u1 = if (ctx.fpscr_pr == .Single) 0 else 1;
 
             if (ctx.conditional_branch) |cb| {
                 if (!ctx.mmu_enabled or (!cross_page(ctx.entry_point_address, cb.taken) and !cross_page(ctx.entry_point_address, cb.not_taken))) {
                     std.debug.assert(ctx.mmu_enabled or ctx.entry_point_address & 0x1FFFFFFF == ctx.entry_point_physical_address & 0x1FFFFFFF);
                     const not_taken = if (ctx.mmu_enabled) (ctx.entry_point_physical_address -% ctx.entry_point_address) +% cb.not_taken else cb.not_taken;
-                    const not_taken_key = BlockCache.compute_key(not_taken, if (ctx.fpscr_sz == .Single) 0 else 1, if (ctx.fpscr_pr == .Single) 0 else 1);
+                    const not_taken_key = BlockCache.compute_key(not_taken, sz, pr);
                     const taken = if (ctx.mmu_enabled) (ctx.entry_point_physical_address -% ctx.entry_point_address) +% cb.taken else cb.taken;
-                    const taken_key = BlockCache.compute_key(taken, if (ctx.fpscr_sz == .Single) 0 else 1, if (ctx.fpscr_pr == .Single) 0 else 1);
+                    const taken_key = BlockCache.compute_key(taken, sz, pr);
                     sh4_jit_log.info("Optimizing conditional branch at 0x{X:0>8} ({X:0>8}): [{X:0>8} / {X:0>8}] ([{X:0>8} / {X:0>8}])", .{ ctx.entry_point_address, ctx.entry_point_physical_address, cb.taken, cb.not_taken, taken, not_taken });
                     try b.cmp(sh4_mem("pc"), .{ .imm32 = cb.taken });
                     if (cb.taken == ctx.entry_point_address) {
+                        // We know where the current block will end up once compiled, we can embed the destination.
                         try b.append(.{ .Jmp = .{ .condition = .Equal, .dst = .{ .abs = @intFromPtr(&self.block_cache.buffer[self.block_cache.cursor]) } } });
                         try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.blocks.ptr) + 4 * not_taken_key });
                     } else {
@@ -1061,6 +1055,10 @@ pub const SH4JIT = struct {
                     break :done;
                 }
             }
+
+            const const_key: u32 = @bitCast(BlockCache.Key{ .addr = 0, .ram = 0, .pr = pr, .sz = sz });
+            const Key: JIT.Operand = .{ .reg = ArgRegisters[0] };
+
             var mmu_instruction_translation_call_jump: ?JIT.PatchableJump = null;
             if (ctx.mmu_enabled) {
                 // NOTE: In some cases we could easily convince ourselves that the PC cannot possibly cross a page boundary here.
@@ -1142,7 +1140,8 @@ pub const SH4JIT = struct {
         }
 
         // Append additional cold code paths. Keeping those outside of the main flow of execution helps performance.
-        try ctx.emit_mmu_translation_slow_paths(b, exit_ptr);
+        const exception_hanlder_ptr = @intFromPtr(&self.block_cache.buffer[self.exception_handler_offset]);
+        try ctx.emit_mmu_translation_slow_paths(b, exception_hanlder_ptr);
 
         for (b.instructions.items, 0..) |instr, idx|
             sh4_jit_log.debug("[{d: >4}] {f}", .{ idx, instr });
@@ -1292,6 +1291,8 @@ pub const SH4JIT = struct {
     }
 };
 
+// Helper functions
+
 fn call(block: *IRBlock, ctx: *const JITContext, func: anytype) !void {
     try call_safe(block, &ctx.fpr_cache, func);
 }
@@ -1394,7 +1395,6 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
             // Check if an exception was raised.
             try block.cmp(.{ .reg8 = ReturnRegister }, .{ .imm8 = 0 });
             // Terminate the block immediately if an exception was raised.
-            // try ctx.add_jump_to_end(try block.jmp(.NotEqual));
             try ctx.jump_to_exception_handling(block, .NotEqual);
 
             if (ctx.in_delay_slot) {
@@ -1475,10 +1475,6 @@ pub fn interpreter_fallback_branch(block: *IRBlock, ctx: *JITContext, instr: sh4
     return true;
 }
 
-pub fn nop(_: *IRBlock, _: *JITContext, _: sh4.Instr) !bool {
-    return false;
-}
-
 fn jump_to_exception(comptime exception: sh4.Exception) fn (*sh4.SH4) callconv(Architecture.CallingConvention) void {
     return struct {
         fn jte(_: *sh4.SH4) callconv(Architecture.CallingConvention) void {
@@ -1487,21 +1483,6 @@ fn jump_to_exception(comptime exception: sh4.Exception) fn (*sh4.SH4) callconv(A
             cpu.jump_to_exception(exception);
         }
     }.jte;
-}
-
-pub fn unknown(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    sh4_jit_log.info("Unknown instruction: {X}", .{@as(u16, @bitCast(instr))});
-    if (ctx.mmu_enabled) {
-        try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
-        if (ctx.in_delay_slot) {
-            try call(block, ctx, jump_to_exception(.SlotIllegalInstruction));
-        } else {
-            try call(block, ctx, jump_to_exception(.GeneralIllegalInstruction));
-        }
-        return true;
-    } else {
-        return error.UnknownInstruction;
-    }
 }
 
 // NOTE: Ideally we'd use the type system to ensure the return values of the two following functions are
@@ -1615,84 +1596,163 @@ inline fn fast_call_epilogue() void {
     }
 }
 
-pub noinline fn _out_of_line_read8(_: *const sh4.SH4, virtual_addr: u32) callconv(Architecture.CallingConvention) u8 {
-    if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000); // We can't garantee this won't be called with a RAM address in FastMem mode (even if it is highly unlikely)
-    fast_call_prologue();
-    defer fast_call_epilogue();
-    return @call(.always_inline, sh4.SH4.read_physical, .{ get_cpu(), u8, virtual_addr });
+fn _out_of_line_read(comptime T: type) fn (_: *const sh4.SH4, virtual_addr: u32) callconv(Architecture.CallingConvention) T {
+    return struct {
+        noinline fn func(_: *const sh4.SH4, virtual_addr: u32) callconv(Architecture.CallingConvention) T {
+            if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000); // We can't garantee this won't be called with a RAM address in FastMem mode (even if it is highly unlikely)
+            fast_call_prologue();
+            defer fast_call_epilogue();
+            return @call(.always_inline, sh4.SH4.read_physical, .{ get_cpu(), T, virtual_addr });
+        }
+    }.func;
 }
-pub noinline fn _out_of_line_read16(_: *const sh4.SH4, virtual_addr: u32) callconv(Architecture.CallingConvention) u16 {
-    if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
-    fast_call_prologue();
-    defer fast_call_epilogue();
-    return @call(.always_inline, sh4.SH4.read_physical, .{ get_cpu(), u16, virtual_addr });
+pub const _out_of_line_read8 = _out_of_line_read(u8);
+pub const _out_of_line_read16 = _out_of_line_read(u16);
+pub const _out_of_line_read32 = _out_of_line_read(u32);
+pub const _out_of_line_read64 = _out_of_line_read(u64);
+
+fn _out_of_line_write(comptime T: type) fn (_: *sh4.SH4, virtual_addr: u32, value: T) callconv(Architecture.CallingConvention) void {
+    return struct {
+        noinline fn func(_: *sh4.SH4, virtual_addr: u32, value: T) callconv(Architecture.CallingConvention) void {
+            if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+            fast_call_prologue();
+            defer fast_call_epilogue();
+            return @call(.always_inline, sh4.SH4.write_physical, .{ get_cpu(), T, virtual_addr, value });
+        }
+    }.func;
 }
-pub noinline fn _out_of_line_read32(_: *const sh4.SH4, virtual_addr: u32) callconv(Architecture.CallingConvention) u32 {
-    if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
-    fast_call_prologue();
-    defer fast_call_epilogue();
-    return @call(.always_inline, sh4.SH4.read_physical, .{ get_cpu(), u32, virtual_addr });
-}
-pub noinline fn _out_of_line_read64(_: *const sh4.SH4, virtual_addr: u32) callconv(Architecture.CallingConvention) u64 {
-    if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
-    fast_call_prologue();
-    defer fast_call_epilogue();
-    return @call(.always_inline, sh4.SH4.read_physical, .{ get_cpu(), u64, virtual_addr });
-}
-pub noinline fn _out_of_line_write8(_: *sh4.SH4, virtual_addr: u32, value: u8) callconv(Architecture.CallingConvention) void {
-    if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
-    fast_call_prologue();
-    defer fast_call_epilogue();
-    return @call(.always_inline, sh4.SH4.write_physical, .{ get_cpu(), u8, virtual_addr, value });
-}
-pub noinline fn _out_of_line_write16(_: *sh4.SH4, virtual_addr: u32, value: u16) callconv(Architecture.CallingConvention) void {
-    if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
-    fast_call_prologue();
-    defer fast_call_epilogue();
-    return @call(.always_inline, sh4.SH4.write_physical, .{ get_cpu(), u16, virtual_addr, value });
-}
-pub noinline fn _out_of_line_write32(_: *sh4.SH4, virtual_addr: u32, value: u32) callconv(Architecture.CallingConvention) void {
-    if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
-    fast_call_prologue();
-    defer fast_call_epilogue();
-    return @call(.always_inline, sh4.SH4.write_physical, .{ get_cpu(), u32, virtual_addr, value });
-}
-pub noinline fn _out_of_line_write64(_: *sh4.SH4, virtual_addr: u32, value: u64) callconv(Architecture.CallingConvention) void {
-    if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
-    fast_call_prologue();
-    defer fast_call_epilogue();
-    return @call(.always_inline, sh4.SH4.write_physical, .{ get_cpu(), u64, virtual_addr, value });
+pub const _out_of_line_write8 = _out_of_line_write(u8);
+pub const _out_of_line_write16 = _out_of_line_write(u16);
+pub const _out_of_line_write32 = _out_of_line_write(u32);
+pub const _out_of_line_write64 = _out_of_line_write(u64);
+
+const AddressingMode = union(enum) { HostReg: JIT.Register, Reg: u4, Reg_R0: u4, GBR };
+
+fn compute_address(block: *IRBlock, ctx: *JITContext, addr: JIT.Register, addressing: AddressingMode, displacement: u32) !void {
+    const dst: JIT.Operand = .{ .reg = addr };
+    switch (addressing) {
+        .HostReg => |host_reg| {
+            if (host_reg != addr) {
+                if (displacement != 0) {
+                    try block.lea(dst, .{ .base = host_reg, .displacement = displacement, .size = 32 });
+                } else {
+                    try block.mov(dst, .{ .reg = host_reg });
+                }
+            } else if (displacement != 0) {
+                try block.add(dst, .{ .imm32 = displacement });
+            }
+        },
+        .Reg => |guest_reg| {
+            const reg = try load_register(block, ctx, guest_reg);
+            if (displacement != 0) {
+                try block.lea(dst, .{ .base = reg, .displacement = displacement, .size = 32 });
+            } else {
+                try block.mov(dst, .{ .reg = reg });
+            }
+        },
+        .Reg_R0 => |guest_reg| {
+            const reg = try load_register(block, ctx, guest_reg);
+            const r0 = try load_register(block, ctx, 0);
+            try block.lea(dst, .{ .base = reg, .index = r0, .displacement = displacement, .size = 32 });
+        },
+        .GBR => {
+            try block.mov(dst, sh4_mem("gbr"));
+            if (displacement != 0)
+                try block.add(dst, .{ .imm32 = displacement });
+        },
+    }
 }
 
-/// Perform MMU instruction address translation, handling exceptions and returns the next block key.
-fn runtime_instruction_mmu_translation() callconv(Architecture.CallingConvention) u32 {
-    const cpu = get_cpu();
-    std.debug.assert(cpu._mmu_state == .Full);
-    const physical_pc = get_cached_physical_pc(cpu);
-    return BlockCache.compute_key(physical_pc, cpu.fpscr.sz, cpu.fpscr.pr); // Make sure we use updated FPSCR.
+// Load a u<size> from memory into ReturnRegister, with a fast path if the address lies in RAM.
+fn load_mem(block: *IRBlock, ctx: *JITContext, addressing: AddressingMode, displacement: u32, comptime size: u32) !void {
+    const addr = ArgRegisters[1];
+
+    try compute_address(block, ctx, addr, addressing, displacement);
+
+    if (ctx.mmu_enabled)
+        try mmu_translation(.Read, size, block, ctx, addr, null);
+
+    if (FastMem) {
+        try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = VirtualAddressSpaceBaseRegister, .index = addr, .size = size } });
+        try block.append(.{ .Padding = 5 });
+    } else { // RAM Fast path
+        try block.mov(.{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[1] });
+        try block.@"and"(.{ .reg = ReturnRegister }, .{ .imm32 = 0x1C000000 });
+        try block.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = 0x0C000000 });
+        // TODO: Could it be worth to use a conditional move here to have a single jump (skipping the call)?
+        var not_branch = try block.jmp(.NotEqual);
+        // We're in RAM!
+        try block.@"and"(.{ .reg = ArgRegisters[1] }, .{ .imm32 = 0x00FFFFFF });
+        try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = RAMBaseRegister, .index = ArgRegisters[1], .size = size } });
+        var to_end = try block.jmp(.Always);
+
+        not_branch.patch();
+
+        // Address is already loaded into ArgRegisters[1]
+        switch (size) {
+            8 => try call(block, ctx, _out_of_line_read8),
+            16 => try call(block, ctx, _out_of_line_read16),
+            32 => try call(block, ctx, _out_of_line_read32),
+            64 => try call(block, ctx, _out_of_line_read64),
+            else => @compileError("load_mem: Unsupported size."),
+        }
+
+        to_end.patch();
+    }
 }
 
-/// Returns the next block key. Called from the exception handler, this is guaranteed not to throw another exception.
-fn exception_handler_instruction_mmu_translation() callconv(Architecture.CallingConvention) u32 {
-    const cpu = get_cpu();
-    std.debug.assert(cpu._mmu_state == .Full);
-    const virtual_addr = cpu.pc;
-    std.debug.assert(virtual_addr & 1 == 0);
-    const physical_pc = ppc: {
-        const cache_entry = if (Optimizations.mmu_translation_cache) &MMUInstructionCache[MMUCacheEntry.get_index(MMUInstructionCacheEntryCount, virtual_addr)] else {};
-        if (Optimizations.mmu_translation_cache and cache_entry.hit(virtual_addr))
-            break :ppc cache_entry.translate(virtual_addr) & 0x1FFF_FFFF;
+fn store_mem(block: *IRBlock, ctx: *JITContext, addressing: AddressingMode, displacement: u32, value: JIT.Operand, comptime size: u32) !void {
+    std.debug.assert(value.size() == size);
 
-        const physical = cpu.translate_instruction_address(virtual_addr) catch unreachable;
+    const addr = ArgRegisters[1];
 
-        if (Optimizations.mmu_translation_cache) cache_entry.update(virtual_addr, physical);
+    try compute_address(block, ctx, addr, addressing, displacement);
 
-        break :ppc physical;
-    };
-    return BlockCache.compute_key(physical_pc, cpu.fpscr.sz, cpu.fpscr.pr); // Make sure we use updated FPSCR.
+    if (ctx.mmu_enabled) {
+        // Make sure value isn't overwritten
+        const register_to_save = switch (value) {
+            .reg8, .reg16, .reg, .reg64 => |r| r,
+            else => null,
+        };
+
+        try mmu_translation(.Write, size, block, ctx, addr, register_to_save);
+    }
+
+    if (FastMem) {
+        if (value.tag() != .reg or value.reg != ArgRegisters[2]) // FIXME: Ideally we should be able to get rid of this (needed when the FastMem is patched out).
+            try block.mov(.{ .reg = ArgRegisters[2] }, value);
+        try block.mov(.{ .mem = .{ .base = VirtualAddressSpaceBaseRegister, .index = addr, .size = size } }, value);
+        try block.append(.{ .Padding = 5 });
+    } else {
+        // RAM Fast path
+        try block.mov(.{ .reg = ArgRegisters[3] }, .{ .reg = addr });
+        try block.@"and"(.{ .reg = ArgRegisters[3] }, .{ .imm32 = 0x1C000000 });
+        try block.cmp(.{ .reg = ArgRegisters[3] }, .{ .imm32 = 0x0C000000 });
+        var not_branch = try block.jmp(.NotEqual);
+        // We're in RAM!
+        try block.@"and"(.{ .reg = addr }, .{ .imm32 = 0x00FFFFFF });
+        try block.mov(.{ .mem = .{ .base = RAMBaseRegister, .index = addr, .size = size } }, value);
+        var to_end = try block.jmp(.Always);
+
+        not_branch.patch();
+
+        // Address is already loaded into ArgRegisters[1]
+        if (value.tag() != .reg or value.reg != ArgRegisters[2])
+            try block.mov(.{ .reg = ArgRegisters[2] }, value);
+        switch (size) {
+            8 => try call(block, ctx, _out_of_line_write8),
+            16 => try call(block, ctx, _out_of_line_write16),
+            32 => try call(block, ctx, _out_of_line_write32),
+            64 => try call(block, ctx, _out_of_line_write64),
+            else => @compileError("store_mem: Unsupported size."),
+        }
+        to_end.patch();
+    }
 }
 
-const MMUCacheEntry = struct {
+// MMU
+
+const MMUCacheEntry = packed struct(u64) {
     vpn: u32 = 0xDEADBEEF,
     /// Stores the offset between the virtual address and the physical address.
     offset: u32 = 0xDEADBEEF,
@@ -1867,8 +1927,7 @@ const MMUTranslationSlowPath = struct {
     vpn_mismatch: JIT.PatchableJump,
     return_label: IRBlock.Label,
 
-    /// exit_ptr: The address to jump to on exception.
-    pub fn emit(self: *const @This(), block: *IRBlock, exit_ptr: u64) !void {
+    pub fn emit(self: *const @This(), block: *IRBlock, exception_handler_ptr: u64) !void {
         self.vpn_mismatch.patch();
 
         try self.saved_gpr_cache.commit_all_speculatively(block);
@@ -1882,11 +1941,12 @@ const MMUTranslationSlowPath = struct {
         };
         try block.back_jmp(success_condition, self.return_label);
 
-        try block.sub(sh4_mem("_pending_cycles"), .{ .imm32 = self.cycles });
-        try block.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = exit_ptr } } });
+        try block.mov(.{ .reg = ReturnRegister }, .{ .imm32 = self.cycles });
+        try block.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = exception_handler_ptr } } });
     }
 };
 
+/// Returns the Host condition for a successful MMU translation (no exception raised).
 fn call_mmu_translation(
     block: *IRBlock,
     comptime access_type: sh4.SH4.AccessType,
@@ -1920,127 +1980,52 @@ fn call_mmu_translation(
     return .NotEqual;
 }
 
-const AddressingMode = union(enum) { HostReg: JIT.Register, Reg: u4, Reg_R0: u4, GBR };
-
-fn compute_address(block: *IRBlock, ctx: *JITContext, addr: JIT.Register, addressing: AddressingMode, displacement: u32) !void {
-    const dst: JIT.Operand = .{ .reg = addr };
-    switch (addressing) {
-        .HostReg => |host_reg| {
-            if (host_reg != addr) {
-                if (displacement != 0) {
-                    try block.lea(dst, .{ .base = host_reg, .displacement = displacement, .size = 32 });
-                } else {
-                    try block.mov(dst, .{ .reg = host_reg });
-                }
-            } else if (displacement != 0) {
-                try block.add(dst, .{ .imm32 = displacement });
-            }
-        },
-        .Reg => |guest_reg| {
-            const reg = try load_register(block, ctx, guest_reg);
-            if (displacement != 0) {
-                try block.lea(dst, .{ .base = reg, .displacement = displacement, .size = 32 });
-            } else {
-                try block.mov(dst, .{ .reg = reg });
-            }
-        },
-        .Reg_R0 => |guest_reg| {
-            const reg = try load_register(block, ctx, guest_reg);
-            const r0 = try load_register(block, ctx, 0);
-            try block.lea(dst, .{ .base = reg, .index = r0, .displacement = displacement, .size = 32 });
-        },
-        .GBR => {
-            try block.mov(dst, sh4_mem("gbr"));
-            if (displacement != 0)
-                try block.add(dst, .{ .imm32 = displacement });
-        },
-    }
+/// Perform MMU instruction address translation, handling exceptions and returns the next block key.
+fn runtime_instruction_mmu_translation() callconv(Architecture.CallingConvention) u32 {
+    const cpu = get_cpu();
+    std.debug.assert(cpu._mmu_state == .Full);
+    const physical_pc = get_cached_physical_pc(cpu);
+    return BlockCache.compute_key(physical_pc, cpu.fpscr.sz, cpu.fpscr.pr); // Make sure we use updated FPSCR.
 }
 
-// Load a u<size> from memory into ReturnRegister, with a fast path if the address lies in RAM.
-fn load_mem(block: *IRBlock, ctx: *JITContext, addressing: AddressingMode, displacement: u32, comptime size: u32) !void {
-    const addr = ArgRegisters[1];
+/// Returns the next block key. Called from the exception handler, this is guaranteed not to throw another exception.
+fn exception_handler_instruction_mmu_translation() callconv(Architecture.CallingConvention) u32 {
+    const cpu = get_cpu();
+    std.debug.assert(cpu._mmu_state == .Full);
+    const virtual_addr = cpu.pc;
+    std.debug.assert(virtual_addr & 1 == 0);
+    const physical_pc = ppc: {
+        const cache_entry = if (Optimizations.mmu_translation_cache) &MMUInstructionCache[MMUCacheEntry.get_index(MMUInstructionCacheEntryCount, virtual_addr)] else {};
+        if (Optimizations.mmu_translation_cache and cache_entry.hit(virtual_addr))
+            break :ppc cache_entry.translate(virtual_addr) & 0x1FFF_FFFF;
 
-    try compute_address(block, ctx, addr, addressing, displacement);
+        const physical = cpu.translate_instruction_address(virtual_addr) catch unreachable;
 
-    if (ctx.mmu_enabled)
-        try mmu_translation(.Read, size, block, ctx, addr, null);
+        if (Optimizations.mmu_translation_cache) cache_entry.update(virtual_addr, physical);
 
-    if (FastMem) {
-        try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = VirtualAddressSpaceBaseRegister, .index = addr, .size = size } });
-        try block.append(.{ .Padding = 5 });
-    } else { // RAM Fast path
-        try block.mov(.{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[1] });
-        try block.@"and"(.{ .reg = ReturnRegister }, .{ .imm32 = 0x1C000000 });
-        try block.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = 0x0C000000 });
-        // TODO: Could it be worth to use a conditional move here to have a single jump (skipping the call)?
-        var not_branch = try block.jmp(.NotEqual);
-        // We're in RAM!
-        try block.@"and"(.{ .reg = ArgRegisters[1] }, .{ .imm32 = 0x00FFFFFF });
-        try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = RAMBaseRegister, .index = ArgRegisters[1], .size = size } });
-        var to_end = try block.jmp(.Always);
-
-        not_branch.patch();
-
-        // Address is already loaded into ArgRegisters[1]
-        switch (size) {
-            8 => try call(block, ctx, _out_of_line_read8),
-            16 => try call(block, ctx, _out_of_line_read16),
-            32 => try call(block, ctx, _out_of_line_read32),
-            64 => try call(block, ctx, _out_of_line_read64),
-            else => @compileError("load_mem: Unsupported size."),
-        }
-
-        to_end.patch();
-    }
+        break :ppc physical;
+    };
+    return BlockCache.compute_key(physical_pc, cpu.fpscr.sz, cpu.fpscr.pr); // Make sure we use updated FPSCR.
 }
 
-fn store_mem(block: *IRBlock, ctx: *JITContext, addressing: AddressingMode, displacement: u32, value: JIT.Operand, comptime size: u32) !void {
-    std.debug.assert(value.size() == size);
+// Instructions
 
-    const addr = ArgRegisters[1];
+pub fn nop(_: *IRBlock, _: *JITContext, _: sh4.Instr) !bool {
+    return false;
+}
 
-    try compute_address(block, ctx, addr, addressing, displacement);
-
+pub fn unknown(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    sh4_jit_log.info("Unknown instruction: {X}", .{@as(u16, @bitCast(instr))});
     if (ctx.mmu_enabled) {
-        // Make sure value isn't overwritten
-        const register_to_save = switch (value) {
-            .reg8, .reg16, .reg, .reg64 => |r| r,
-            else => null,
-        };
-
-        try mmu_translation(.Write, size, block, ctx, addr, register_to_save);
-    }
-
-    if (FastMem) {
-        if (value.tag() != .reg or value.reg != ArgRegisters[2]) // FIXME: Ideally we should be able to get rid of this (needed when the FastMem is patched out).
-            try block.mov(.{ .reg = ArgRegisters[2] }, value);
-        try block.mov(.{ .mem = .{ .base = VirtualAddressSpaceBaseRegister, .index = addr, .size = size } }, value);
-        try block.append(.{ .Padding = 5 });
-    } else {
-        // RAM Fast path
-        try block.mov(.{ .reg = ArgRegisters[3] }, .{ .reg = addr });
-        try block.@"and"(.{ .reg = ArgRegisters[3] }, .{ .imm32 = 0x1C000000 });
-        try block.cmp(.{ .reg = ArgRegisters[3] }, .{ .imm32 = 0x0C000000 });
-        var not_branch = try block.jmp(.NotEqual);
-        // We're in RAM!
-        try block.@"and"(.{ .reg = addr }, .{ .imm32 = 0x00FFFFFF });
-        try block.mov(.{ .mem = .{ .base = RAMBaseRegister, .index = addr, .size = size } }, value);
-        var to_end = try block.jmp(.Always);
-
-        not_branch.patch();
-
-        // Address is already loaded into ArgRegisters[1]
-        if (value.tag() != .reg or value.reg != ArgRegisters[2])
-            try block.mov(.{ .reg = ArgRegisters[2] }, value);
-        switch (size) {
-            8 => try call(block, ctx, _out_of_line_write8),
-            16 => try call(block, ctx, _out_of_line_write16),
-            32 => try call(block, ctx, _out_of_line_write32),
-            64 => try call(block, ctx, _out_of_line_write64),
-            else => @compileError("store_mem: Unsupported size."),
+        try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
+        if (ctx.in_delay_slot) {
+            try call(block, ctx, jump_to_exception(.SlotIllegalInstruction));
+        } else {
+            try call(block, ctx, jump_to_exception(.GeneralIllegalInstruction));
         }
-        to_end.patch();
+        return true;
+    } else {
+        return error.UnknownInstruction;
     }
 }
 
