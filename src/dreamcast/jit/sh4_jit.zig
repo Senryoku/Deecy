@@ -311,13 +311,13 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
 pub const JITContext = struct {
     cpu: *sh4.SH4,
     entry_point_address: u32,
+    entry_point_physical_address: u32,
 
     instructions: [*]u16 = undefined,
 
     // Jitted branches do not need to increment the PC manually.
     outdated_pc: bool = true,
     may_have_pending_cycles: bool = false,
-    jumps_to_end: [128]?JIT.PatchableJump = @splat(null),
 
     mmu_enabled: bool,
     start_pc: u32, // Address of the first instruction in the instructions array.
@@ -335,6 +335,13 @@ pub const JITContext = struct {
 
     in_delay_slot: bool = false,
     force_exit: bool = false,
+
+    exception_hanlder_ptr: u64,
+
+    conditional_branch: ?struct {
+        taken: u32,
+        not_taken: u32,
+    } = null,
 
     gpr_cache: RegisterCache(JIT.Register, if (Architecture.CallingConvention == .x86_64_win) 5 else 4) = .{
         .highest_saved_register_used = 0,
@@ -377,7 +384,7 @@ pub const JITContext = struct {
     /// Will be emitted after the main body of the block to keep these slow paths outside of the main flow of execution.
     mmu_translation_slow_paths: std.ArrayList(MMUTranslationSlowPath) = .empty,
 
-    pub fn init(cpu: *sh4.SH4) @This() {
+    pub fn init(cpu: *sh4.SH4, exception_hanlder_ptr: u64) @This() {
         const physical_pc = get_cached_physical_pc(cpu);
 
         if (!((physical_pc >= 0x00000000 and physical_pc < 0x00020000) or (physical_pc >= 0x0C000000 and physical_pc < 0x10000000)))
@@ -386,6 +393,7 @@ pub const JITContext = struct {
         return .{
             .cpu = cpu,
             .entry_point_address = cpu.pc,
+            .entry_point_physical_address = physical_pc,
             .mmu_enabled = sh4.FullMMUSupport and cpu._mmu_state == .Full,
             .start_pc = cpu.pc,
             .start_physical_pc = physical_pc,
@@ -394,6 +402,7 @@ pub const JITContext = struct {
             .instructions = @ptrCast(@alignCast(cpu._dc.?._get_memory(physical_pc))),
             .fpscr_sz = if (cpu.fpscr.sz == 1) .Double else .Single,
             .fpscr_pr = if (cpu.fpscr.pr == 1) .Double else .Single,
+            .exception_hanlder_ptr = exception_hanlder_ptr,
         };
     }
 
@@ -528,12 +537,10 @@ pub const JITContext = struct {
         return try self.guest_register_cache(JIT.FPRegister, size, block, guest_reg, load, modified);
     }
 
-    pub fn add_jump_to_end(self: *@This(), jmp: JIT.PatchableJump) !void {
-        var idx: usize = 0;
-        while (idx < self.jumps_to_end.len and self.jumps_to_end[idx] != null) : (idx += 1) {}
-        if (idx >= self.jumps_to_end.len)
-            return error.TooManyJumpsToEndOfBlock;
-        self.jumps_to_end[idx] = jmp;
+    /// Will clobber ReturnRegister
+    pub fn jump_to_exception_handling(self: *@This(), b: *IRBlock, condition: JIT.Condition) !void {
+        try b.mov(.{ .reg = ReturnRegister }, .{ .imm32 = self.cycles });
+        try b.append(.{ .Jmp = .{ .condition = condition, .dst = .{ .abs = self.exception_hanlder_ptr } } });
     }
 
     pub fn push_mmu_slow_path(self: *@This(), info: MMUTranslationSlowPath) !void {
@@ -564,6 +571,7 @@ pub const SH4JIT = struct {
 
     enter_block_offset: usize = 0,
     return_offset: usize = 0,
+    exception_handler_offset: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator, ram_base: ?[*]u8) !@This() {
         var r: @This() = .{
@@ -652,6 +660,37 @@ pub const SH4JIT = struct {
             self.block_cache.cursor += e.block_size;
             self.block_cache.align_next_block();
         }
+        {
+            // Exception handler. Expects the current cycles spent in this block in ReturnRegister
+            self.exception_handler_offset = self.block_cache.cursor;
+            var b = &self._working_block;
+            b.clearRetainingCapacity();
+
+            try b.sub(sh4_mem("_pending_cycles"), .{ .reg = ReturnRegister });
+            // Overkill?
+            const exit_ptr = @intFromPtr(self.block_cache.buffer.ptr) + self.return_offset;
+            try b.append(.{ .Jmp = .{ .condition = .Sign, .dst = .{ .abs = exit_ptr } } });
+
+            if (BasicBlock.EnableInstrumentation) {
+                // TODO: Untested
+                try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = exit_ptr } } });
+            } else {
+                std.debug.assert(!BasicBlock.EnableInstrumentation);
+
+                // try b.call(runtime_instruction_mmu_translation);
+                try b.call(exception_handler_instruction_mmu_translation);
+                try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .imm64 = @intFromPtr(self.block_cache.blocks.ptr) });
+                try b.mov(.{ .reg = ArgRegisters[0] }, .{ .mem = .{ .base = ArgRegisters[0], .index = ReturnRegister, .scale = ._4, .size = 32 } });
+                try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) });
+                try b.add(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[0] });
+                try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
+            }
+
+            const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+            self.block_cache.cursor += block_size;
+            self.block_cache.align_next_block();
+        }
+
         if (FastMem) {
             var b = &self._working_block;
             for ([_]struct { offset: *u64, function: u64 }{
@@ -776,15 +815,15 @@ pub const SH4JIT = struct {
     pub noinline fn compile_and_run(self: *@This()) callconv(Architecture.CallingConvention) [*]u8 {
         const cpu = get_cpu();
         sh4_jit_log.info("(Cache Miss) Compiling {X:0>8} (SZ={d}, PR={d})...", .{ cpu.pc, cpu.fpscr.sz, cpu.fpscr.pr });
-
-        const block = self.compile(.init(cpu)) catch |err| retry: {
+        const exception_handler_ptr = @intFromPtr(&self.block_cache.buffer[self.exception_handler_offset]);
+        const block = self.compile(.init(cpu, exception_handler_ptr)) catch |err| retry: {
             if (err == error.JITCacheFull) {
                 sh4_jit_log.warn("JIT cache full: Resetting.", .{});
                 self.reset() catch |reset_err| {
                     sh4_jit_log.err("Failed to reset JIT: {t}", .{reset_err});
                     std.process.exit(1);
                 };
-                break :retry self.compile(.init(cpu));
+                break :retry self.compile(.init(cpu, exception_handler_ptr));
             } else break :retry err;
         } catch |err| {
             sh4_jit_log.err("Failed to compile {X:0>8}: {t}\n", .{ cpu.pc, err });
@@ -888,9 +927,10 @@ pub const SH4JIT = struct {
                     ctx.current_pc,
                     sh4.disassembly.disassemble(@bitCast(instr), self._allocator),
                 });
+            ctx.cycles += op.issue_cycles;
+
             branch = try op.jit_emit_fn(b, &ctx, @bitCast(instr));
 
-            ctx.cycles += op.issue_cycles;
             ctx.index += 1;
             ctx.current_pc += 2;
             ctx.current_physical_pc += 2;
@@ -974,13 +1014,10 @@ pub const SH4JIT = struct {
 
         try self.idle_speedup(&ctx);
 
-        for (ctx.jumps_to_end) |jmp|
-            if (jmp) |j| j.patch();
-
         try b.sub(sh4_mem("_pending_cycles"), .{ .imm32 = ctx.cycles });
         const exit_ptr = @intFromPtr(&self.block_cache.buffer[self.return_offset]);
         // Jump to the next block (Disabled when instrumentation is on, otherwise it would be a hassle to measure individual blocks)
-        if (!ctx.force_exit and ctx.cycles < MaxCyclesPerExecution and ctx.fpscr_pr != .Unknown and ctx.fpscr_sz != .Unknown and !BasicBlock.EnableInstrumentation) {
+        if (!ctx.force_exit and ctx.cycles < MaxCyclesPerExecution and ctx.fpscr_pr != .Unknown and ctx.fpscr_sz != .Unknown and !BasicBlock.EnableInstrumentation) done: {
             try b.append(.{ .Jmp = .{ .condition = .Sign, .dst = .{ .abs = exit_ptr } } });
             if (Optimizations.early_exit_on_interrupts == .Yes or (Optimizations.early_exit_on_interrupts == .MMUOnly and ctx.mmu_enabled)) {
                 try b.cmp(.{ .mem = .{ .base = SH4PtrRegister, .displacement = @offsetOf(sh4.SH4, "interrupt_requests"), .size = 64 } }, .{ .imm8 = 0 });
@@ -994,6 +1031,36 @@ pub const SH4JIT = struct {
             });
             const Key: JIT.Operand = .{ .reg = ArgRegisters[0] };
 
+            if (ctx.conditional_branch) |cb| {
+                if (!ctx.mmu_enabled or (!cross_page(ctx.entry_point_address, cb.taken) and !cross_page(ctx.entry_point_address, cb.not_taken))) {
+                    std.debug.assert(ctx.mmu_enabled or ctx.entry_point_address & 0x1FFFFFFF == ctx.entry_point_physical_address & 0x1FFFFFFF);
+                    const not_taken = if (ctx.mmu_enabled) (ctx.entry_point_physical_address -% ctx.entry_point_address) +% cb.not_taken else cb.not_taken;
+                    const not_taken_key = BlockCache.compute_key(not_taken, if (ctx.fpscr_sz == .Single) 0 else 1, if (ctx.fpscr_pr == .Single) 0 else 1);
+                    const taken = if (ctx.mmu_enabled) (ctx.entry_point_physical_address -% ctx.entry_point_address) +% cb.taken else cb.taken;
+                    const taken_key = BlockCache.compute_key(taken, if (ctx.fpscr_sz == .Single) 0 else 1, if (ctx.fpscr_pr == .Single) 0 else 1);
+                    sh4_jit_log.info("Optimizing conditional branch at 0x{X:0>8} ({X:0>8}): [{X:0>8} / {X:0>8}] ([{X:0>8} / {X:0>8}])", .{ ctx.entry_point_address, ctx.entry_point_physical_address, cb.taken, cb.not_taken, taken, not_taken });
+                    try b.cmp(sh4_mem("pc"), .{ .imm32 = cb.taken });
+                    if (cb.taken == ctx.entry_point_address) {
+                        try b.append(.{ .Jmp = .{ .condition = .Equal, .dst = .{ .abs = @intFromPtr(&self.block_cache.buffer[self.block_cache.cursor]) } } });
+                        try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.blocks.ptr) + 4 * not_taken_key });
+                    } else {
+                        const taken_block = self.block_cache.get(taken, if (ctx.fpscr_sz == .Single) 0 else 1, if (ctx.fpscr_pr == .Single) 0 else 1);
+                        if (taken_block.offset != 0) {
+                            try b.append(.{ .Jmp = .{ .condition = .Equal, .dst = .{ .abs = @intFromPtr(&self.block_cache.buffer[taken_block.offset]) } } });
+                            try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.blocks.ptr) + 4 * not_taken_key });
+                        } else {
+                            try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.blocks.ptr) + 4 * taken_key });
+                            try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .imm64 = @intFromPtr(self.block_cache.blocks.ptr) + 4 * not_taken_key });
+                            try b.cmov(.NotEqual, .{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[0] });
+                        }
+                    }
+                    try b.mov(.{ .reg = ArgRegisters[0] }, .{ .mem = .{ .base = ReturnRegister, .size = 32 } });
+                    try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) });
+                    try b.add(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[0] });
+                    try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
+                    break :done;
+                }
+            }
             var mmu_instruction_translation_call_jump: ?JIT.PatchableJump = null;
             if (ctx.mmu_enabled) {
                 // NOTE: In some cases we could easily convince ourselves that the PC cannot possibly cross a page boundary here.
@@ -1327,7 +1394,8 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
             // Check if an exception was raised.
             try block.cmp(.{ .reg8 = ReturnRegister }, .{ .imm8 = 0 });
             // Terminate the block immediately if an exception was raised.
-            try ctx.add_jump_to_end(try block.jmp(.NotEqual));
+            // try ctx.add_jump_to_end(try block.jmp(.NotEqual));
+            try ctx.jump_to_exception_handling(block, .NotEqual);
 
             if (ctx.in_delay_slot) {
                 try block.mov(sh4_mem("pc"), .{ .reg = ArgRegisters[0] });
@@ -1604,6 +1672,26 @@ fn runtime_instruction_mmu_translation() callconv(Architecture.CallingConvention
     return BlockCache.compute_key(physical_pc, cpu.fpscr.sz, cpu.fpscr.pr); // Make sure we use updated FPSCR.
 }
 
+/// Returns the next block key. Called from the exception handler, this is guaranteed not to throw another exception.
+fn exception_handler_instruction_mmu_translation() callconv(Architecture.CallingConvention) u32 {
+    const cpu = get_cpu();
+    std.debug.assert(cpu._mmu_state == .Full);
+    const virtual_addr = cpu.pc;
+    std.debug.assert(virtual_addr & 1 == 0);
+    const physical_pc = ppc: {
+        const cache_entry = if (Optimizations.mmu_translation_cache) &MMUInstructionCache[MMUCacheEntry.get_index(MMUInstructionCacheEntryCount, virtual_addr)] else {};
+        if (Optimizations.mmu_translation_cache and cache_entry.hit(virtual_addr))
+            break :ppc cache_entry.translate(virtual_addr) & 0x1FFF_FFFF;
+
+        const physical = cpu.translate_instruction_address(virtual_addr) catch unreachable;
+
+        if (Optimizations.mmu_translation_cache) cache_entry.update(virtual_addr, physical);
+
+        break :ppc physical;
+    };
+    return BlockCache.compute_key(physical_pc, cpu.fpscr.sz, cpu.fpscr.pr); // Make sure we use updated FPSCR.
+}
+
 const MMUCacheEntry = struct {
     vpn: u32 = 0xDEADBEEF,
     /// Stores the offset between the virtual address and the physical address.
@@ -1760,7 +1848,7 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
             register_to_save,
         );
 
-        try ctx.add_jump_to_end(try block.jmp(success_condition.invert()));
+        try ctx.jump_to_exception_handling(block, success_condition.invert());
     }
 }
 
@@ -2318,7 +2406,7 @@ fn check_fd_bit(block: *IRBlock, ctx: *JITContext) !void {
                     try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
                     try call(block, ctx, jump_to_exception(.GeneralFPUDisable));
                 }
-                try ctx.add_jump_to_end(try block.jmp(.Always));
+                try ctx.jump_to_exception_handling(block, .Always);
 
                 skip.patch();
 
@@ -3322,15 +3410,18 @@ pub fn shlr16(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 fn default_conditional_branch(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, comptime jump_if: bool, comptime delay_slot: bool) !bool {
     const dest = sh4_interpreter.d8_disp(ctx.current_pc, instr);
+    const next_instr = ctx.current_pc + if (delay_slot) 4 else 2;
     try load_t_zf(block, ctx);
 
     try block.mov(.{ .reg = ReturnRegister }, .{ .imm32 = dest });
-    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm32 = ctx.current_pc + if (delay_slot) 4 else 2 });
+    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm32 = next_instr });
     try block.cmov(if (jump_if) .Zero else .NotZero, .{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[0] });
     try block.mov(sh4_mem("pc"), .{ .reg = ReturnRegister });
 
     ctx.outdated_pc = false;
     if (delay_slot) try ctx.compile_delay_slot(block);
+
+    ctx.conditional_branch = .{ .taken = dest, .not_taken = next_instr };
 
     return true;
 }
@@ -3445,10 +3536,12 @@ pub fn bra_label(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
         // ctx.index and ctx.address will be incremented right after, so point to one instruction before.
         ctx.instructions = @ptrFromInt(@intFromPtr(ctx.instructions) - (ctx.start_pc - dest + 2));
         ctx.index = 0;
+        const mmu_offset = if (ctx.mmu_enabled) ctx.start_physical_pc -% ctx.start_pc else 0;
         ctx.current_pc = dest - 2;
         ctx.start_pc = dest - 2;
         std.debug.assert(!ctx.mmu_enabled);
-        ctx.current_physical_pc = (dest - 2) & 0x1FFFFFFF;
+        ctx.current_physical_pc = ((dest - 2) +% mmu_offset) & 0x1FFFFFFF;
+        ctx.start_physical_pc = ((dest - 2) +% mmu_offset) & 0x1FFFFFFF;
         return false;
     } else {
         try block.mov(sh4_mem("pc"), .{ .imm32 = dest });
