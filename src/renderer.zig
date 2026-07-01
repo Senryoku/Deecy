@@ -2155,21 +2155,21 @@ pub const Renderer = struct {
         vertices[0].y = 0.0;
         vertices[1].x = screen_width;
         vertices[1].y = 0.0;
-        vertices[2].x = 0.0;
+        vertices[2].x = screen_width;
         vertices[2].y = screen_height;
 
         vertices[3] = .{
             .primitive_index = vertices[0].primitive_index,
-            .x = vertices[1].x,
+            .x = vertices[0].x,
             .y = vertices[2].y,
             .z = vertices[2].z,
             // NOTE: As stated above, this is an oversimplification. Looks okay in the boot menu.
             .base_color = vertices[2].base_color,
-            .u = vertices[2].u,
-            .v = vertices[1].v,
+            .u = vertices[0].u,
+            .v = vertices[2].v,
         };
 
-        const indices = [_]u32{ 0, 1, 2, 3, 0xFFFFFFFF };
+        const indices = [_]u32{ 0, 1, 3, 2, 0xFFFFFFFF };
 
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, 0, Vertex, &vertices);
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, 0, u32, &indices);
