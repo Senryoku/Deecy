@@ -2533,6 +2533,7 @@ pub const Holly = struct {
         const line_offset = field;
         const line_stride: u32 = if (interlaced) 2 else 1;
         const line_count = size.height / line_stride;
+
         for (parameters.y_clip.min..@min(line_count, parameters.y_clip.max + 1)) |y| {
             for (parameters.x_clip.min..@min(size.width, parameters.x_clip.max + 1)) |x| {
                 const src = pixels[((line_stride * y + line_offset) * size.width + x) * 4 ..][0..4];

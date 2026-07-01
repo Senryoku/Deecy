@@ -2028,7 +2028,50 @@ pub const Renderer = struct {
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.palette_buffer).?, 0, u8, std.mem.sliceAsBytes(self.palette_bgra));
     }
 
-    /// Pulls 3 vertices from the address pointed by ISP_BACKGND_T and places them at the front of the vertex buffer.
+    fn interpolate_vertex_field(comptime field: []const u8, w: [3]f32, v: [3]Vertex) @FieldType(Vertex, field) {
+        if (@FieldType(Vertex, field) == PackedColor) {
+            const c: [3][4]f32 = .{
+                .{ @field(v[0], field).r, @field(v[0], field).g, @field(v[0], field).b, @field(v[0], field).a },
+                .{ @field(v[1], field).r, @field(v[1], field).g, @field(v[1], field).b, @field(v[1], field).a },
+                .{ @field(v[2], field).r, @field(v[2], field).g, @field(v[2], field).b, @field(v[2], field).a },
+            };
+            return .{
+                .r = std.math.lossyCast(u8, w[0] * c[0][0] + w[1] * c[1][0] + w[2] * c[2][0]),
+                .g = std.math.lossyCast(u8, w[0] * c[0][1] + w[1] * c[1][1] + w[2] * c[2][1]),
+                .b = std.math.lossyCast(u8, w[0] * c[0][2] + w[1] * c[1][2] + w[2] * c[2][2]),
+                .a = std.math.lossyCast(u8, w[0] * c[0][3] + w[1] * c[1][3] + w[2] * c[2][3]),
+            };
+        }
+        return w[0] * @field(v[0], field) + w[1] * @field(v[1], field) + w[2] * @field(v[2], field);
+    }
+
+    /// Extrapolate vertex properties according to its baricentric coordinates within the triangle given by `v`.
+    fn background_interpolation(p: [2]f32, v: [3]Vertex) Vertex {
+        const det = (v[1].y - v[2].y) * (v[0].x - v[2].x) + (v[2].x - v[1].x) * (v[0].y - v[2].y);
+        var weights = [3]f32{
+            ((v[1].y - v[2].y) * (p[0] - v[2].x) + (v[2].x - v[1].x) * (p[1] - v[2].y)) / det,
+            ((v[2].y - v[0].y) * (p[0] - v[0].x) + (v[0].x - v[2].x) * (p[1] - v[0].y)) / det,
+            0.0,
+        };
+        weights[2] = 1.0 - weights[0] - weights[1];
+        return Vertex{
+            .x = p[0],
+            .y = p[1],
+            .z = interpolate_vertex_field("z", weights, v), // Should be `ISP_BACKGND_D`?
+            .primitive_index = 0,
+            .base_color = interpolate_vertex_field("base_color", weights, v),
+            .offset_color = interpolate_vertex_field("offset_color", weights, v),
+            .u = interpolate_vertex_field("u", weights, v),
+            .v = interpolate_vertex_field("v", weights, v),
+            .area1_base_color = interpolate_vertex_field("area1_base_color", weights, v),
+            .area1_offset_color = interpolate_vertex_field("area1_offset_color", weights, v),
+            .area1_u = interpolate_vertex_field("area1_u", weights, v),
+            .area1_v = interpolate_vertex_field("area1_v", weights, v),
+        };
+    }
+
+    /// Pulls 3 vertices from the address pointed by ISP_BACKGND_T, generates 4 vertices covering the screen
+    /// and places them at the front of the vertex buffer.
     /// Assumes _gctx_queue_mutex is locked.
     pub fn update_background(self: *@This(), gpu: *const HollyModule.Holly) !void {
         const tags = gpu.read_register(HollyModule.ISP_BACKGND_T, .ISP_BACKGND_T);
@@ -2095,7 +2138,7 @@ pub const Renderer = struct {
         };
 
         const use_alpha = tsp_instruction.use_alpha == 1;
-        var vertices: [4]Vertex = undefined;
+        var bg_vertices: [3]Vertex = undefined;
         for (0..3) |i| {
             const vp = [_]u32{
                 gpu.read_vram(u32, @intCast(start + i * vertex_byte_size + 0)),
@@ -2127,7 +2170,7 @@ pub const Renderer = struct {
             }
             if (!use_alpha) base_color.a = 255;
 
-            vertices[i] = .{
+            bg_vertices[i] = .{
                 .primitive_index = @intCast(self.strips_metadata.items.len),
                 .x = @bitCast(vp[0]),
                 .y = @bitCast(vp[1]),
@@ -2139,37 +2182,24 @@ pub const Renderer = struct {
             };
             // NOTE: We draw the background with depth test disabled, but it might get clipped if for some reason it's drawn in front and we don't consider it for the max_depth.
             //       So, even if we're not using the min_depth right now (where it is most likely to matter), I'd rather be safe :)
-            self.min_depth = @min(self.min_depth, vertices[i].z);
-            self.max_depth = @max(self.max_depth, vertices[i].z);
+            self.min_depth = @min(self.min_depth, bg_vertices[i].z);
+            self.max_depth = @max(self.max_depth, bg_vertices[i].z);
         }
 
         // NOTE: MetalliC's comment about background rendering:
         //       "it's a bit brainfuck, and I don't think it was documented anywhere how exactly PVR2 background rendered...
         //        in short - it takes 3 vertices and calculate interpolation, UV, shading etc coefficients as for triangle rendering. but iterate these coefficients to fill the whole screen"
-        //  Example of an effect that my current "solution" will fail to render correctly (Naomi example, but there might be some in the DC library too): https://youtu.be/gtIwGUG9iZk?t=127
-
-        // We'll simply draw a quad covering the whole screen. This will be fine as long as the background has a uniform color, but will break for more complicated cases.
         const screen_width: f32 = if (self.write_back_parameters.scaler_ctl.horizontal_scaling_enable) 1280.0 else 640.0;
         const screen_height: f32 = 480.0;
-        vertices[0].x = 0.0;
-        vertices[0].y = 0.0;
-        vertices[1].x = screen_width;
-        vertices[1].y = 0.0;
-        vertices[2].x = screen_width;
-        vertices[2].y = screen_height;
 
-        vertices[3] = .{
-            .primitive_index = vertices[0].primitive_index,
-            .x = vertices[0].x,
-            .y = vertices[2].y,
-            .z = vertices[2].z,
-            // NOTE: As stated above, this is an oversimplification. Looks okay in the boot menu.
-            .base_color = vertices[2].base_color,
-            .u = vertices[0].u,
-            .v = vertices[2].v,
+        var vertices: [4]Vertex = .{
+            background_interpolation(.{ 0, screen_height }, bg_vertices),
+            background_interpolation(.{ 0, 0 }, bg_vertices),
+            background_interpolation(.{ screen_width, screen_height }, bg_vertices),
+            background_interpolation(.{ screen_width, 0 }, bg_vertices),
         };
 
-        const indices = [_]u32{ 0, 1, 3, 2, 0xFFFFFFFF };
+        const indices = [_]u32{ 0, 1, 2, 3, 0xFFFFFFFF };
 
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, 0, Vertex, &vertices);
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, 0, u32, &indices);
