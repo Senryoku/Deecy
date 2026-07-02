@@ -1907,8 +1907,12 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
             address_register,
             register_to_save,
         );
-
-        try ctx.jump_to_exception_handling(block, success_condition.invert());
+        // NOTE: jump_to_exception_handling clobbers ReturnRegister and it might be the `register_to_save`, we can't simply do:
+        //   std.debug.assert(register_to_save != ReturnRegister);
+        //   try ctx.jump_to_exception_handling(block, success_condition.invert());
+        var ok = try block.jmp(success_condition);
+        try ctx.jump_to_exception_handling(block, .Always);
+        ok.patch();
     }
 }
 
