@@ -312,9 +312,9 @@ fn display_tlb(comptime name: [:0]const u8, tlbs: []SH4Module.mmu.TLBEntry) void
             _ = zgui.tableSetColumnIndex(1);
             zgui.textColored(color, "{X: >2}", .{tlb.asid});
             _ = zgui.tableSetColumnIndex(2);
-            zgui.textColored(color, "{X:0>8}", .{@as(u32, tlb.vpn) << 10});
+            zgui.textColored(color, "{X:0>8}", .{tlb.get_vpn()});
             _ = zgui.tableSetColumnIndex(3);
-            zgui.textColored(color, "{X:0>8}", .{tlb._ppn});
+            zgui.textColored(color, "{X:0>8}", .{tlb.get_ppn()});
             _ = zgui.tableSetColumnIndex(4);
             zgui.textColored(color, "{s}", .{switch (tlb.sz) {
                 0 => "1KB",

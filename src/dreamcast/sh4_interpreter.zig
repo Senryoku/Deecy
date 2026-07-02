@@ -1287,12 +1287,12 @@ pub fn ldtlb(cpu: *SH4, _: Instr) !void {
     const ptel = cpu.read_p4_register(sh4.mmu.PTEL, .PTEL);
     const ptea = cpu.read_p4_register(sh4.mmu.PTEA, .PTEA);
 
-    cpu.invalidate_utlb_fast_lookup(cpu.utlb[urc]);
+    cpu.on_utlb_eviction(cpu.utlb[urc]);
     cpu.utlb[urc] = .{
         .asid = pteh.asid,
         .vpn = pteh.vpn,
 
-        ._ppn = @as(u32, ptel.ppn) << 10,
+        .ppn = ptel.ppn,
         .v = ptel.v,
         .sz = ptel.sz(),
         .pr = ptel.pr,
@@ -1304,14 +1304,10 @@ pub fn ldtlb(cpu: *SH4, _: Instr) !void {
         .sa = ptea.sa,
         .tc = ptea.tc,
     };
-    cpu.sync_utlb_fast_lookup(urc);
+    cpu.on_utlb_load(urc);
     cpu.check_mmu_state();
 
     sh4_log.info("ldtlb : utlb[{d}] = {f}", .{ urc, cpu.utlb[urc] });
-
-    // NOTE: I'm using the physical address - i.e. the address after translation - as key to the JIT cache, so this is useless. Probably? Right?
-    //       (Also this should invalidate the previous value of the entry too.)
-    // if (cpu._dc) |dc| dc.sh4_jit.invalidate(cpu.utlb[urc].first_physical_address(), cpu.utlb[urc].first_physical_address() + cpu.utlb[urc].size());
 }
 
 pub fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) !void {
@@ -1477,7 +1473,7 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) !void {
                 const vpn: u22 = @truncate(addr >> 10);
                 for (cpu.utlb) |entry| {
                     if (entry.match(false, 0, vpn)) {
-                        ext_addr = entry._ppn | (addr & 0xFFFE0);
+                        ext_addr = entry.get_ppn() | (addr & 0xFFFE0);
                         break;
                     }
                 }

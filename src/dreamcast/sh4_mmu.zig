@@ -91,20 +91,33 @@ pub const MMU = packed struct {
     mmucr: u32 = 0x00000000, // MMU control register
 };
 
-// Memory layout isn't hardware accurate
-pub const TLBEntry = struct {
-    asid: u8 = 0xAA, // Address space identifier
-    vpn: u22 = 0xBAD, // Virtual page number
-    v: bool = false, // Validity bit
-
-    tc: u1 = 0, // Timing control bit
-    sa: u3 = 0, // Space attribute bits
-    wt: bool = false, // Write-through bit
-    d: bool = false, // Dirty bit
-    pr: ProtectionKey = .ReadWrite, // Protection key data
-    c: bool = true, // Cacheability bit
-    sh: bool = false, // Share status bit, 1 => Shared
-    sz: u2 = 0, // Page size
+/// Old Layout of TLB entries (with expanded ppn)
+/// Kept around only for save state compatibility. Also this wasn't packed or extern,
+/// look at it wrong and the layout will change, breaking all save states, yay.
+/// TODO: Get rid of it the next time save state backward compatibility is broken.
+pub const OldTLBEntry = struct {
+    /// Address space identifier
+    asid: u8 = 0xAA,
+    /// Virtual page number
+    vpn: u22 = 0xBAD,
+    /// Validity bit
+    v: bool = false,
+    /// Timing control bit
+    tc: u1 = 0,
+    /// Space attribute bits
+    sa: u3 = 0,
+    /// Write-through bit
+    wt: bool = false,
+    /// Dirty bit
+    d: bool = false,
+    /// Protection key data
+    pr: ProtectionKey = .ReadWrite,
+    /// Cacheability bit
+    c: bool = true,
+    /// Share status bit, 1 => Shared
+    sh: bool = false,
+    /// Page size
+    sz: u2 = 0,
 
     _ppn: u32 = 0xDEADCAFE, // Physical page number, stored as u19 << 10
 
@@ -156,6 +169,96 @@ pub const TLBEntry = struct {
         try writer.print("TLB{{.vpn = {X:0>8}, .ppn = {X:0>8}, .asid = {X}, .v = {}, .tc = {}, .sa = {}, .wt = {}, .d = {}, .pr = {t}, .c = {}, .sh = {}, .sz = {}}}", .{
             @as(u32, self.vpn) << 10,
             self._ppn,
+            self.asid,
+            self.v,
+            self.tc,
+            self.sa,
+            self.wt,
+            self.d,
+            self.pr,
+            self.c,
+            self.sh,
+            self.sz,
+        });
+    }
+};
+
+pub const TLBEntry = packed struct(u64) {
+    /// Address space identifier
+    asid: u8 = 0xAA,
+    /// Virtual page number
+    vpn: u22 = 0xBAD,
+    /// Validity bit
+    v: bool = false,
+    /// Timing control bit
+    tc: u1 = 0,
+    /// Space attribute bits
+    sa: u3 = 0,
+    /// Write-through bit
+    wt: bool = false,
+    /// Dirty bit
+    d: bool = false,
+    /// Protection key data
+    pr: ProtectionKey = .ReadWrite,
+    /// Cacheability bit
+    c: bool = true,
+    /// Share status bit, 1 => Shared
+    sh: bool = false,
+    /// Page size
+    sz: u2 = 0,
+
+    ppn: u19 = 0xDEAD,
+
+    _: u2 = 0,
+
+    pub inline fn get_vpn(self: *const @This()) u32 {
+        return @as(u32, self.vpn << 10);
+    }
+
+    pub inline fn get_ppn(self: *const @This()) u32 {
+        return @as(u32, self.ppn << 10);
+    }
+
+    pub inline fn valid(self: *const @This()) bool {
+        return self.v;
+    }
+
+    pub inline fn match(self: *const @This(), multiple_virtual_memory_mode: bool, asid: u8, vpn: u22) bool {
+        const check_asid = !self.sh and multiple_virtual_memory_mode;
+        if (check_asid) {
+            return self.valid() and (self.asid == asid) and vpn_match(self.vpn, vpn, self.sz);
+        } else {
+            return self.valid() and vpn_match(self.vpn, vpn, self.sz);
+        }
+    }
+
+    pub inline fn translate(self: *const @This(), virtual_address: u32) u32 {
+        const mask: u32 = switch (self.sz) {
+            0b00 => (1 << 10) - 1, // 1-Kbyte page
+            0b01 => (1 << 12) - 1, // 4-Kbyte page
+            0b10 => (1 << 16) - 1, // 64-Kbyte page
+            0b11 => (1 << 20) - 1, // 1-Mbyte page
+        };
+        return ((@as(u32, self.ppn) << 10) & ~mask) | (virtual_address & mask);
+    }
+
+    pub inline fn first_physical_address(self: *const @This()) u32 {
+        return self.translate(@as(u32, self.vpn) << 10);
+    }
+
+    pub inline fn size(self: *const @This()) u32 {
+        return @as(u32, 1) << switch (self.sz) {
+            0b00 => 10, // 1-Kbyte page
+            0b01 => 12, // 4-Kbyte page
+            0b10 => 16, // 64-Kbyte page
+            0b11 => 20, // 1-Mbyte page
+        };
+    }
+
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
+        try writer.print("TLB{{.vpn = {X:0>8}, .ppn = {X:0>8}, .asid = {X}, .v = {}, .tc = {}, .sa = {}, .wt = {}, .d = {}, .pr = {t}, .c = {}, .sh = {}, .sz = {}}}", .{
+            self.get_vpn(),
+            self.get_ppn(),
             self.asid,
             self.v,
             self.tc,

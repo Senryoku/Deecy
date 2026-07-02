@@ -42,9 +42,17 @@ pub const EmulateITLB = false;
 /// Checks the PR bit of UTLB entries and raise an Access Violation Exception when accessing protected pages in User Mode.
 ///   Never seen such exceptions in practice yet, so this is disabled by default.
 pub const EmulateAccessViolation = false;
-/// Uses a virtual memory lookup table to speed up UTLB lookups.
+
 pub const EnableUTLBFastLookup = true and (FullMMUSupport and !EmulateUTLBMultipleHit);
-const FastLookupType = if (EnableUTLBFastLookup) []u8 else void;
+pub const CachedUTLBFastLookup = true and EnableUTLBFastLookup;
+
+const fast_utlb = @import("sh4_fast_utlb.zig");
+const FastUTLBType = if (CachedUTLBFastLookup)
+    fast_utlb.Cached
+else if (EnableUTLBFastLookup)
+    fast_utlb.Indexed
+else
+    fast_utlb.None;
 
 pub const SR = packed struct(u32) {
     t: bool = false, // True/False condition or carry/borrow bit. NOTE: Undefined at startup, set for repeatability.
@@ -246,7 +254,7 @@ pub const SH4 = struct {
     /// Is the MMU currently enabled?
     ///   Limited: Translation is only needed for store queue operation (pref instruction).
     _mmu_state: enum { Disabled, Limited, Full } = .Disabled,
-    _fast_utlb_lookup: FastLookupType,
+    fast_utlb: FastUTLBType,
     _last_timer_update: [3]u64 = @splat(0),
 
     execution_state: ExecutionState = .Running,
@@ -276,7 +284,7 @@ pub const SH4 = struct {
             .utlb = try allocator.alloc(mmu.TLBEntry, 64),
             ._allocator = allocator,
             ._operand_cache_state = try allocator.create(OperandCacheState),
-            ._fast_utlb_lookup = if (EnableUTLBFastLookup) try host_memory.virtual_alloc(u8, @as(u32, 1) << (22 + 8)) else {},
+            .fast_utlb = try .init(),
         };
 
         sh4.reset();
@@ -286,8 +294,7 @@ pub const SH4 = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        if (EnableUTLBFastLookup)
-            host_memory.virtual_dealloc(self._fast_utlb_lookup);
+        self.fast_utlb.deinit();
         self._allocator.free(self.utlb);
         self._allocator.free(self.itlb);
         self._allocator.free(self.p4_registers);
@@ -384,7 +391,7 @@ pub const SH4 = struct {
         self._mmu_state = .Disabled;
         for (self.itlb) |*entry| entry.* = .{};
         for (self.utlb) |*entry| entry.* = .{};
-        self.reset_utlb_fast_lookup();
+        self.on_tlb_invalidation();
 
         self._last_timer_update = @splat(0);
         self.execution_state = .Running;
@@ -433,7 +440,7 @@ pub const SH4 = struct {
 
         for (self.itlb) |*entry| entry.* = .{};
         for (self.utlb) |*entry| entry.* = .{};
-        self.reset_utlb_fast_lookup();
+        self.on_tlb_invalidation();
 
         self._mmu_state = .Disabled;
         self.execution_state = .Running;
@@ -1006,52 +1013,20 @@ pub const SH4 = struct {
         }
     }
 
-    fn reset_utlb_fast_lookup(self: *@This()) void {
+    fn on_tlb_invalidation(self: *@This()) void {
         if (self._dc) |dc| dc.sh4_jit.reset_mmu_cache();
-
-        if (!EnableUTLBFastLookup) return;
-        host_memory.virtual_dealloc(self._fast_utlb_lookup);
-        self._fast_utlb_lookup = host_memory.virtual_alloc(u8, @as(u32, 1) << (22 + 8)) catch |err| {
-            std.debug.panic("Error allocating _fast_utlb_lookup: {t}", .{err});
+        self.fast_utlb.reset() catch |err| {
+            sh4_log.err("Failed to reset UTLB fast lookup: {}", .{err});
         };
-        for (0..self.utlb.len) |idx|
-            self.sync_utlb_fast_lookup(@intCast(idx));
     }
 
-    pub fn invalidate_utlb_fast_lookup(self: *@This(), entry: mmu.TLBEntry) void {
+    pub fn on_utlb_eviction(self: *@This(), entry: mmu.TLBEntry) void {
         if (self._dc) |dc| dc.sh4_jit.reset_mmu_cache();
-
-        if (!EnableUTLBFastLookup) return;
-        if (entry.valid())
-            self.update_utlb_fast_lookup(entry, 0);
-    }
-    pub fn sync_utlb_fast_lookup(self: *@This(), idx: u8) void {
-        if (self._dc) |dc| dc.sh4_jit.reset_mmu_cache();
-
-        if (!EnableUTLBFastLookup) return;
-        if (self.utlb[idx].valid())
-            self.update_utlb_fast_lookup(self.utlb[idx], idx + 1);
+        self.fast_utlb.evict(entry);
     }
 
-    inline fn update_utlb_fast_lookup(self: *@This(), entry: mmu.TLBEntry, value: u8) void {
-        const mmucr = self.read_p4_register(mmu.MMUCR, .MMUCR);
-        // Single Virtual Memory Mode: ASID does not matter and all checks will use 0.
-        if (mmucr.sv) {
-            self.set_utlb_fast_lookup(0, entry, value);
-        } else {
-            // Shared: Update it for all ASID
-            if (entry.sh) {
-                for (0..256) |asid|
-                    self.set_utlb_fast_lookup(@intCast(asid), entry, value);
-            } else {
-                self.set_utlb_fast_lookup(entry.asid, entry, value);
-            }
-        }
-    }
-
-    inline fn set_utlb_fast_lookup(self: *@This(), asid: u8, entry: mmu.TLBEntry, value: u8) void {
-        const key: u32 = @as(u32, asid) << 22 | (entry.vpn & (~((entry.size() - 1) >> 10)));
-        @memset(self._fast_utlb_lookup[key..][0 .. entry.size() >> 10], value);
+    pub fn on_utlb_load(self: *@This(), idx: u8) void {
+        self.fast_utlb.load(self.utlb[idx], idx);
     }
 
     pub inline fn utlb_lookup(self: *const @This(), virtual_addr: u32) error{ TLBMiss, TLBProtectionViolation, TLBMultipleHit }!mmu.TLBEntry {
@@ -1068,17 +1043,8 @@ pub const SH4 = struct {
         const asid = if (multiple_virtual_memory_mode) self.read_p4_register(mmu.PTEH, .PTEH).asid else 0;
         const vpn: u22 = @truncate(virtual_addr >> 10);
 
-        if (EnableUTLBFastLookup) {
-            const key: u32 = @as(u32, asid) << 22 | vpn;
-            const idx = self._fast_utlb_lookup[key];
-            if (idx != 0) {
-                const entry = self.utlb[idx - 1];
-                if (EmulateAccessViolation and self.sr.md == 0 and entry.pr.privileged())
-                    return error.TLBProtectionViolation;
-                return entry;
-            }
-            return error.TLBMiss;
-        }
+        if (EnableUTLBFastLookup)
+            return self.fast_utlb.lookup(asid, vpn);
 
         var found_entry: ?mmu.TLBEntry = null;
 
@@ -1285,7 +1251,7 @@ pub const SH4 = struct {
                     .pr = entry.pr,
                     .sz1 = @truncate(entry.sz >> 1),
                     .v = entry.v,
-                    .ppn = entry.get_ppn(),
+                    .ppn = entry.ppn,
                 };
                 const r: u32 = @bitCast(val);
                 return switch (T) {
@@ -1412,11 +1378,11 @@ pub const SH4 = struct {
             },
             0xF2000000...0xF2FFFFFF => {
                 // Instruction TLB address array (ITLB)
-                sh4_log.warn(termcolor.yellow("Write({}) to Instruction TLB address array (ITLB): {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
+                sh4_log.warn("Write({}) to Instruction TLB address array (ITLB): {X:0>8} = {X:0>8}", .{ T, virtual_addr, value });
                 if (T == u32) {
                     const entry: u4 = @truncate(virtual_addr >> 8);
                     const val: mmu.UTLBAddressData = @bitCast(value);
-                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {} (VPN: {X:0>6})"), .{ entry, val, val.vpn });
+                    sh4_log.info("  Entry {X:0>3}: {} (VPN: {X:0>6})", .{ entry, val, val.vpn });
 
                     const before = self.itlb[entry];
 
@@ -1431,11 +1397,11 @@ pub const SH4 = struct {
             },
             0xF3000000...0xF37FFFFF => {
                 // Instruction TLB data arrays 1 (ITLB)
-                sh4_log.warn(termcolor.yellow("Write({}) to Instruction TLB data array 1 (ITLB): {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
+                sh4_log.warn("Write({}) to Instruction TLB data array 1 (ITLB): {X:0>8} = {X:0>8}", .{ T, virtual_addr, value });
                 if (T == u32) {
                     const entry: u2 = @truncate(virtual_addr >> 8);
                     const val: mmu.UTLBArrayData1 = @bitCast(value);
-                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {} (PPN: {X:0>5})"), .{ entry, val, val.ppn });
+                    sh4_log.info("  Entry {X:0>3}: {} (PPN: {X:0>5})", .{ entry, val, val.ppn });
 
                     const before = self.itlb[entry];
 
@@ -1446,7 +1412,7 @@ pub const SH4 = struct {
                     self.itlb[entry].sz = val.sz();
                     self.itlb[entry].pr = val.pr;
                     self.itlb[entry].v = val.v;
-                    self.itlb[entry].set_ppn(val.ppn);
+                    self.itlb[entry].ppn = val.ppn;
 
                     if (!std.meta.eql(before, self.itlb[entry]))
                         if (self._dc) |dc| dc.sh4_jit.safe_reset();
@@ -1454,11 +1420,11 @@ pub const SH4 = struct {
             },
             0xF3800000...0xF3FFFFFF => {
                 // Instruction TLB data arrays 2 (ITLB)
-                sh4_log.info(termcolor.yellow("Write({}) to Instruction TLB data array 2 (ITLB):   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
+                sh4_log.info("Write({}) to Instruction TLB data array 2 (ITLB):   {X:0>8} ({X:0>8})", .{ T, virtual_addr, value });
                 if (T == u32) {
                     const entry: u2 = @truncate(virtual_addr >> 8);
                     const val: mmu.UTLBArrayData2 = @bitCast(value);
-                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {}"), .{ entry, val });
+                    sh4_log.info("  Entry {X:0>3}: {}", .{ entry, val });
 
                     const before = self.itlb[entry];
 
@@ -1471,20 +1437,20 @@ pub const SH4 = struct {
             },
             0xF4000000...0xF4FFFFFF => {
                 // Operand cache address array
-                sh4_log.info(termcolor.yellow("Write({}) to Operand cache address array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
+                sh4_log.info("Write({}) to Operand cache address array: {X:0>8} = {X:0>8}", .{ T, virtual_addr, value });
             },
             0xF5000000...0xF5FFFFFF => {
                 // Operand cache data array
-                sh4_log.info(termcolor.yellow("Write({}) to Operand cache data array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
+                sh4_log.info("Write({}) to Operand cache data array: {X:0>8} = {X:0>8}", .{ T, virtual_addr, value });
             },
             0xF6000000...0xF6FFFFFF => {
                 // Unified TLB address array (UTLB)
-                sh4_log.info(termcolor.yellow("Write({}) to Unified TLB address array: {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
+                sh4_log.info("Write({}) to Unified TLB address array: {X:0>8} ({X:0>8})", .{ T, virtual_addr, value });
                 if (T == u32) {
                     const entry: u6 = @truncate(virtual_addr >> 8);
                     const association_bit: u1 = @truncate(virtual_addr >> 7);
                     const val: mmu.UTLBAddressData = @bitCast(value);
-                    sh4_log.info(termcolor.yellow("  Entry {X:0>3} (A:{X:0>1}): {} (VPN: {X:0>6})"), .{ entry, association_bit, val, val.vpn });
+                    sh4_log.info("  Entry {X:0>3} (A:{X:0>1}): {} (VPN: {X:0>6})", .{ entry, association_bit, val, val.vpn });
 
                     std.debug.assert(association_bit == 0); // 1: Not implemented
                     // When a write is performed with the A bit in the address field set to 1, comparison of all the
@@ -1507,20 +1473,19 @@ pub const SH4 = struct {
                     self.utlb[entry].vpn = val.vpn;
 
                     if (!std.meta.eql(before, self.utlb[entry])) {
-                        self.invalidate_utlb_fast_lookup(before);
-                        self.sync_utlb_fast_lookup(entry);
+                        self.on_utlb_eviction(before);
+                        self.on_utlb_load(entry);
                         self.check_mmu_state();
-                        // if (self._dc) |dc| dc.sh4_jit.safe_reset();
                     }
                 }
             },
             0xF7000000...0xF77FFFFF => {
                 // Unified TLB data array 1  (UTLB)
-                sh4_log.info(termcolor.yellow("Write({}) to Unified TLB data array 1:   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
+                sh4_log.info("Write({}) to Unified TLB data array 1:   {X:0>8} ({X:0>8})", .{ T, virtual_addr, value });
                 if (T == u32) {
                     const entry: u6 = @truncate(virtual_addr >> 8);
                     const val: mmu.UTLBArrayData1 = @bitCast(value);
-                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {} (PPN: {X:0>5})"), .{ entry, val, val.ppn });
+                    sh4_log.info("  Entry {X:0>3}: {} (PPN: {X:0>5})", .{ entry, val, val.ppn });
 
                     const before = self.utlb[entry];
 
@@ -1531,35 +1496,27 @@ pub const SH4 = struct {
                     self.utlb[entry].sz = val.sz();
                     self.utlb[entry].pr = val.pr;
                     self.utlb[entry].v = val.v;
-                    self.utlb[entry].set_ppn(val.ppn);
+                    self.utlb[entry].ppn = val.ppn;
 
                     if (!std.meta.eql(before, self.utlb[entry])) {
-                        self.invalidate_utlb_fast_lookup(before);
-                        self.sync_utlb_fast_lookup(entry);
+                        self.on_utlb_eviction(before);
+                        self.on_utlb_load(entry);
                         self.check_mmu_state();
-                        // if (self._dc) |dc| dc.sh4_jit.safe_reset();
                     }
                 }
             },
             0xF7800000...0xF7FFFFFF => {
                 // Unified TLB data array 2 (UTLB)
-                sh4_log.info(termcolor.yellow("Write({}) to Unified TLB data array 2:   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
+                sh4_log.info("Write({}) to Unified TLB data array 2:   {X:0>8} ({X:0>8})", .{ T, virtual_addr, value });
                 if (T == u32) {
                     const entry: u6 = @truncate(virtual_addr >> 8);
                     const val: mmu.UTLBArrayData2 = @bitCast(value);
-                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {}"), .{ entry, val });
-
-                    const before = self.utlb[entry];
+                    sh4_log.info("  Entry {X:0>3}: {}", .{ entry, val });
 
                     self.utlb[entry].sa = val.sa;
                     self.utlb[entry].tc = val.tc;
 
-                    if (!std.meta.eql(before, self.utlb[entry])) {
-                        self.invalidate_utlb_fast_lookup(before);
-                        self.sync_utlb_fast_lookup(entry);
-                        self.check_mmu_state();
-                        // if (self._dc) |dc| dc.sh4_jit.safe_reset();
-                    }
+                    self.on_utlb_load(entry);
                 }
             },
             0xF8000000...0xFBFFFFFF => {
@@ -1583,7 +1540,7 @@ pub const SH4 = struct {
                                     for (self.utlb) |*entry|
                                         entry.v = false;
                                 }
-                                if (val.ti or val.sv != mmucr.sv) self.reset_utlb_fast_lookup();
+                                if (val.ti or val.sv != mmucr.sv) self.on_tlb_invalidation();
                                 val.ti = false; // Always return 0 when read.
                                 mmucr.* = val;
                                 self.check_mmu_state();
@@ -1865,8 +1822,43 @@ pub const SH4 = struct {
         bytes += try writer.write(std.mem.sliceAsBytes(self.store_queues[0..]));
         bytes += try writer.write(std.mem.sliceAsBytes(self._operand_cache[0..]));
         bytes += try writer.write(std.mem.sliceAsBytes(self.p4_registers[0..]));
-        bytes += try writer.write(std.mem.sliceAsBytes(self.itlb[0..]));
-        bytes += try writer.write(std.mem.sliceAsBytes(self.utlb[0..]));
+
+        // FIXME: Backward compatibilty. Get rid of it next save version.
+        var temp_itlb: [4]mmu.OldTLBEntry = undefined;
+        var temp_utlb: [64]mmu.OldTLBEntry = undefined;
+        for (self.itlb, 0..) |e, i|
+            temp_itlb[i] = .{
+                .asid = e.asid,
+                .vpn = e.vpn,
+                .v = e.v,
+                .tc = e.tc,
+                .sa = e.sa,
+                .wt = e.wt,
+                .d = e.d,
+                .pr = e.pr,
+                .c = e.c,
+                .sh = e.sh,
+                .sz = e.sz,
+                ._ppn = e.get_ppn(),
+            };
+        for (self.utlb, 0..) |e, i|
+            temp_utlb[i] = .{
+                .asid = e.asid,
+                .vpn = e.vpn,
+                .v = e.v,
+                .tc = e.tc,
+                .sa = e.sa,
+                .wt = e.wt,
+                .d = e.d,
+                .pr = e.pr,
+                .c = e.c,
+                .sh = e.sh,
+                .sz = e.sz,
+                ._ppn = e.get_ppn(),
+            };
+        bytes += try writer.write(std.mem.sliceAsBytes(temp_itlb[0..]));
+        bytes += try writer.write(std.mem.sliceAsBytes(temp_utlb[0..]));
+
         bytes += try writer.write(std.mem.asBytes(&self.interrupt_requests));
         bytes += try writer.write(std.mem.sliceAsBytes(self._last_timer_update[0..]));
         bytes += try writer.write(std.mem.asBytes(&self.execution_state));
@@ -1895,8 +1887,45 @@ pub const SH4 = struct {
         try reader.readSliceAll(std.mem.sliceAsBytes(self.store_queues[0..]));
         try reader.readSliceAll(std.mem.sliceAsBytes(self._operand_cache[0..]));
         try reader.readSliceAll(std.mem.sliceAsBytes(self.p4_registers[0..]));
-        try reader.readSliceAll(std.mem.sliceAsBytes(self.itlb[0..]));
-        try reader.readSliceAll(std.mem.sliceAsBytes(self.utlb[0..]));
+
+        // FIXME: Backward compatibilty. Get rid of it next save version.
+        var temp_itlb: [4]mmu.OldTLBEntry = undefined;
+        var temp_utlb: [64]mmu.OldTLBEntry = undefined;
+        try reader.readSliceAll(std.mem.sliceAsBytes(temp_itlb[0..]));
+        try reader.readSliceAll(std.mem.sliceAsBytes(temp_utlb[0..]));
+        for (temp_itlb, 0..) |e, i| {
+            self.itlb[i] = .{
+                .asid = e.asid,
+                .vpn = e.vpn,
+                .v = e.v,
+                .tc = e.tc,
+                .sa = e.sa,
+                .wt = e.wt,
+                .d = e.d,
+                .pr = e.pr,
+                .c = e.c,
+                .sh = e.sh,
+                .sz = e.sz,
+                .ppn = e.get_ppn(),
+            };
+        }
+        for (temp_utlb, 0..) |e, i| {
+            self.utlb[i] = .{
+                .asid = e.asid,
+                .vpn = e.vpn,
+                .v = e.v,
+                .tc = e.tc,
+                .sa = e.sa,
+                .wt = e.wt,
+                .d = e.d,
+                .pr = e.pr,
+                .c = e.c,
+                .sh = e.sh,
+                .sz = e.sz,
+                .ppn = e.get_ppn(),
+            };
+        }
+
         try reader.readSliceAll(std.mem.asBytes(&self.interrupt_requests));
         try reader.readSliceAll(std.mem.sliceAsBytes(self._last_timer_update[0..]));
         try reader.readSliceAll(std.mem.asBytes(&self.execution_state));
@@ -1905,7 +1934,7 @@ pub const SH4 = struct {
 
         self.compute_interrupt_priorities();
         self.update_sse_settings();
-        self.reset_utlb_fast_lookup();
+        self.on_tlb_invalidation();
         self.check_mmu_state();
     }
 };
