@@ -157,10 +157,10 @@ const ExecutionState = enum {
     ModuleStandby, // Not implemented at all
 };
 
-const DMACChannels: [3]struct { chcr: P4Register, sar: P4Register, dar: P4Register, dmatcr: P4Register, dmte: Interrupts.Interrupt } = .{
-    .{ .chcr = .CHCR0, .sar = .SAR0, .dar = .DAR0, .dmatcr = .DMATCR0, .dmte = .DMTE0 },
-    .{ .chcr = .CHCR1, .sar = .SAR1, .dar = .DAR1, .dmatcr = .DMATCR1, .dmte = .DMTE1 },
-    .{ .chcr = .CHCR2, .sar = .SAR2, .dar = .DAR2, .dmatcr = .DMATCR2, .dmte = .DMTE2 },
+const DMACChannels: [3]struct { chcr: P4Register, sar: P4Register, dar: P4Register, dmatcr: P4Register, dmte: Interrupts.Interrupt, chcr_mask: u32 } = .{
+    .{ .chcr = .CHCR0, .sar = .SAR0, .dar = .DAR0, .dmatcr = .DMATCR0, .dmte = .DMTE0, .chcr_mask = 0xFF0FFFF7 }, // chcr_mask: Ignore QCL and Reserved bits
+    .{ .chcr = .CHCR1, .sar = .SAR1, .dar = .DAR1, .dmatcr = .DMATCR1, .dmte = .DMTE1, .chcr_mask = 0xFF0FFFF7 },
+    .{ .chcr = .CHCR2, .sar = .SAR2, .dar = .DAR2, .dmatcr = .DMATCR2, .dmte = .DMTE2, .chcr_mask = 0xFF0AFFF7 }, // chcr_mask: Also ignore DS
 };
 
 pub var DebugHooks: struct {
@@ -705,7 +705,6 @@ pub const SH4 = struct {
                 const interrupt = self._sorted_interrupts[int_index];
                 // Check it against the cpu interrupt mask
                 if (self._interrupt_levels[@intFromEnum(interrupt)] > self.sr.imask) {
-                    self.interrupt_requests &= ~(@as(u64, 1) << @truncate(int_index)); // Clear the request
                     self.p4_register(u32, .INTEVT).* = Interrupts.InterruptINTEVTCodes[@intFromEnum(interrupt)];
                     self.jump_to_interrupt();
                 }
@@ -713,11 +712,15 @@ pub const SH4 = struct {
         }
     }
 
+    pub inline fn set_interrupt(self: *@This(), int: Interrupt, value: bool) void {
+        if (value) self.request_interrupt(int) else self.clear_interrupt(int);
+    }
+
     pub inline fn clear_interrupt(self: *@This(), int: Interrupt) void {
         self.interrupt_requests &= ~(@as(u64, 1) << @intCast(self._interrupts_indices[@intFromEnum(int)]));
     }
 
-    pub fn request_interrupt(self: *@This(), int: Interrupt) void {
+    pub inline fn request_interrupt(self: *@This(), int: Interrupt) void {
         sh4_log.debug(" (Interrupt request! {s})", .{std.enums.tagName(Interrupt, int) orelse "Unknown"});
         self.interrupt_requests |= @as(u64, 1) << @intCast(self._interrupts_indices[@intFromEnum(int)]);
     }
@@ -822,8 +825,7 @@ pub const SH4 = struct {
 
         const tcr = self.p4_register(P4.TCR, TimerRegisters[channel].control);
         tcr.unf = 1; // Signals underflow
-        if (tcr.unie == 1)
-            self.request_interrupt(TimerRegisters[channel].interrupt);
+        self.set_interrupt(TimerRegisters[channel].interrupt, tcr.unf & tcr.unie == 1);
 
         self.schedule_timer(channel);
     }
@@ -886,7 +888,7 @@ pub const SH4 = struct {
         const chcr = self.read_p4_register(P4.CHCR, c.chcr);
 
         // NOTE: I think the DC only uses 32 bytes transfers, but I'm not 100% sure.
-        std.debug.assert(chcr.ts == 0b100);
+        std.debug.assert(chcr.ts == .@"32-bytes block");
         std.debug.assert(chcr.rs == 2); // "External request, single address mode"
 
         const src_addr = self.read_p4_register(u32, c.sar) & 0x1FFFFFFF;
@@ -898,15 +900,15 @@ pub const SH4 = struct {
         sh4_log.info("DMAC ({d}) CHCR: {}\n  src_addr: 0x{X:0>8} => dst_addr: 0x{X:0>8} (transfer_size: 0x{X:0>8}, len: 0x{X:0>8}, byte_len: 0x{X:0>8})", .{ channel, chcr, src_addr, dst_addr, transfer_size, len, byte_len });
 
         const dst_stride: i32 = switch (chcr.dm) {
-            0 => 0,
-            1 => 1,
-            2 => -1,
+            .Fixed => 0,
+            .Incremented => 1,
+            .Decremented => -1,
             else => std.debug.panic("Invalid destination stride: {}", .{chcr.dm}),
         };
         const src_stride: i32 = switch (chcr.sm) {
-            0 => 0,
-            1 => 1,
-            2 => -1,
+            .Fixed => 0,
+            .Incremented => 1,
+            .Decremented => -1,
             else => std.debug.panic("Invalid source stride: {}", .{chcr.sm}),
         };
 
@@ -919,7 +921,7 @@ pub const SH4 = struct {
         if (dst_addr >= 0x10000000 and dst_addr < 0x14000000) {
             std.debug.assert(src_stride > 0);
             std.debug.assert(transfer_size == 32); // We'll copy 32-bytes blocks
-            std.debug.assert(chcr.ts == 0b100); // We'll copy 32-bytes blocks
+            std.debug.assert(chcr.ts == .@"32-bytes block"); // We'll copy 32-bytes blocks
             switch (dst_addr) {
                 // Polygon Path
                 0x10000000...0x10800000 - 1, 0x12000000...0x12800000 - 1 => {
@@ -972,17 +974,22 @@ pub const SH4 = struct {
 
     pub fn end_dmac(self: *@This(), channel: u32) void {
         const c = DMACChannels[channel];
-        const chcr = self.read_p4_register(P4.CHCR, c.chcr);
+        const chcr = self.p4_register(P4.CHCR, c.chcr);
 
         const len = chcr.transfer_size() * self.read_p4_register(u32, c.dmatcr);
-        if (chcr.ie == 1)
-            self.request_interrupt(c.dmte);
-        if (chcr.sm != 0)
-            self.p4_register(u32, c.sar).* += len;
-        if (chcr.dm != 0)
-            self.p4_register(u32, c.dar).* += len;
+        switch (chcr.sm) {
+            .Incremented => self.p4_register(u32, c.sar).* += len,
+            .Decremented => self.p4_register(u32, c.sar).* -= len,
+            else => {},
+        }
+        switch (chcr.dm) {
+            .Incremented => self.p4_register(u32, c.dar).* += len,
+            .Decremented => self.p4_register(u32, c.dar).* -= len,
+            else => {},
+        }
         self.p4_register(u32, c.dmatcr).* = 0;
-        self.p4_register(P4.CHCR, c.chcr).*.te = 1;
+        chcr.te = true;
+        self.set_interrupt(c.dmte, chcr.te and chcr.ie);
     }
 
     pub inline fn check_mmu_state(self: *@This()) void {
@@ -1657,13 +1664,26 @@ pub const SH4 = struct {
                             self.p4_register_addr(T, virtual_addr).* = @bitCast(ccr);
                             return;
                         },
-                        @intFromEnum(P4Register.CHCR0), @intFromEnum(P4Register.CHCR1), @intFromEnum(P4Register.CHCR2) => {
-                            check_type(&[_]type{u32}, T, "Invalid P4 Write({}) to 0x{X:0>8}\n", .{ T, virtual_addr });
+                        @intFromEnum(P4Register.CHCR0), @intFromEnum(P4Register.CHCR1), @intFromEnum(P4Register.CHCR2) => |chcr_addr| {
+                            check_type(&[_]type{u32}, T, "Invalid P4 Write({}) to 0x{X:0>8}\n", .{ T, chcr_addr });
                             const chcr: P4.CHCR = @bitCast(value);
-                            if (chcr.de == 1 and chcr.rs & 0b1100 == 0b0100) {
-                                sh4_log.warn(" CHCR {X:0>8} write with DMAC enable and auto request on! Value {X:0>8}", .{ virtual_addr, value });
+                            const p4_reg: P4Register = @enumFromInt(chcr_addr);
+
+                            const channel: u8 = switch (p4_reg) {
+                                .CHCR0 => 0,
+                                .CHCR1 => 1,
+                                .CHCR2 => 2,
+                                else => unreachable,
+                            };
+
+                            self.p4_register_addr(T, chcr_addr).* = value & DMACChannels[channel].chcr_mask;
+
+                            self.set_interrupt(DMACChannels[channel].dmte, chcr.ie and chcr.te);
+                            if (chcr.de and chcr.rs & 0b1100 == 0b0100) {
+                                sh4_log.err(" {} write with DMAC enabled and not using external request!({X:0>8})\n{any} ", .{ p4_reg, value, chcr });
                                 @panic("Unimplemented");
                             }
+                            return;
                         },
                         @intFromEnum(P4Register.WTCNT), @intFromEnum(P4Register.WTCSR) => {
                             sh4_log.warn(termcolor.yellow("Write to non implemented-P4 register {t}: {X:0>4}."), .{ @as(P4Register, @enumFromInt(virtual_addr)), value });
@@ -1679,7 +1699,24 @@ pub const SH4 = struct {
                             inline for (0..3) |i| {
                                 self.update_timer_registers(i);
                             }
-                            self.p4_register_addr(T, virtual_addr).* = value;
+                            switch (virtual_addr) {
+                                @intFromEnum(P4Register.TCR0), @intFromEnum(P4Register.TCR1), @intFromEnum(P4Register.TCR2) => |tcr_addr| {
+                                    const dest = self.p4_register_addr(T, tcr_addr);
+                                    if (T != u8) {
+                                        // "Writing 1 [to UNF] does not change the value."
+                                        dest.* = value & (dest.* | ~(@as(T, 1) << @bitOffsetOf(P4.TCR, "unf")));
+                                    } else dest.* = value;
+                                    const channel: u8 = switch (tcr_addr) {
+                                        @intFromEnum(P4Register.TCR0) => 0,
+                                        @intFromEnum(P4Register.TCR1) => 1,
+                                        @intFromEnum(P4Register.TCR2) => 2,
+                                        else => unreachable,
+                                    };
+                                    const tcr = self.p4_register(P4.TCR, TimerRegisters[channel].control);
+                                    self.set_interrupt(TimerRegisters[channel].interrupt, tcr.unf & tcr.unie == 1);
+                                },
+                                else => self.p4_register_addr(T, virtual_addr).* = value,
+                            }
                             inline for (0..3) |i| {
                                 self._dc.?.clear_event(.{ .TimerUnderflow = .{ .channel = i } });
                                 self.update_timer_registers(i);

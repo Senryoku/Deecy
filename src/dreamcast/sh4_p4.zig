@@ -239,32 +239,69 @@ pub const TCR = packed struct(u16) {
 };
 
 pub const CHCR = packed struct(u32) {
-    de: u1 = 0, // DMAC Enable
-    te: u1 = 0, // Transfer End
-    ie: u1 = 0, // Interrupt Enable
-    _r0: u1 = 0,
-    ts: u3 = 0, // Transfer Size
-    tm: u1 = 0, // Transfer Mode
-    rs: u4 = 0, // Resource Select
-    sm: u2 = 0, // Source Address Mode
-    dm: u2 = 0, // Destination Address Mode
-    al: u1 = 0, // Acknowledge Level
-    am: u1 = 0, // Acknowledge Mode
-    rl: u1 = 0, // Request Check Level
-    ds: u1 = 0, // SREQ Select
-    _r1: u4 = 0,
-    dtc: u1 = 0, // Destination Address Wait Control Select
-    dsa: u3 = 0, // Destination Address Space Attribute Specification
-    stc: u1 = 0, // Source Address Wait Control Select
-    ssa: u3 = 0, // Source Address Space Attribute Specification
+    /// DMAC Enable
+    de: bool = false,
+    /// Transfer End
+    te: bool = false,
+    /// Interrupt Enable
+    ie: bool = false,
+    /// Request Queue Clear
+    ///   Writing a 1 to this bit clears the request queues of the corresponding channel as well as any external requests that have already been accepted. This bit is only functional when DMAOR.DDT = 1 and DMAOR.DBL = 1.
+    qcl: u1 = 0,
+    /// Transmit Size
+    ts: enum(u3) {
+        Quadword = 0,
+        Byte = 1,
+        Word = 2,
+        Longword = 3,
+        @"32-bytes block" = 4,
+        _,
+    } = .Quadword,
+    /// Transmit Mode
+    tm: enum(u1) { @"Cycle steal", Burst } = .@"Cycle steal",
+    /// Resource Select
+    ///   00xx: External Request
+    ///   01xx: Auto Request
+    ///   10xx: SCIF
+    ///   11xx: TMU
+    rs: u4 = 0,
+    /// Source Address Mode
+    sm: AddressMode = .Fixed,
+    /// Destination Address Mode
+    dm: AddressMode = .Fixed,
+    /// Acknowledge Level
+    al: u1 = 0,
+    /// Acknowledge Mode
+    am: u1 = 0,
+    /// Request Check Level
+    rl: u1 = 0,
+    /// SREQ Select
+    ds: u1 = 0,
+    /// Reserved: These bits are always read as 0, and should only be written with 0.
+    _reserved: u4 = 0,
+    /// Destination Address Wait Control Select
+    dtc: u1 = 0,
+    /// Destination Address Space Attribute Specification
+    dsa: u3 = 0,
+    /// Source Address Wait Control Select
+    stc: u1 = 0,
+    /// Source Address Space Attribute Specification
+    ssa: u3 = 0,
+
+    const AddressMode = enum(u2) {
+        Fixed = 0,
+        Incremented = 1,
+        Decremented = 2,
+        Prohibited = 3,
+    };
 
     pub fn transfer_size(self: @This()) u32 {
         return switch (self.ts) {
-            0 => 8, // Quadword size
-            1 => 1, // Byte
-            2 => 2, // Word
-            3 => 4, // Longword
-            4 => 32, // 32-bytes block
+            .Quadword => 8,
+            .Byte => 1,
+            .Word => 2,
+            .Longword => 4,
+            .@"32-bytes block" => 32,
             else => std.debug.panic("Invalid transfer size: {d}", .{self.ts}),
         };
     }

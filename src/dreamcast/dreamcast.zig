@@ -1105,9 +1105,9 @@ pub const Dreamcast = struct {
 
             // Simulate using ch0
             const chcr = self.cpu.p4_register(SH4Module.P4.CHCR, .CHCR0);
-            chcr.*.sm = 0;
-            chcr.*.dm = 1;
-            chcr.*.ts = 4;
+            chcr.*.sm = .Fixed;
+            chcr.*.dm = .Incremented;
+            chcr.*.ts = .@"32-bytes block";
             self.cpu.p4_register(u32, .DAR0).* = dst_addr;
             self.cpu.p4_register(u32, .DMATCR0).* = @divExact(len, 32);
 
@@ -1151,9 +1151,9 @@ pub const Dreamcast = struct {
         std.debug.assert(32 * dmac_len == len);
 
         const chcr2 = self.cpu.p4_register(SH4Module.P4.CHCR, .CHCR2);
-        chcr2.sm = 1;
-        chcr2.dm = 1;
-        chcr2.ts = 4;
+        chcr2.sm = .Incremented;
+        chcr2.dm = .Incremented;
+        chcr2.ts = .@"32-bytes block";
 
         self.cpu.start_dmac(2);
 
@@ -1191,7 +1191,7 @@ pub const Dreamcast = struct {
         log.debug("  Start PVR DMA: {X:0>8} -> {X:0>8} ({X:0>8} bytes)", .{ src, dst, len });
 
         var chcr = self.cpu.p4_register(SH4Module.P4.CHCR, .CHCR0);
-        chcr.ts = 4;
+        chcr.ts = .@"32-bytes block";
         chcr.rs = 2;
         self.cpu.p4_register(u32, .SAR0).* = src;
         self.cpu.p4_register(u32, .DAR0).* = dst;
