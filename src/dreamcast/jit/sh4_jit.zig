@@ -854,16 +854,16 @@ pub const SH4JIT = struct {
         var hash_invalidation_end_offset: usize = 0;
         var hash_invalidation_value_offset: usize = 0;
         // Not necessary for the boot ROM
-        if (ctx.start_physical_pc >= 0x0C00_0000) {
+        if (ctx.entry_point_physical_address >= 0x0C00_0000) {
             switch (self.block_invalidation) {
                 .None => {},
                 .@"First Instruction" => {
                     // Extremely basic: Only checks the first instruction. Seems to be enough for Bloom.
                     if (FastMem) {
-                        try b.mov(.{ .reg = ArgRegisters[2] }, .{ .imm32 = ctx.start_physical_pc });
+                        try b.mov(.{ .reg = ArgRegisters[2] }, .{ .imm32 = ctx.entry_point_physical_address });
                         try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = VirtualAddressSpaceBaseRegister, .index = ArgRegisters[2], .size = 16 } });
                     } else {
-                        try b.mov(.{ .reg = ArgRegisters[2] }, .{ .imm32 = ctx.start_physical_pc - 0x0C00_0000 });
+                        try b.mov(.{ .reg = ArgRegisters[2] }, .{ .imm32 = ctx.entry_point_physical_address - 0x0C00_0000 });
                         try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = RAMBaseRegister, .index = ArgRegisters[2], .size = 16 } });
                     }
                     try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.instructions[0] });
@@ -878,7 +878,7 @@ pub const SH4JIT = struct {
                     } else {
                         try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .reg64 = RAMBaseRegister });
                     }
-                    try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = ctx.start_physical_pc - 0x0C00_0000 });
+                    try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = ctx.entry_point_physical_address - 0x0C00_0000 });
                     hash_invalidation_end_offset = b.instructions.items.len;
                     try b.mov(.{ .reg = ArgRegisters[2] }, .{ .imm32 = 0xDEADCAFE });
                     try call(b, &ctx, block_hash);
@@ -892,7 +892,7 @@ pub const SH4JIT = struct {
                         // The idea is that some (WinCE) games seem to be repetitively loading/unloading executable code at the same address,
                         // this lets us potentially re-use already compiled blocks (guarded by the hash) if the game happens to reload the same code,
                         // instead of re-compiling it every single time and filling the cache very quickly.
-                        const offset = self.block_cache.get(start_ctx.start_physical_pc, if (start_ctx.fpscr_sz == .Double) 1 else 0, if (start_ctx.fpscr_pr == .Double) 1 else 0).offset;
+                        const offset = self.block_cache.get(start_ctx.entry_point_physical_address, if (start_ctx.fpscr_sz == .Double) 1 else 0, if (start_ctx.fpscr_pr == .Double) 1 else 0).offset;
                         try b.append(.{ .Jmp = .{ .condition = .NotEqual, .dst = .{ .abs = @intFromPtr(self.block_cache.buffer.ptr) + offset } } });
                     } else {
                         // Recompile
@@ -944,15 +944,15 @@ pub const SH4JIT = struct {
             return error.JITCacheFull;
         }
 
-        if (ctx.start_physical_pc >= 0x0C00_0000) {
+        if (ctx.entry_point_physical_address >= 0x0C00_0000) {
             switch (self.block_invalidation) {
                 .Hash => {
                     // Patch end address of the block, and expected hash value.
                     //          This can happen because of some optimisations (inline_backwards_bra). Solution is hackish for now.
-                    const end = (if (ctx.current_physical_pc < ctx.start_physical_pc) ctx.start_physical_pc + 16 else ctx.current_physical_pc) - 0x0C00_0000;
+                    const end = (if (ctx.entry_point_physical_address != ctx.start_physical_pc) ctx.entry_point_physical_address + 16 else ctx.current_physical_pc) - 0x0C00_0000;
                     b.instructions.items[hash_invalidation_end_offset].Mov.src.imm32 = end;
 
-                    const instruction_len = (end - (ctx.start_physical_pc - 0x0C00_0000)) >> 1;
+                    const instruction_len = (end - (ctx.entry_point_physical_address - 0x0C00_0000)) >> 1;
                     const hash = switch (instruction_len) {
                         inline 1...32 => |len| h: {
                             if (len == 1) {
@@ -988,9 +988,9 @@ pub const SH4JIT = struct {
                                     };
                                 }
                             }
-                            break :h block_hash_function(len)(@ptrCast(ctx.cpu._dc.?.ram), ctx.start_physical_pc - 0x0C00_0000, end);
+                            break :h block_hash_function(len)(@ptrCast(ctx.cpu._dc.?.ram), ctx.entry_point_physical_address - 0x0C00_0000, end);
                         },
-                        else => block_hash(@ptrCast(ctx.cpu._dc.?.ram), ctx.start_physical_pc - 0x0C00_0000, end),
+                        else => block_hash(@ptrCast(ctx.cpu._dc.?.ram), ctx.entry_point_physical_address - 0x0C00_0000, end),
                     };
                     b.instructions.items[hash_invalidation_value_offset].Mov.src.imm64 = hash;
                 },
