@@ -1289,9 +1289,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             if (self.selected_strip_focus) zgui.setNextItemOpen(.{ .is_open = true });
             if (zgui.collapsingHeader("Polygons", .{ .frame_padding = true })) {
                 zgui.indent(.{});
-                inline for (.{ Holly.ListType.Opaque, Holly.ListType.Translucent, Holly.ListType.PunchThrough }) |list_type| {
+                inline for ([_]Holly.ListType{ .Opaque, .Translucent, .PunchThrough }) |list_type| {
                     const list = d.renderer.ta_lists.items[pass_idx].get_list(list_type);
-                    const name = @tagName(@as(Holly.ListType, list_type));
+                    const name = @tagName(list_type);
                     const header = try std.fmt.bufPrintZ(&buffer, name ++ " ({d})###" ++ name, .{list.vertex_strips.items.len});
 
                     const is_list_selected = self.selected_strip_focus and self.selected_strip_list == list_type;
@@ -1963,7 +1963,7 @@ fn select_strip(self: *@This(), d: *Deecy, lists: []Holly.TALists) void {
     var first_hit: ?struct { list: Holly.ListType, pass_idx: usize, strip_idx: u32 } = null;
 
     for (lists, 0..) |*list, pass_idx| {
-        inline for (.{ Holly.ListType.Opaque, Holly.ListType.Translucent, Holly.ListType.PunchThrough }) |list_type| {
+        inline for ([_]Holly.ListType{ .Opaque, .Translucent, .PunchThrough }) |list_type| {
             const l = list.get_list(list_type);
             const parameters = l.vertex_parameters.items;
             for (l.vertex_strips.items, 0..) |strip, strip_idx| {

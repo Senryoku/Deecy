@@ -1469,16 +1469,8 @@ pub fn load_binary(self: *@This(), path: []const u8, ip_bin_path: ?[]const u8) !
             if (ph.p_type == .Load) {
                 try file_reader.seekTo(ph.p_offset);
                 const offset = (ph.p_vaddr & 0x1FFF_FFFF) - 0x0C00_0000;
-                var writer: std.Io.Writer = .fixed(self.dc.ram[offset..]);
-                _ = try file_reader.streamMode(&writer, .limited(self.dc.ram.len - offset), .positional);
-                try writer.flush();
-            } else {
-                if (std.enums.tagName(ELF.SegmentType, ph.p_type)) |tag| {
-                    std.log.scoped(.elf).warn("Program header type {s} not supported", .{tag});
-                } else {
-                    std.log.scoped(.elf).warn("Program header type {d} not supported", .{@intFromEnum(ph.p_type)});
-                }
-            }
+                try file_reader.interface.readSliceAll(self.dc.ram[offset..][0..ph.p_filesz]);
+            } else std.log.scoped(.elf).warn("Program header type {} not supported", .{ph.p_type});
         }
     } else {
         _ = try std.Io.Dir.cwd().readFile(self.io, path, self.dc.ram[0x10000..]);
