@@ -48,8 +48,6 @@ const Optimizations = struct {
     const mmu_translation_cache: bool = true;
     /// When using hash to invalidate blocks, jump to the previous compiled version of this block if available before re-compiling it.
     const chain_previous_hashed_blocks: bool = true;
-    /// Controls block chaining when an interrupt is pending.
-    const early_exit_on_interrupts: enum { No, MMUOnly, Yes } = .MMUOnly;
 };
 
 const VirtualAddressSpace = if (FastMem) switch (builtin.os.tag) {
@@ -1016,10 +1014,6 @@ pub const SH4JIT = struct {
         // Jump to the next block (Disabled when instrumentation is on, otherwise it would be a hassle to measure individual blocks)
         if (!ctx.force_exit and ctx.cycles < MaxCyclesPerExecution and ctx.fpscr_pr != .Unknown and ctx.fpscr_sz != .Unknown and !BasicBlock.EnableInstrumentation) done: {
             try b.append(.{ .Jmp = .{ .condition = .Sign, .dst = .{ .abs = exit_ptr } } });
-            if (Optimizations.early_exit_on_interrupts == .Yes or (Optimizations.early_exit_on_interrupts == .MMUOnly and ctx.mmu_enabled)) {
-                try b.cmp(.{ .mem = .{ .base = SH4PtrRegister, .displacement = @offsetOf(sh4.SH4, "interrupt_requests"), .size = 64 } }, .{ .imm8 = 0 });
-                try b.append(.{ .Jmp = .{ .condition = .NotEqual, .dst = .{ .abs = exit_ptr } } });
-            }
 
             const sz: u1 = if (ctx.fpscr_sz == .Single) 0 else 1;
             const pr: u1 = if (ctx.fpscr_pr == .Single) 0 else 1;
