@@ -89,11 +89,56 @@ pub const Indexed = struct {
 /// reducing the overhead of the software having to maintain its own mappings into the real UTLB.
 /// This relies on the default value of virtual allocation begin 0, thus the `v` bit being false at initialization.
 pub const Cached = struct {
-    entries: []mmu.TLBEntry,
+    const ShortEntry = packed struct(u32) {
+        v: bool = false,
+        tc: u1 = 0,
+        sa: u3 = 0,
+        wt: bool = false,
+        d: bool = false,
+        pr: mmu.ProtectionKey = .ReadWrite,
+        c: bool = true,
+        sh: bool = false,
+        sz: u2 = 0,
+        ppn: u19 = 0xDEAD,
+
+        pub fn from(entry: mmu.TLBEntry) @This() {
+            return .{
+                .v = entry.v,
+                .tc = entry.tc,
+                .sa = entry.sa,
+                .wt = entry.wt,
+                .d = entry.d,
+                .pr = entry.pr,
+                .c = entry.c,
+                .sh = entry.sh,
+                .sz = entry.sz,
+                .ppn = entry.ppn,
+            };
+        }
+
+        pub fn full(self: @This(), asid: u8, vpn: u22) mmu.TLBEntry {
+            return .{
+                .asid = asid,
+                .vpn = vpn,
+                .v = self.v,
+                .tc = self.tc,
+                .sa = self.sa,
+                .wt = self.wt,
+                .d = self.d,
+                .pr = self.pr,
+                .c = self.c,
+                .sh = self.sh,
+                .sz = self.sz,
+                .ppn = self.ppn,
+            };
+        }
+    };
+
+    entries: []ShortEntry,
 
     pub fn init() !@This() {
         return .{
-            .entries = try host_memory.virtual_alloc(mmu.TLBEntry, @as(u32, 1) << (22 + 8)),
+            .entries = try host_memory.virtual_alloc(ShortEntry, @as(u32, 1) << (22 + 8)),
         };
     }
 
@@ -101,7 +146,7 @@ pub const Cached = struct {
 
     pub fn reset(self: *@This()) !void {
         host_memory.virtual_dealloc(self.entries);
-        self.entries = try host_memory.virtual_alloc(mmu.TLBEntry, @as(u32, 1) << (22 + 8));
+        self.entries = try host_memory.virtual_alloc(ShortEntry, @as(u32, 1) << (22 + 8));
         for (self.cpu().utlb) |entry| {
             if (entry.valid()) self.update(entry);
         }
@@ -110,10 +155,10 @@ pub const Cached = struct {
     pub inline fn lookup(self: *const @This(), asid: u8, vpn: u22) !mmu.TLBEntry {
         const key: u32 = @as(u32, asid) << 22 | vpn;
         const entry = self.entries[key];
-        if (entry.valid()) {
+        if (entry.v) {
             if (sh4.EmulateAccessViolation and self.cpu().sr.md == 0 and entry.pr.privileged())
                 return error.TLBProtectionViolation;
-            return entry;
+            return entry.full(asid, vpn);
         }
         return error.TLBMiss;
     }
@@ -142,7 +187,7 @@ pub const Cached = struct {
 
     inline fn set(self: *@This(), asid: u8, entry: mmu.TLBEntry) void {
         const key: u32 = @as(u32, asid) << 22 | (entry.vpn & (~((entry.size() - 1) >> 10)));
-        @memset(self.entries[key..][0 .. entry.size() >> 10], entry);
+        @memset(self.entries[key..][0 .. entry.size() >> 10], .from(entry));
     }
 
     inline fn cpu(self: *const @This()) *const sh4.SH4 {
