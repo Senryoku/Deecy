@@ -577,8 +577,8 @@ pub const Dreamcast = struct {
                 var it = @constCast(self).scheduled_events.iterator();
                 while (it.next()) |event| {
                     if (event.event == .EndGDDMA) {
-                        const start = self.read_hw_register(u32, .SB_GDSTAR) & 0x01FFFFE0;
-                        const len = self.read_hw_register(u32, .SB_GDLEN) & 0x01FFFFE0;
+                        const start = self.hw_register(u32, .SB_GDSTAR).*;
+                        const len = self.gd_dma_len();
                         const value: u32 = if (event.trigger_cycle <= self._global_cycles) // Done but not processed yet.
                             len
                         else b: { // In progress
@@ -631,6 +631,8 @@ pub const Dreamcast = struct {
                 self.hw_register(T, .SB_GDEN).* = value;
             },
             .SB_GDST => if (value == 1) self.start_gd_dma(),
+            .SB_GDSTAR => self.hw_register(T, .SB_GDSTAR).* = value & @as(T, @truncate(0x1FFFFFE0)),
+            .SB_GDLEN => self.hw_register(T, .SB_GDLEN).* = value & @as(T, @truncate(0x01FFFFFF)),
             .SB_GDSTARD, .SB_GDLEND, .SB_ADSTAGD, .SB_E1STAGD, .SB_E2STAGD, .SB_DDSTAGD, .SB_ADSTARD, .SB_E1STARD, .SB_E2STARD, .SB_DDSTARD, .SB_ADLEND, .SB_E1LEND, .SB_E2LEND, .SB_DDLEND => {
                 log.warn(termcolor.yellow("Ignoring write({any}) to Read Only register {t} = {X:0>8}."), .{ T, reg, value });
             },
@@ -1078,11 +1080,16 @@ pub const Dreamcast = struct {
         }
     }
 
+    fn gd_dma_len(self: *const @This()) u32 {
+        const len = self.hw_register(u32, .SB_GDLEN).*;
+        return if (len == 0) 0x02000000 else len & 0x01FFFFE0;
+    }
+
     pub fn start_gd_dma(self: *@This()) void {
         if ((self.hw_register(u32, .SB_GDEN).* & 1) == 1) {
-            const dst_addr = self.read_hw_register(u32, .SB_GDSTAR) & 0x1FFFFFE0;
-            const len = self.read_hw_register(u32, .SB_GDLEN) & 0x01FFFFE0;
-            const direction = self.read_hw_register(u32, .SB_GDDIR);
+            const dst_addr = self.hw_register(u32, .SB_GDSTAR).*;
+            const len = self.gd_dma_len();
+            const direction = self.hw_register(u32, .SB_GDDIR).*;
 
             if (direction == 0) return log.err(termcolor.red("DMA to GD-ROM not implemented."), .{});
 
@@ -1100,7 +1107,7 @@ pub const Dreamcast = struct {
             if (copied < len) {
                 log.warn("GD DMA: {X:0>8} bytes copied out of {X:0>8} expected.", .{ copied, len });
                 // Pad with zeroes in this case.
-                @memset(@as([*]u8, @ptrCast(self._get_memory(dst_addr)))[copied..len], 0);
+                @memset(dst[copied..], 0);
             }
 
             // Simulate using ch0
@@ -1118,8 +1125,8 @@ pub const Dreamcast = struct {
     }
 
     fn end_gd_dma(self: *@This()) void {
-        const start = self.read_hw_register(u32, .SB_GDSTAR) & 0x1FFFFFE0;
-        const len = self.read_hw_register(u32, .SB_GDLEN) & 0x01FFFFE0;
+        const start = self.hw_register(u32, .SB_GDSTAR).*;
+        const len = self.gd_dma_len();
         self.cpu.end_dmac(0);
         self.hw_register(u32, .SB_GDST).* = 0;
         self.hw_register(u32, .SB_GDLEND).* = len;
