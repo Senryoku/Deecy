@@ -95,31 +95,30 @@ pub const MMU = packed struct {
 /// Kept around only for save state compatibility. Also this wasn't packed or extern,
 /// look at it wrong and the layout will change, breaking all save states, yay.
 /// TODO: Get rid of it the next time save state backward compatibility is broken.
-pub const OldTLBEntry = struct {
+pub const OldTLBEntry = extern struct {
+    /// Virtual page number
+    vpn: u32 = 0xBAD,
+    _ppn: u32 = 0xDEADCAFE, // Physical page number, stored as u19 << 10
     /// Address space identifier
     asid: u8 = 0xAA,
-    /// Virtual page number
-    vpn: u22 = 0xBAD,
     /// Validity bit
     v: bool = false,
     /// Timing control bit
-    tc: u1 = 0,
+    tc: u8 = 0,
     /// Space attribute bits
-    sa: u3 = 0,
+    sa: u8 = 0,
     /// Write-through bit
     wt: bool = false,
     /// Dirty bit
     d: bool = false,
     /// Protection key data
-    pr: ProtectionKey = .ReadWrite,
+    pr: u8 = 0,
     /// Cacheability bit
     c: bool = true,
     /// Share status bit, 1 => Shared
     sh: bool = false,
     /// Page size
-    sz: u2 = 0,
-
-    _ppn: u32 = 0xDEADCAFE, // Physical page number, stored as u19 << 10
+    sz: u8 = 0,
 
     pub fn get_ppn(self: *const @This()) u19 {
         return @truncate(self._ppn >> 10);
@@ -127,42 +126,6 @@ pub const OldTLBEntry = struct {
 
     pub fn set_ppn(self: *@This(), ppn: u19) void {
         self._ppn = @as(u32, ppn) << 10;
-    }
-
-    pub inline fn valid(self: *const @This()) bool {
-        return self.v;
-    }
-
-    pub inline fn match(self: *const @This(), multiple_virtual_memory_mode: bool, asid: u8, vpn: u22) bool {
-        const check_asid = !self.sh and multiple_virtual_memory_mode;
-        if (check_asid) {
-            return self.valid() and (self.asid == asid) and vpn_match(self.vpn, vpn, self.sz);
-        } else {
-            return self.valid() and vpn_match(self.vpn, vpn, self.sz);
-        }
-    }
-
-    pub inline fn translate(self: *const @This(), virtual_address: u32) u32 {
-        const mask: u32 = switch (self.sz) {
-            0b00 => (1 << 10) - 1, // 1-Kbyte page
-            0b01 => (1 << 12) - 1, // 4-Kbyte page
-            0b10 => (1 << 16) - 1, // 64-Kbyte page
-            0b11 => (1 << 20) - 1, // 1-Mbyte page
-        };
-        return (self._ppn & ~mask) | (virtual_address & mask);
-    }
-
-    pub inline fn first_physical_address(self: *const @This()) u32 {
-        return self.translate(@as(u32, self.vpn) << 10);
-    }
-
-    pub inline fn size(self: *const @This()) u32 {
-        return @as(u32, 1) << switch (self.sz) {
-            0b00 => 10, // 1-Kbyte page
-            0b01 => 12, // 4-Kbyte page
-            0b10 => 16, // 64-Kbyte page
-            0b11 => 20, // 1-Mbyte page
-        };
     }
 
     pub fn format(self: @This(), writer: *std.Io.Writer) !void {
@@ -212,11 +175,11 @@ pub const TLBEntry = packed struct(u64) {
     _: u2 = 0,
 
     pub inline fn get_vpn(self: *const @This()) u32 {
-        return @as(u32, self.vpn << 10);
+        return @as(u32, self.vpn) << 10;
     }
 
     pub inline fn get_ppn(self: *const @This()) u32 {
-        return @as(u32, self.ppn << 10);
+        return @as(u32, self.ppn) << 10;
     }
 
     pub inline fn valid(self: *const @This()) bool {
