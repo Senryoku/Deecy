@@ -1695,7 +1695,7 @@ pub fn draw_ui(self: *@This()) !void {
         try self.gctx_queue_mutex.lock(self.io);
         defer self.gctx_queue_mutex.unlock(self.io);
         const fb_size = self.window.getFramebufferSize();
-        zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
+        zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]), self.scale_factor, self.scale_factor);
     }
     _ = zgui.dockSpaceOverViewport(0, zgui.getMainViewport(), .{ .passthru_central_node = true });
 
@@ -1853,7 +1853,7 @@ fn display_unrecoverable_error(self: *@This(), comptime fmt: []const u8, args: a
         zglfw.pollEvents();
 
         const fb_size = self.window.getFramebufferSize();
-        zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
+        zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]), self.scale_factor, self.scale_factor);
 
         if (!zgui.isPopupOpen("Error##Modal", .{}))
             zgui.openPopup("Error##Modal", .{});
@@ -1879,7 +1879,7 @@ fn display_missing_file_error(self: *@This(), filename: []const u8, expected_siz
         zglfw.pollEvents();
 
         const fb_size = self.window.getFramebufferSize();
-        zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
+        zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]), self.scale_factor, self.scale_factor);
 
         if (!zgui.isPopupOpen("Error##Modal", .{}))
             zgui.openPopup("Error##Modal", .{});

@@ -877,7 +877,7 @@ pub fn draw(self: *@This()) !void {
                         zgui.end();
                         zgui.endFrame();
                         const fb_size = self.deecy.window.getFramebufferSize();
-                        zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
+                        zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]), d.scale_factor, d.scale_factor);
                         return;
                     }
                     zgui.text("Current Resolution: {d}x{d}", .{ d.renderer.resolution.width, d.renderer.resolution.height });
