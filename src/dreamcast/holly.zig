@@ -1836,11 +1836,12 @@ pub const Holly = struct {
 
                 self._dc.on_render_start.call(self._dc);
 
-                // FIXME: Almost arbitrary values: Lowest delay I found after a quick search that fixes Marvel vs. Capcom 2
+                // FIXME: Almost arbitrary values: Lowest delay I found after a quick search that fixes Marvel vs. Capcom 2.
+                //        (Runs fine with a lower delay around 200k/300k, but 800k+ is required for some textures in the intro. See #129)
                 //        (see skmp notes: https://web.archive.org/web/20110809053548/http://drk.emudev.org/blog/?page_id=4)
-                self._dc.schedule_interrupt(.{ .RenderDoneTSP = 1 }, 200_000);
-                self._dc.schedule_interrupt(.{ .RenderDoneISP = 1 }, 250_000);
-                self._dc.schedule_interrupt(.{ .RenderDoneVideo = 1 }, 300_000); // FIXME: Raise an interrupt when the render is actually done?
+                self._dc.schedule_interrupt(.{ .RenderDoneISP = 1 }, 800_000);
+                self._dc.schedule_interrupt(.{ .RenderDoneTSP = 1 }, 825_000);
+                self._dc.schedule_interrupt(.{ .RenderDoneVideo = 1 }, 850_000);
             },
             .TA_LIST_INIT => {
                 if (v == 0x80000000) {
