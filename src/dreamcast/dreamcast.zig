@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Once = @import("helpers").Once;
+const UpTo = @import("helpers").UpTo;
 
 const termcolor = @import("termcolor");
 const log = std.log.scoped(.dc);
@@ -653,7 +654,8 @@ pub const Dreamcast = struct {
             },
             .SB_ISTEXT => {
                 // Read-only
-                log.warn("[{X:0>8}] Write to SB_ISTEXT (ignored): {X}", .{ self.cpu.pc, value });
+                if (UpTo(@src(), 10)) |n|
+                    log.warn("[{X:0>8}] Write to SB_ISTEXT (ignored): {X} (Report {d}/10)", .{ self.cpu.pc, value, n });
             },
             .SB_IML6NRM, .SB_IML6EXT, .SB_IML6ERR, .SB_IML4NRM, .SB_IML4EXT, .SB_IML4ERR, .SB_IML2NRM, .SB_IML2EXT, .SB_IML2ERR => {
                 self.hw_register_addr(T, addr).* = value;
@@ -810,7 +812,8 @@ pub const Dreamcast = struct {
                 // DCA3 Hack
                 if (addr & (@as(u32, 1) << 25) != 0)
                     return self.cpu.operand_cache_read(T, addr);
-                log.err(termcolor.red("[PC: 0x{X:0>8}] Unexpected read({any}) to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA."), .{ self.cpu.pc, T, addr });
+                if (UpTo(@src(), 10)) |count|
+                    log.err("[PC: 0x{X:0>8}] Unexpected read({any}) to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA. (Report {d}/10)", .{ self.cpu.pc, T, addr, count });
                 return 0;
             },
             // Area 7

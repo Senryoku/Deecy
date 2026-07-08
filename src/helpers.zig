@@ -13,6 +13,22 @@ pub fn Once(comptime id: anytype) bool {
     return value;
 }
 
+/// Calling this with an unique identifier (e.g. `UpTo(@src(), n)`) will return the number of times it has been called,
+/// up to `n`, then return null.
+/// Useful for limiting spam while logging:
+///   ```if (UpTo(@src(), 10)) |n| std.log.info("This happened {} times.", .{n});```
+pub fn UpTo(comptime id: anytype, comptime max: u32) ?u32 {
+    const static = struct {
+        const src = id;
+        pub var count: u32 = 0;
+    };
+    if (static.count < max) {
+        static.count += 1;
+        return static.count;
+    }
+    return null;
+}
+
 /// Returns a struct type where all fields from T are optional.
 pub fn Partial(comptime T: type) type {
     const info = @typeInfo(T);
