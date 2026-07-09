@@ -2046,7 +2046,7 @@ pub const Renderer = struct {
     }
 
     /// Extrapolate vertex properties according to its baricentric coordinates within the triangle given by `v`.
-    fn background_interpolation(p: [2]f32, v: [3]Vertex) Vertex {
+    fn background_interpolation(p: [3]f32, v: [3]Vertex) Vertex {
         const det = (v[1].y - v[2].y) * (v[0].x - v[2].x) + (v[2].x - v[1].x) * (v[0].y - v[2].y);
         var weights = [3]f32{
             ((v[1].y - v[2].y) * (p[0] - v[2].x) + (v[2].x - v[1].x) * (p[1] - v[2].y)) / det,
@@ -2057,7 +2057,7 @@ pub const Renderer = struct {
         return Vertex{
             .x = p[0],
             .y = p[1],
-            .z = interpolate_vertex_field("z", weights, v), // Should be `ISP_BACKGND_D`?
+            .z = p[2],
             .primitive_index = 0,
             .base_color = interpolate_vertex_field("base_color", weights, v),
             .offset_color = interpolate_vertex_field("offset_color", weights, v),
@@ -2081,12 +2081,6 @@ pub const Renderer = struct {
         const tsp_instruction = gpu.read_vram(HollyModule.TSPInstructionWord, addr + 4);
         const texture_control = gpu.read_vram(HollyModule.TextureControlWord, addr + 8);
         const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
-
-        // FIXME: I don't understand. In the boot menu for example, this depth value is 0.0,
-        //        which doesn't make sense. The vertices z position looks more inline with what
-        //        I understand of the render pipeline.
-        const depth = gpu.read_register(f32, .ISP_BACKGND_D);
-        _ = depth;
 
         // Offset into the strip pointed by ISP_BACKGND_T indicated by tag_offset.
         const parameter_volume_mode = gpu.read_register(HollyModule.FPU_SHAD_SCALE, .FPU_SHAD_SCALE).enable and tags.shadow == 1;
@@ -2180,10 +2174,6 @@ pub const Renderer = struct {
                 .u = u,
                 .v = v,
             };
-            // NOTE: We draw the background with depth test disabled, but it might get clipped if for some reason it's drawn in front and we don't consider it for the max_depth.
-            //       So, even if we're not using the min_depth right now (where it is most likely to matter), I'd rather be safe :)
-            self.min_depth = @min(self.min_depth, bg_vertices[i].z);
-            self.max_depth = @max(self.max_depth, bg_vertices[i].z);
         }
 
         // NOTE: MetalliC's comment about background rendering:
@@ -2192,11 +2182,16 @@ pub const Renderer = struct {
         const screen_width: f32 = if (self.write_back_parameters.scaler_ctl.horizontal_scaling_enable) 1280.0 else 640.0;
         const screen_height: f32 = 480.0;
 
+        const depth = gpu.read_register(f32, .ISP_BACKGND_D);
+        // NOTE: We draw the background with depth test disabled, but it might get clipped if for some reason it's drawn in front and we don't consider it for the max_depth.
+        //       So, even if we're not using the min_depth right now (where it is most likely to matter), I'd rather be safe :)
+        self.min_depth = @min(self.min_depth, depth);
+        self.max_depth = @max(self.max_depth, depth);
         var vertices: [4]Vertex = .{
-            background_interpolation(.{ 0, screen_height }, bg_vertices),
-            background_interpolation(.{ 0, 0 }, bg_vertices),
-            background_interpolation(.{ screen_width, screen_height }, bg_vertices),
-            background_interpolation(.{ screen_width, 0 }, bg_vertices),
+            background_interpolation(.{ 0, screen_height, depth }, bg_vertices),
+            background_interpolation(.{ 0, 0, depth }, bg_vertices),
+            background_interpolation(.{ screen_width, screen_height, depth }, bg_vertices),
+            background_interpolation(.{ screen_width, 0, depth }, bg_vertices),
         };
 
         const indices = [_]u32{ 0, 1, 2, 3, 0xFFFFFFFF };
