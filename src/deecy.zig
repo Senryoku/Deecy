@@ -1636,17 +1636,11 @@ pub fn pause(self: *@This()) void {
         self.dc.maple.flush_vmus();
 
         if (self.config.rewind.enabled) {
-            // Needed by the render_request check, and rewind.ui_init will copy the framebuffer texture.
+            if (self.renderer.render_request) |*rr|
+                rr.await(self.io);
+            // rewind.ui_init will copy the framebuffer texture.
             self.gctx_queue_mutex.lock(self.io) catch |err| return deecy_log.err("Failed to lock gctx queue: {}", .{err});
             defer self.gctx_queue_mutex.unlock(self.io);
-
-            // Honor pending async render_request immediately, before manipulating resized_framebuffer.
-            // FIXME: This isn't ideal.
-            if (self.renderer.render_request) {
-                self.renderer.update(&self.dc.gpu) catch |err| return deecy_log.err("Failed to update renderer: {}", .{err});
-                self.renderer.render(&self.dc.gpu, false) catch |err| return deecy_log.err("Failed to render: {}", .{err});
-                self.renderer.render_request = false;
-            }
 
             self.rewind.ui_init(self.gctx, self.renderer.resized_framebuffer.texture, self.renderer.resolution);
         }

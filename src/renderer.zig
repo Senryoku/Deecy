@@ -652,8 +652,12 @@ pub const Renderer = struct {
 
     /// A to-be-rendered frame is waiting to be presented by the guest (listening to FB_R_SOF changes).
     render_pending: bool = false,
-    /// Flag for the main thread to render the current frame.
-    render_request: bool = false,
+    /// Last render request, if any.
+    render_request: ?std.Io.Future(void) = null,
+    /// Flag signaling a `render_request` is in flight (started, but not finished updating and rendering).
+    /// Needed to differentiate a cancelled request from a finished one.
+    render_in_flight: bool = false,
+
     on_render_start_param_base: u32 = 0,
     render_passes: std.ArrayList(RenderPass),
     ta_lists: std.ArrayList(HollyModule.TALists),
@@ -1146,6 +1150,11 @@ pub const Renderer = struct {
     }
 
     pub fn destroy(self: *@This()) void {
+        if (self.render_request) |*rr| {
+            rr.cancel(self.io);
+            self.render_request = null;
+        }
+
         for (self.ta_lists.items) |*list| list.deinit(self._allocator);
         self.ta_lists.deinit(self._allocator);
         for (self.render_passes.items) |*pass| pass.deinit(self._allocator);
@@ -1237,7 +1246,10 @@ pub const Renderer = struct {
 
     pub fn reset(self: *@This()) void {
         self.render_pending = false;
-        self.render_request = false;
+        if (self.render_request) |*rr| {
+            rr.cancel(self.io);
+            self.render_request = null;
+        }
         self.last_frame_timestamp = std.Io.Clock.awake.now(self.io).toMicroseconds();
         self.last_n_frametimes = .{};
         for (self.texture_metadata) |arr| {
@@ -1264,20 +1276,19 @@ pub const Renderer = struct {
             if (Once(@src())) log.warn("Missed a pending render. Consider enabling 'Synchronous Rendering'.", .{});
             self.render_pending = false;
         }
-
-        if (self.render_request) {
-            if (!render_to_texture) {
-                log.warn("Skipped a frame.", .{});
-            } else {
-                if (Once(@src())) log.warn("Render to a texture with a pending render request. Consider enabling 'Synchronous Rendering'.", .{});
-                // NOTE: This has a greater chance of happening with the frame limiter enabled. Render requests can easily be delayed by a frame.
-                //       We cannot simply wait on the main thread here, as we could end up in a deadlock (On exit for example: main thread joining on the emulation thread,
-                //       while the emulation thread is waiting on the main thread to finish rendering).
-                //       So for now we'll guarantee order of operations by rendering the late frames right here.
-                // Render immediately
-                self.render_request = false;
-                self.update(&dc.gpu) catch |err| return log.err("Failed to update renderer: {t}", .{err});
-                self.render(&dc.gpu, false) catch |err| return log.err(termcolor.red("Failed to render: {t}"), .{err});
+        if (self.render_request) |*rr| {
+            rr.cancel(self.io);
+            self.render_request = null;
+            if (self.render_in_flight) {
+                if (!render_to_texture) {
+                    log.warn("Skipped a frame.", .{});
+                } else {
+                    if (Once(@src())) log.warn("Render to a texture with a pending render request. Consider enabling 'Synchronous Rendering'.", .{});
+                    // Render immediately
+                    self.update(&dc.gpu) catch |err| return log.err("Failed to update renderer: {t}", .{err});
+                    self.render(&dc.gpu, false) catch |err| return log.err(termcolor.red("Failed to render: {t}"), .{err});
+                }
+                self.render_in_flight = false;
             }
         }
 
@@ -1337,32 +1348,45 @@ pub const Renderer = struct {
             self.update(&dc.gpu) catch |err| return log.err("Failed to update renderer: {t}", .{err});
             self.render(&dc.gpu, render_to_texture) catch |err| return log.err("Failed to render: {t}", .{err});
         } else {
-            if (self.config.synchronous_render)
-                self.update(&dc.gpu) catch |err| return log.err("Failed to update renderer: {t}", .{err});
             if (self.config.delay_render) {
+                if (self.config.synchronous_render)
+                    self.update(&dc.gpu) catch |err| return log.err("Failed to update renderer: {t}", .{err});
                 self.render_pending = true;
             } else {
-                // Let the main thread process the list asynchronously unless explicitly disabled.
                 if (self.config.synchronous_render) {
-                    self.render(&dc.gpu, false) catch |err| return log.err("Failed to render: {t}", .{err});
+                    self.update(&dc.gpu) catch |err| return log.err("Failed to update renderer: {t}", .{err});
+                    self.render(&dc.gpu, render_to_texture) catch |err| return log.err("Failed to render: {t}", .{err});
                 } else {
-                    self.render_request = true;
+                    self.render_request = self.io.concurrent(async_render, .{ self, &dc.gpu }) catch |err|
+                        return log.err("Failed to request render: {t}", .{err});
                 }
             }
         }
+    }
+
+    fn async_render(self: *@This(), gpu: *HollyModule.Holly) void {
+        self.render_in_flight = true;
+
+        self._gctx_queue_mutex.lock(self.io) catch return;
+        defer self._gctx_queue_mutex.unlock(self.io);
+
+        defer self.render_in_flight = false;
+
+        self.update(gpu) catch |err| return log.err("Failed to update renderer: {t}", .{err});
+        self.render(gpu, false) catch |err| return log.err("Failed to render: {t}", .{err});
     }
 
     /// May lock `_gctx_queue_mutex`.
     pub fn on_fb_r_sof1(self: *@This(), dc: *Dreamcast, old_value: u32, new_value: u32) void {
         if (old_value == new_value or !self.render_pending) return;
         if (new_value == self.write_back_parameters.fb_w_sof1) {
-            // Let the main thread process the list asynchronously unless explicitly disabled.
             if (self.config.synchronous_render) {
                 self._gctx_queue_mutex.lockUncancelable(self.io);
                 defer self._gctx_queue_mutex.unlock(self.io);
                 self.render(&dc.gpu, false) catch |err| return log.err("Failed to render: {t}", .{err});
             } else {
-                self.render_request = true;
+                self.render_request = self.io.concurrent(async_render, .{ self, &dc.gpu }) catch |err|
+                    return log.err("Failed to request render: {t}", .{err});
             }
             self.render_pending = false;
         }
@@ -1609,7 +1633,7 @@ pub const Renderer = struct {
     }
 
     /// Uploads framebuffer from guest VRAM to host texture.
-    /// Locks gctx_queue_mutex.
+    /// Assumes gctx_queue_mutex is locked.
     pub fn update_framebuffer_texture(self: *@This(), holly: *const HollyModule.Holly) void {
         const SPG_CONTROL = self.spg_control;
         const FB_R_CTRL = holly.read_register(HollyModule.FB_R_CTRL, .FB_R_CTRL);
@@ -1671,8 +1695,6 @@ pub const Renderer = struct {
             }
         }
 
-        self._gctx_queue_mutex.lockUncancelable(self.io);
-        defer self._gctx_queue_mutex.unlock(self.io);
         self._gctx.queue.writeTexture(
             .{
                 .texture = self._gctx.lookupResource(self.framebuffer.texture).?,
@@ -2631,12 +2653,9 @@ pub const Renderer = struct {
     }
 
     /// Convert framebuffer from internal resolution to upscaled resolution, copying from framebuffer to resized_framebuffer.
-    /// Locks _gctx_queue_mutex.
+    /// Assumes _gctx_queue_mutex is locked.
     pub fn blit_framebuffer(self: *const @This()) void {
         const gctx = self._gctx;
-        self._gctx_queue_mutex.lockUncancelable(self.io);
-        defer self._gctx_queue_mutex.unlock(self.io);
-
         if (gctx.lookupResource(self.blit_pipeline)) |pipeline| {
             const commands = commands: {
                 const encoder = gctx.device.createCommandEncoder(null);
