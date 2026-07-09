@@ -1,7 +1,6 @@
 const std = @import("std");
 const Image = @import("image.zig");
-const Colors = @import("dreamcast").HollyModule.Colors;
-const Renderer = @import("renderer.zig");
+const Texture = @import("texture.zig");
 
 const Version: u32 = 0x03525650;
 
@@ -98,22 +97,22 @@ pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !Image {
         const code_book_offset: u32 = texels_offset;
         if (header.image_data_type.mipmapped()) {
             if (header.image_data_type.vq_compressed()) {
-                texels_offset += Renderer.vq_mipmap_offset(image.width);
+                texels_offset += Texture.vq_mipmap_offset(image.width);
             } else {
                 if (header.pixel_format == .Palette4BPP or header.pixel_format == .Palette8BPP) {
-                    const val: u32 = Renderer.palette_mipmap_offset(image.width);
+                    const val: u32 = Texture.palette_mipmap_offset(image.width);
                     texels_offset += if (header.pixel_format == .Palette4BPP) val / 2 else val;
                 } else {
-                    texels_offset += Renderer.mipmap_offset(image.width);
+                    texels_offset += Texture.mipmap_offset(image.width);
                 }
                 texels_offset -= 4; // FIXME: I have no idea why is it off, seems to be fine when textures are uploaded to the PVR.
             }
         }
 
         if (header.image_data_type.vq_compressed()) {
-            Renderer.decode_vq(@ptrCast(@alignCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), buffer[code_book_offset..], buffer[8 * 256 + texels_offset ..], image.width, image.height, header.image_data_type.twiddled());
+            Texture.decode_vq(@ptrCast(@alignCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), buffer[code_book_offset..], buffer[8 * 256 + texels_offset ..], image.width, image.height, header.image_data_type.twiddled());
         } else {
-            Renderer.decode_tex(@ptrCast(@alignCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), buffer[texels_offset..], image.width, image.height, header.image_data_type.twiddled());
+            Texture.decode_tex(@ptrCast(@alignCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), buffer[texels_offset..], image.width, image.height, header.image_data_type.twiddled());
         }
 
         return image;

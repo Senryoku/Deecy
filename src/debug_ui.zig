@@ -1441,7 +1441,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             var i: u32 = 0;
             var current_addr = start;
             while (current_addr < end) {
-                const pixel_idx: u32 = if (static.twiddled) RendererModule.to_twiddled_index(@intCast(i), width) else i;
+                const pixel_idx: u32 = if (static.twiddled) RendererModule.Texture.to_twiddled_index(@intCast(i), width) else i;
                 const addr: u32 = start + bytes_per_pixels * pixel_idx;
                 if (addr >= 0x04800000 - bytes_per_pixels) break;
                 switch (static.format & 0b111) {
