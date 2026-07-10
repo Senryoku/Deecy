@@ -2,6 +2,7 @@ const std = @import("std");
 const log = std.log.scoped(.cheats);
 
 const HostPaths = @import("dreamcast").HostPaths;
+const Default = @import("default_game_settings.zig");
 const codebreaker = @import("codebreaker.zig");
 
 pub const Condition = enum {
@@ -60,31 +61,6 @@ const Game = struct {
     product_id: []const u8,
 };
 
-const BuiltinCheat = struct {
-    name: []const u8,
-    enabled: bool = false,
-    actions: []const Action,
-
-    pub fn dupe(self: @This(), allocator: std.mem.Allocator) !Cheat {
-        return .{
-            .name = try allocator.dupe(u8, self.name),
-            .enabled = self.enabled,
-            .actions = try allocator.dupe(Action, self.actions),
-        };
-    }
-};
-
-const Builtin: []const struct { game: Game, cheats: []const BuiltinCheat } = @import("cheats.zon");
-
-pub fn get_builtin_cheats(product_name: []const u8, product_id: []const u8) ?[]const BuiltinCheat {
-    for (Builtin) |entry| {
-        if (std.mem.eql(u8, entry.game.product_name, product_name) and std.mem.eql(u8, entry.game.product_id, product_id)) {
-            return entry.cheats;
-        }
-    }
-    return null;
-}
-
 /// Caller owns the returned memory
 pub fn path(allocator: std.mem.Allocator, product_name: []const u8, product_id: []const u8) ![]const u8 {
     const game_dir = try HostPaths.userdata_game_directory(allocator, product_name, product_id);
@@ -116,13 +92,13 @@ pub fn load(allocator: std.mem.Allocator, io: std.Io, product_name: []const u8, 
         switch (err) {
             error.FileNotFound => {
                 // Load default cheats.
-                if (get_builtin_cheats(product_name, product_id)) |builtin_cheats| {
+                if (Default.get(product_name, product_id)) |builtin| {
                     var cheat_list: std.ArrayList(Cheat) = .empty;
                     errdefer {
                         for (cheat_list.items) |cheat| cheat.deinit(allocator);
                         cheat_list.deinit(allocator);
                     }
-                    for (builtin_cheats) |cheat|
+                    for (builtin.cheats) |cheat|
                         try cheat_list.append(allocator, try cheat.dupe(allocator));
                     const slice = try cheat_list.toOwnedSlice(allocator);
 

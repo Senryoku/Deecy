@@ -575,6 +575,41 @@ const DepthTextureAndView = struct {
 
 pub const Filter = enum { Nearest, Linear };
 
+pub const GameSettings = struct {
+    pub const AspectRatio = enum {
+        /// Default
+        @"4:3",
+        /// Rendered as 640x480 stretched to 16:9. Cheap, should always work.
+        @"16:9 (Stretch)",
+        /// Real 16:9 (854x480). More pixels, more demanding, might be less compatibility.
+        @"16:9",
+
+        pub fn width(self: @This()) u32 {
+            return switch (self) {
+                .@"4:3", .@"16:9 (Stretch)" => 640,
+                .@"16:9" => 856, // NOTE: Should be 854, but 856 still being a multiple of 8 avoids having to add guards to all compute shaders.
+            };
+        }
+    };
+    aspect_ratio: AspectRatio = .@"4:3",
+    /// Filter used when blitting the rendered frame to the host surface.
+    scaling_filter: Filter = .Linear,
+    /// Write the framebuffer back to a texture or guest VRAM (depending on ExperimentalRenderToVRAM) after each render.
+    framebuffer_emulation: bool = false,
+    /// When rendering to a texture or framebuffer, copy the result to guest VRAM. Necessary for some effects in Grandia II or Tony Hawk 2 for example.
+    copy_to_vram: bool = true,
+    /// Force UV clamping on some axis aligned quads to avoid wrapping errors after upscaling.
+    clamp_sprites_uvs: bool = true,
+    /// Render immediately when Render Start is called.
+    /// Can avoid some synchronization issues at a slight performance cost (default is to defer GPU processing to the main thread).
+    synchronous_render: bool = false,
+    /// Delay rendering until the guest actually wants to present the result (Updates FB_R_SOF).
+    /// Some games render frames without ever presenting them, leading to flickers or wrong pause screens for example if we simply present the last rendered frame
+    /// at all times. A better solution would be to hold N frames (2 for double buffering, but at this point we also might want to process rendering to texture with
+    /// a separate pipeline too...) and present them only as needed, but this would require duplicating all ressources. This is simpler, at a small latency cost.
+    delay_render: bool = false,
+};
+
 pub const Renderer = struct {
     // Initial max texture count for each size (8x8 to 1024x1024).
     // FIXME: Not sure what are good values.
@@ -590,42 +625,11 @@ pub const Renderer = struct {
 
     pub const Configuration = struct {
         pub const TextureFilter = enum { @"Application Driven", @"Force Nearest", @"Force Linear" };
-        pub const AspectRatio = enum {
-            /// Default
-            @"4:3",
-            /// Rendered as 640x480 stretched to 16:9. Cheap, should always work.
-            @"16:9 (Stretch)",
-            /// Real 16:9 (854x480). More pixels, more demanding, might be less compatibility.
-            @"16:9",
-
-            pub fn width(self: @This()) u32 {
-                return switch (self) {
-                    .@"4:3", .@"16:9 (Stretch)" => NativeResolution.width,
-                    .@"16:9" => 856, // NOTE: Should be 854, but 856 still being a multiple of 8 avoids having to add guards to all compute shaders.
-                };
-            }
-        };
 
         internal_resolution_factor: u32 = 2,
-        aspect_ratio: AspectRatio = .@"4:3",
         display_mode: DisplayMode = .Center,
-        /// Filter used when blitting the rendered frame to the host surface.
-        scaling_filter: Filter = .Linear,
         texture_filter: TextureFilter = .@"Application Driven",
-        /// Write the framebuffer back to a texture or guest VRAM (depending on ExperimentalRenderToVRAM) after each render.
-        framebuffer_emulation: bool = false,
-        /// When rendering to a texture or framebuffer, copy the result to guest VRAM. Necessary for some effects in Grandia II or Tony Hawk 2 for example.
-        copy_to_vram: bool = true,
-        /// Force UV clamping on some axis aligned quads to avoid wrapping errors after upscaling.
-        clamp_sprites_uvs: bool = true,
-        /// Render immediately when Render Start is called.
-        /// Can avoid some synchronization issues at a slight performance cost (default is to defer GPU processing to the main thread).
-        synchronous_render: bool = false,
-        /// Delay rendering until the guest actually wants to present the result (Updates FB_R_SOF).
-        /// Some games render frames without ever presenting them, leading to flickers or wrong pause screens for example if we simply present the last rendered frame
-        /// at all times. A better solution would be to hold N frames (2 for double buffering, but at this point we also might want to process rendering to texture with
-        /// a separate pipeline too...) and present them only as needed, but this would require duplicating all ressources. This is simpler, at a small latency cost.
-        delay_render: bool = false,
+
         msaa: enum { Off, x4 } = .Off,
     };
 
@@ -649,6 +653,7 @@ pub const Renderer = struct {
 
     /// Owned by Deecy.
     config: *const Configuration,
+    game_settings: GameSettings = .{},
 
     /// A to-be-rendered frame is waiting to be presented by the guest (listening to FB_R_SOF changes).
     render_pending: bool = false,
@@ -992,7 +997,7 @@ pub const Renderer = struct {
         var renderer = try allocator.create(Renderer);
         renderer.* = .{
             .config = config,
-            .resolution = .{ .width = config.internal_resolution_factor * config.aspect_ratio.width(), .height = config.internal_resolution_factor * NativeResolution.height },
+            .resolution = .{ .width = config.internal_resolution_factor * NativeResolution.width, .height = config.internal_resolution_factor * NativeResolution.height },
 
             .blit_vertex_buffer = blit_vertex_buffer,
             .blit_index_buffer = blit_index_buffer,
@@ -1265,6 +1270,20 @@ pub const Renderer = struct {
         self.vertices.clearRetainingCapacity();
     }
 
+    pub fn set_game_settings(self: *@This(), game_settings: GameSettings) void {
+        const previous = self.game_settings;
+        self.game_settings = game_settings;
+        if (previous.aspect_ratio != game_settings.aspect_ratio) {
+            self.resolution = .{
+                .width = self.game_settings.aspect_ratio.width() * self.config.internal_resolution_factor,
+                .height = NativeResolution.height * self.config.internal_resolution_factor,
+            };
+            self.on_inner_resolution_change();
+        }
+        if (previous.scaling_filter != game_settings.scaling_filter)
+            self.on_scaling_filter_change();
+    }
+
     pub fn on_render_start(self: *@This(), dc: *Dreamcast) void {
         const render_to_texture = dc.gpu.render_to_texture();
 
@@ -1348,12 +1367,12 @@ pub const Renderer = struct {
             self.update(&dc.gpu) catch |err| return log.err("Failed to update renderer: {t}", .{err});
             self.render(&dc.gpu, render_to_texture) catch |err| return log.err("Failed to render: {t}", .{err});
         } else {
-            if (self.config.delay_render) {
-                if (self.config.synchronous_render)
+            if (self.game_settings.delay_render) {
+                if (self.game_settings.synchronous_render)
                     self.update(&dc.gpu) catch |err| return log.err("Failed to update renderer: {t}", .{err});
                 self.render_pending = true;
             } else {
-                if (self.config.synchronous_render) {
+                if (self.game_settings.synchronous_render) {
                     self.update(&dc.gpu) catch |err| return log.err("Failed to update renderer: {t}", .{err});
                     self.render(&dc.gpu, render_to_texture) catch |err| return log.err("Failed to render: {t}", .{err});
                 } else {
@@ -1380,7 +1399,7 @@ pub const Renderer = struct {
     pub fn on_fb_r_sof1(self: *@This(), dc: *Dreamcast, old_value: u32, new_value: u32) void {
         if (old_value == new_value or !self.render_pending) return;
         if (new_value == self.write_back_parameters.fb_w_sof1) {
-            if (self.config.synchronous_render) {
+            if (self.game_settings.synchronous_render) {
                 self._gctx_queue_mutex.lockUncancelable(self.io);
                 defer self._gctx_queue_mutex.unlock(self.io);
                 self.render(&dc.gpu, false) catch |err| return log.err("Failed to render: {t}", .{err});
@@ -2341,7 +2360,7 @@ pub const Renderer = struct {
                         self.max_depth = @max(self.max_depth, self.vertices.getLast().z);
                     }
 
-                    if (self.config.clamp_sprites_uvs and self.resolution.width != NativeResolution.width and textured) {
+                    if (self.game_settings.clamp_sprites_uvs and self.resolution.width != NativeResolution.width and textured) {
                         // Here "Sprite" means "Screen Aligned Square", basically (not strictly a sprite in the TA sense). 4 vertices with the same depth, with UVs in [0..1].
                         const vertices = self.vertices.items[strip_start..];
                         if (vertices.len == 4 and (vertices[0].z == vertices[1].z and vertices[0].z == vertices[2].z and vertices[0].z == vertices[3].z)) {
@@ -3398,13 +3417,13 @@ pub const Renderer = struct {
                 pass.drawIndexed(4, 1, 0, 0, 0);
             }
 
-            if (self.config.framebuffer_emulation or render_to_texture) {
+            if (self.game_settings.framebuffer_emulation or render_to_texture) {
                 // FIXME: Could technically go up to 1024 when rendering to a texture... Don't know if any game actualy does it.
                 //        Using the framebuffer size allow reusing some textures and buffers from the regular pipeline.
                 const width: u32 = @min(self.global_clip.x.max, NativeResolution.width);
                 const height: u32 = @min(self.global_clip.y.max, NativeResolution.height);
                 // Skips the CPU writeback and copy directly to a host texture slot.
-                if (!self.config.copy_to_vram) {
+                if (!self.game_settings.copy_to_vram) {
                     // TODO: How is the minimum value of the global_clip used exactly? (Find a game where it isn't just [0, 0].)
                     if (self.global_clip.x.min != 0 or self.global_clip.y.min != 0)
                         log.warn("Render to texture with unusual global_clip:  [{d},{d}] to [{d},{d}]", .{ self.global_clip.x.min, self.global_clip.y.min, self.global_clip.x.max, self.global_clip.y.max });
@@ -3551,7 +3570,7 @@ pub const Renderer = struct {
         gctx.submit(&.{commands});
 
         // Read the result and copy it to guest VRAM
-        if ((self.config.framebuffer_emulation or render_to_texture) and self.config.copy_to_vram) {
+        if ((self.game_settings.framebuffer_emulation or render_to_texture) and self.game_settings.copy_to_vram) {
             const static = struct {
                 var result: zgpu.wgpu.MapAsyncStatus = .@"error";
                 fn signal_fb_mapped(status: zgpu.wgpu.MapAsyncStatus, message: zgpu.wgpu.StringView.C, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
@@ -3614,11 +3633,11 @@ pub const Renderer = struct {
 
     /// Blit the last rendered frame to the window surface.
     /// Locks _gctx_queue_mutex.
-    pub fn draw(self: *const @This(), window_width: u32, window_height: u32, aspect_ratio: Configuration.AspectRatio) void {
+    pub fn draw(self: *const @This(), window_width: u32, window_height: u32) void {
         self._gctx_queue_mutex.lockUncancelable(self.io);
         defer self._gctx_queue_mutex.unlock(self.io);
 
-        self.update_blit_to_screen_vertex_buffer(window_width, window_height, aspect_ratio);
+        self.update_blit_to_screen_vertex_buffer(window_width, window_height);
 
         if (self._gctx.lookupResource(self.blit_pipeline)) |pipeline| {
             var surface: zgpu.wgpu.SurfaceTexture = undefined;
@@ -3871,8 +3890,8 @@ pub const Renderer = struct {
     }
 
     // Assumes gctx_queue_mutex is locked.
-    pub fn update_blit_to_screen_vertex_buffer(self: *const @This(), width: u32, height: u32, aspect_ratio: Configuration.AspectRatio) void {
-        const iw: f32 = if (aspect_ratio == .@"16:9 (Stretch)") 16.0 / 9.0 * @as(f32, @floatFromInt(self.resolution.height)) else @floatFromInt(self.resolution.width);
+    pub fn update_blit_to_screen_vertex_buffer(self: *const @This(), width: u32, height: u32) void {
+        const iw: f32 = if (self.game_settings.aspect_ratio == .@"16:9 (Stretch)") 16.0 / 9.0 * @as(f32, @floatFromInt(self.resolution.height)) else @floatFromInt(self.resolution.width);
         const ih: f32 = @floatFromInt(self.resolution.height);
         const tw: f32 = @floatFromInt(width);
         const th: f32 = @floatFromInt(height);
@@ -3966,7 +3985,7 @@ pub const Renderer = struct {
             },
         }
 
-        self.create_blit_bind_groups(self.config.scaling_filter);
+        self.create_blit_bind_groups(self.game_settings.scaling_filter);
 
         self.create_modifier_volume_apply_bind_group();
         self.create_oit_buffers();
@@ -3977,7 +3996,7 @@ pub const Renderer = struct {
     }
 
     pub fn on_scaling_filter_change(self: *@This()) void {
-        self.create_blit_bind_groups(self.config.scaling_filter);
+        self.create_blit_bind_groups(self.game_settings.scaling_filter);
     }
 
     pub fn on_msaa_change(self: *@This()) !void {

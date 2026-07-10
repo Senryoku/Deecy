@@ -43,6 +43,7 @@ const Shortcuts = @import("./ui/shortcuts.zig");
 const ELF = @import("elf.zig");
 
 const Cheats = @import("./cheats.zig");
+const GameSettings = @import("./GameSettings.zig");
 
 const lz4 = @import("lz4");
 
@@ -1371,6 +1372,12 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
         }
         self.enabled_cheats = try cheat_list.toOwnedSlice(self._allocator);
     }
+
+    const game_settings = try GameSettings.load(self.io, self._allocator, self.get_product_name(), self.get_product_id());
+    inline for (@typeInfo(RendererModule.GameSettings).@"struct".fields) |field| {
+        deecy_log.info("GameSettings.{s}: {}", .{ field.name, @field(game_settings.rendering, field.name) });
+    }
+    self.renderer.set_game_settings(game_settings.rendering);
 
     switch (self.config.bios_emulation) {
         .Original => {},

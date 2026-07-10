@@ -232,7 +232,7 @@ pub fn main(init: std.process.Init) !void {
                 }
             }
 
-            d.renderer.draw(d.config.window_size.width, d.config.window_size.height, d.config.renderer.aspect_ratio); //  Blit to screen
+            d.renderer.draw(d.config.window_size.width, d.config.window_size.height); //  Blit to screen
         }
 
         try d.draw_ui();

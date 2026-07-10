@@ -882,7 +882,7 @@ pub fn draw(self: *@This()) !void {
                     }
                     zgui.text("Current Resolution: {d}x{d}", .{ d.renderer.resolution.width, d.renderer.resolution.height });
                     var resolution_update = false;
-                    var resolution: enum(u8) { Native = 1, x2 = 2, x3 = 3, x4 = 4, x5 = 5, x6 = 6 } = @enumFromInt(d.renderer.resolution.width / d.config.renderer.aspect_ratio.width());
+                    var resolution: enum(u8) { Native = 1, x2 = 2, x3 = 3, x4 = 4, x5 = 5, x6 = 6 } = @enumFromInt(d.renderer.resolution.width / d.renderer.game_settings.aspect_ratio.width());
                     zgui.setNextItemWidth(dropdown_size);
                     if (zgui.comboFromEnum("Resolution", &resolution)) {
                         resolution_update = true;
@@ -892,34 +892,6 @@ pub fn draw(self: *@This()) !void {
                     if (zgui.comboFromEnum("MSAA", &d.config.renderer.msaa))
                         try d.renderer.on_msaa_change();
                     zgui.setItemTooltip("Multisample anti-aliasing setting for the opaque pass.", .{});
-                    zgui.setNextItemWidth(dropdown_size);
-                    if (zgui.comboFromEnum("Aspect Ratio", &d.config.renderer.aspect_ratio)) {
-                        resolution_update = true;
-                    }
-                    zgui.setItemTooltip(
-                        \\ Anything other than 4:3 will require a compatible (or modified) game.
-                        \\   4:3             Default
-                        \\   16:9 (Stretch)  Rendered at the normal resolution, but streched horizontally to 16:9. Cheap and accurate. (Anamorphic widescreen)
-                        \\   16:9            Rendered at an increased horizontal resolution. More expensive and might be less compatible.
-                    , .{});
-                    if (resolution_update) {
-                        d.gctx_queue_mutex.lockUncancelable(d.io);
-                        defer d.gctx_queue_mutex.unlock(d.io);
-                        d.renderer.resolution = .{
-                            .width = d.config.renderer.aspect_ratio.width() * d.config.renderer.internal_resolution_factor,
-                            .height = Deecy.Renderer.NativeResolution.height * d.config.renderer.internal_resolution_factor,
-                        };
-                        d.renderer.on_inner_resolution_change();
-                        d.rewind.on_inner_resolution_change(d.gctx);
-                        //  Force a re-render if we're paused
-                        if (!d.running) try d.renderer.render(&d.dc.gpu, false);
-                    }
-                    zgui.setNextItemWidth(dropdown_size);
-                    _ = zgui.comboFromEnum("Display Mode", &d.config.renderer.display_mode);
-                    zgui.setNextItemWidth(dropdown_size);
-                    if (zgui.comboFromEnum("Scaling Filter", &d.config.renderer.scaling_filter)) {
-                        d.renderer.on_scaling_filter_change();
-                    }
                     zgui.setNextItemWidth(dropdown_size);
                     _ = zgui.comboFromEnum("Texture Filter", &d.config.renderer.texture_filter);
                     zgui.separator();
@@ -960,33 +932,6 @@ pub fn draw(self: *@This()) !void {
                             zgui.endCombo();
                         }
                     }
-
-                    zgui.separatorText("Experimental settings");
-                    zgui.setNextItemWidth(dropdown_size);
-                    _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
-                    _ = zgui.checkbox("Framebuffer Emulation", .{ .v = &d.config.renderer.framebuffer_emulation });
-                    zgui.setItemTooltip("Allow re-use of the result of rendering to the framebuffer.\nSlower, particularly with 'Copy to Guest VRAM' enabled, but necessary for some effects (Static loading screens for example).", .{});
-                    if (d.config.renderer.framebuffer_emulation and d.config.renderer.copy_to_vram) {
-                        zgui.sameLine(.{});
-                        zgui.textUnformattedColored(common.Yellow, Icons.TriangleExclamation);
-                        zgui.setItemTooltip("'Framebuffer Emulation' and 'Copy to Guest VRAM' are rarely necessary at the same time and can hinder performance.", .{});
-                    }
-                    _ = zgui.checkbox("Copy to Guest VRAM", .{ .v = &d.config.renderer.copy_to_vram });
-                    zgui.setItemTooltip("Copy the result of rendering to the guest VRAM.\nSlower, particularly with 'Framebuffer Emulation' enabled, but necessary for some effects.", .{});
-                    _ = zgui.checkbox("Clamp Sprites UVs", .{ .v = &d.config.renderer.clamp_sprites_uvs });
-                    zgui.setItemTooltip("Avoid some seams around sprites when upscaling.", .{});
-                    _ = zgui.checkbox("Synchronous Render", .{ .v = &d.config.renderer.synchronous_render });
-                    zgui.setItemTooltip(
-                        \\ Render synchronously with the guest system.
-                        \\ Can avoid some synchronization issues at a slight performance cost.
-                        \\ Try this when you notice corrupted textures, especially during transitions.
-                    , .{});
-                    _ = zgui.checkbox("Delayed Render", .{ .v = &d.config.renderer.delay_render });
-                    zgui.setItemTooltip(
-                        \\ Delay rendering until a frame is actually presented.
-                        \\ Can prevent flickering or missing pause screens, it should only be enabled when encountering these issues.
-                        \\ Might require 'Synchronous Render' to be enabled as well."
-                    , .{});
                     _ = zgui.checkbox("Use Pipeline Cache", .{ .v = &d.config.enable_dawn_pipeline_cache });
                     zgui.setItemTooltip("Restart Required.\nReduces 'pop-in' due to pipeline creation delay (shader compilation).", .{});
                     if (builtin.mode == .Debug) {
@@ -994,6 +939,72 @@ pub fn draw(self: *@This()) !void {
                             try @import("pipeline_cache.zig").clear(d._allocator);
                         }
                     }
+
+                    zgui.setNextItemWidth(dropdown_size);
+                    _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
+
+                    zgui.separatorText("Game settings");
+                    zgui.setNextItemWidth(dropdown_size);
+                    _ = zgui.comboFromEnum("Display Mode", &d.config.renderer.display_mode);
+                    zgui.setNextItemWidth(dropdown_size);
+                    if (zgui.comboFromEnum("Aspect Ratio", &d.renderer.game_settings.aspect_ratio)) {
+                        resolution_update = true;
+                    }
+                    zgui.setItemTooltip(
+                        \\ Anything other than 4:3 will require a compatible (or modified) game.
+                        \\   4:3             Default
+                        \\   16:9 (Stretch)  Rendered at the normal resolution, but streched horizontally to 16:9. Cheap and accurate. (Anamorphic widescreen)
+                        \\   16:9            Rendered at an increased horizontal resolution. More expensive and might be less compatible.
+                    , .{});
+                    zgui.setNextItemWidth(dropdown_size);
+                    if (zgui.comboFromEnum("Scaling Filter", &d.renderer.game_settings.scaling_filter)) {
+                        d.renderer.on_scaling_filter_change();
+                    }
+                    zgui.separatorText("Game tweaks");
+                    _ = zgui.checkbox("Framebuffer Emulation", .{ .v = &d.renderer.game_settings.framebuffer_emulation });
+                    zgui.setItemTooltip("Allow re-use of the result of rendering to the framebuffer.\nSlower, particularly with 'Copy to Guest VRAM' enabled, but necessary for some effects (Static loading screens for example).", .{});
+                    if (d.renderer.game_settings.framebuffer_emulation and d.renderer.game_settings.copy_to_vram) {
+                        zgui.sameLine(.{});
+                        zgui.textUnformattedColored(common.Yellow, Icons.TriangleExclamation);
+                        zgui.setItemTooltip("'Framebuffer Emulation' and 'Copy to Guest VRAM' are rarely necessary at the same time and can hinder performance.", .{});
+                    }
+                    _ = zgui.checkbox("Copy to Guest VRAM", .{ .v = &d.renderer.game_settings.copy_to_vram });
+                    zgui.setItemTooltip("Copy the result of rendering to the guest VRAM.\nSlower, particularly with 'Framebuffer Emulation' enabled, but necessary for some effects.", .{});
+                    _ = zgui.checkbox("Clamp Sprites UVs", .{ .v = &d.renderer.game_settings.clamp_sprites_uvs });
+                    zgui.setItemTooltip("Avoid some seams around sprites when upscaling.", .{});
+                    _ = zgui.checkbox("Synchronous Render", .{ .v = &d.renderer.game_settings.synchronous_render });
+                    zgui.setItemTooltip(
+                        \\ Render synchronously with the guest system.
+                        \\ Can avoid some synchronization issues at a slight performance cost.
+                        \\ Try this when you notice corrupted textures, especially during transitions.
+                    , .{});
+                    _ = zgui.checkbox("Delayed Render", .{ .v = &d.renderer.game_settings.delay_render });
+                    zgui.setItemTooltip(
+                        \\ Delay rendering until a frame is actually presented.
+                        \\ Can prevent flickering or missing pause screens, it should only be enabled when encountering these issues.
+                        \\ Might require 'Synchronous Render' to be enabled as well."
+                    , .{});
+                    {
+                        zgui.beginDisabled(.{ .disabled = d.dc.gdrom.disc == null });
+                        defer zgui.endDisabled();
+                        if (zgui.button("Save game settings", .{})) {
+                            // TODO!
+                        }
+                    }
+
+                    if (resolution_update) {
+                        d.gctx_queue_mutex.lockUncancelable(d.io);
+                        defer d.gctx_queue_mutex.unlock(d.io);
+                        d.renderer.resolution = .{
+                            .width = d.renderer.game_settings.aspect_ratio.width() * d.config.renderer.internal_resolution_factor,
+                            .height = Deecy.Renderer.NativeResolution.height * d.config.renderer.internal_resolution_factor,
+                        };
+                        d.renderer.on_inner_resolution_change();
+                        d.rewind.on_inner_resolution_change(d.gctx);
+                        //  Force a re-render if we're paused
+                        if (!d.running) try d.renderer.render(&d.dc.gpu, false);
+                    }
+
                     zgui.endTabItem();
                 }
 
