@@ -116,10 +116,19 @@ pub fn write(self: *SH4, comptime T: type, virtual_addr: u32, value: T) void {
             SH4Module.check_type(&[_]type{u16}, T, "Invalid P4 Write({}) to SCFCR2\n", .{T});
             const val: P4.SCFCR2 = @bitCast(value);
             log.debug("Write to SCFCR2: {any}", .{val});
-            if (val.rfrst) log.debug("  Resetting Receive FIFO", .{});
+            if (val.rfrst) {
+                log.debug("  Resetting Receive FIFO", .{});
+                check_rx(self);
+                stdin_reader.interface.tossBuffered();
+                check_rx(self);
+            }
             if (val.tfrst) log.debug("  Resetting Transmit FIFO", .{});
             self.p4_register(P4.SCFCR2, .SCFCR2).* = val;
             return;
+        },
+        .SCLSR2, .SCSCR2 => {
+            self.p4_register_addr(T, virtual_addr).* = value;
+            update_interrupts(self);
         },
         else => {
             self.p4_register_addr(T, virtual_addr).* = value;
