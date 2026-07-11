@@ -21,7 +21,7 @@ pub const std_options: std.Options = .{
         .{ .scope = .elf, .level = .warn },
         .{ .scope = .dc, .level = .warn },
         .{ .scope = .sh4, .level = .warn },
-        .{ .scope = .sh4_scif, .level = .debug },
+        .{ .scope = .sh4_scif, .level = .info },
         .{ .scope = .mmu, .level = .info },
         .{ .scope = .sh4_jit, .level = .warn },
         .{ .scope = .arm_jit, .level = .info },

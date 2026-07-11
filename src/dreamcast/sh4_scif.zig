@@ -4,10 +4,13 @@ var stdin_intialized = false;
 var stdin_buffer: [16]u8 = undefined;
 var stdin_reader: std.Io.File.Reader = undefined;
 
-var read_scfsr2: P4.SCFSR2 = .{}; // FIXME: Not serialized.
+/// Used to prevent clearing bits from SCFSR2 before they are read.
+/// FIXME: Not serialized.
+var read_scfsr2: P4.SCFSR2 = .{};
 
 fn check_rx(self: *const SH4) void {
     if (!stdin_intialized) {
+        // FIXME: Redirect to custom FD instead?
         stdin_reader = std.Io.File.stdin().readerStreaming(SH4Module.Context.io, &stdin_buffer);
         stdin_intialized = true;
     }
@@ -16,19 +19,23 @@ fn check_rx(self: *const SH4) void {
     const serial_control_register = self.p4_register(P4.SCSCR2, .SCSCR2).*;
     if (!serial_control_register.re) return;
 
+    // TODO: Windows support?
+
+    // Check if there is data to read.
+    // FIXME: Is it the best way to do this?
     var fds = [_]std.posix.pollfd{.{
         .fd = std.Io.File.stdin().handle,
         .events = std.posix.POLL.IN,
         .revents = 0,
     }};
-
     const ready = std.posix.poll(&fds, 0) catch return;
     if (ready > 0 or stdin_reader.interface.bufferedLen() > 0) {
+        // FIXME: This is only here to populate the buffer.
         const byte = stdin_reader.interface.peekByte() catch unreachable;
-        log.debug("Read from stdin: {}", .{byte});
         self.p4_register(u8, .SCFRDR2).* = byte;
-        const fifo_control_register = self.p4_register(P4.SCFCR2, .SCFCR2).*;
+        log.debug("Read from stdin: {}", .{byte});
 
+        const fifo_control_register = self.p4_register(P4.SCFCR2, .SCFCR2).*;
         var status_register = self.p4_register(P4.SCFSR2, .SCFSR2);
         if (stdin_reader.interface.bufferedLen() >= fifo_control_register.rtrg.bytes())
             status_register.rdf = true;
@@ -50,7 +57,7 @@ pub fn read(self: *const SH4, comptime T: type, virtual_addr: u32) T {
             return @bitCast(status);
         },
         .SCFRDR2 => {
-            // FIXME: Currently blocking if stdin is empty (should poll).
+            // FIXME: Currently blocking if stdin is empty (should poll for safety).
             const byte = stdin_reader.interface.takeByte() catch unreachable;
             check_rx(self);
             return byte;
@@ -73,7 +80,9 @@ pub fn write(self: *SH4, comptime T: type, virtual_addr: u32, value: T) void {
             const stdout = &stdout_writer.interface;
 
             log.debug("Serial FIFO out: {c}", .{value});
+            // TODO: Make this configurable.
             if (false) {
+                // Colored output to stdout.
                 stdout.print("\u{001b}[44m\u{001b}[97m{c}\u{001b}[0m", .{value}) catch |err| {
                     log.err("Error writing serial output: {}\n", .{err});
                 };
@@ -99,15 +108,16 @@ pub fn write(self: *SH4, comptime T: type, virtual_addr: u32, value: T) void {
             const val: P4.SCFSR2 = @bitCast(value);
             log.debug("Write to SCFSR2: {any}", .{val});
             // Writable bits can only be cleared.
-            // "Note: * Only 0 can be written, to clear the flag.""
-            // "Also note that in order to clear these flags they must be read as 1 beforehand."
-            const scfsr2 = self.p4_register(P4.SCFSR2, .SCFSR2);
+            //   "Note: * Only 0 can be written, to clear the flag.""
+            //   "Also note that in order to clear these flags they must be read as 1 beforehand."
+            const status_register = self.p4_register(P4.SCFSR2, .SCFSR2);
             inline for (.{ "dr", "rdf", "brk", "tdfe", "tend", "er" }) |flag| {
-                if (!@field(val, flag) and @field(read_scfsr2, flag)) @field(scfsr2, flag) = false;
+                if (!@field(val, flag) and @field(read_scfsr2, flag))
+                    @field(status_register, flag) = false;
             }
             // Always mark transmission as complete/FIFO not full.
-            scfsr2.tdfe = true;
-            scfsr2.tend = true;
+            status_register.tdfe = true;
+            status_register.tend = true;
             update_interrupts(self);
             return;
         },
