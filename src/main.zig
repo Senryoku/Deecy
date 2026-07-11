@@ -221,8 +221,10 @@ pub fn main(init: std.process.Init) !void {
                 //        Some games (like Speed Devils) renders only at 30FPS and each frame is presented twice,
                 //        however we don't actually write back the framebuffer to VRAM, meaning we'd blit garbage to the screen.
                 //        Plus, even if PVR writing to the framebuffer was perfectly emulated, it would still only be at native resolution.
-                if (std.Io.Clock.awake.now(d.io).toMicroseconds() - d.renderer.last_frame_timestamp > 40_000)
+                if (std.Io.Clock.awake.now(d.io).toMicroseconds() - d.renderer.last_frame_timestamp > 40_000) {
+                    d.renderer.update_registers(&d.dc.gpu);
                     d.renderer.blit_framebuffer();
+                }
             }
 
             d.renderer.draw(d.config.window_size.width, d.config.window_size.height, d.config.renderer.aspect_ratio); //  Blit to screen
