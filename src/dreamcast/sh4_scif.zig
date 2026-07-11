@@ -1,39 +1,59 @@
 //! Serial Communication Interface with FIFO (SCIF)
 
 var stdin_intialized = false;
-var stdin_buffer: [128]u8 = undefined;
+var stdin_buffer: [16]u8 = undefined;
 var stdin_reader: std.Io.File.Reader = undefined;
+
+var read_scfsr2: P4.SCFSR2 = .{}; // FIXME: Not serialized.
+
+fn check_rx(self: *const SH4) void {
+    if (!stdin_intialized) {
+        stdin_reader = std.Io.File.stdin().readerStreaming(SH4Module.Context.io, &stdin_buffer);
+        stdin_intialized = true;
+    }
+
+    // Check if serial receive is enabled.
+    const serial_control_register = self.p4_register(P4.SCSCR2, .SCSCR2).*;
+    if (!serial_control_register.re) return;
+
+    var fds = [_]std.posix.pollfd{.{
+        .fd = std.Io.File.stdin().handle,
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    }};
+
+    const ready = std.posix.poll(&fds, 0) catch return;
+    if (ready > 0 or stdin_reader.interface.bufferedLen() > 0) {
+        const byte = stdin_reader.interface.peekByte() catch unreachable;
+        log.debug("Read from stdin: {}", .{byte});
+        self.p4_register(u8, .SCFRDR2).* = byte;
+        const fifo_control_register = self.p4_register(P4.SCFCR2, .SCFCR2).*;
+
+        var status_register = self.p4_register(P4.SCFSR2, .SCFSR2);
+        if (stdin_reader.interface.bufferedLen() >= fifo_control_register.rtrg.bytes())
+            status_register.rdf = true;
+        if (stdin_reader.interface.bufferedLen() < fifo_control_register.rtrg.bytes())
+            status_register.dr = true;
+
+        update_interrupts(@constCast(self));
+    }
+}
 
 pub fn read(self: *const SH4, comptime T: type, virtual_addr: u32) T {
     const p4_reg: SH4Module.P4Register = @enumFromInt(virtual_addr);
     switch (p4_reg) {
         .SCFSR2 => {
             SH4Module.check_type(&[_]type{u16}, T, "Invalid P4 Write({}) to SCFSR2\n", .{T});
-            var val = self.p4_register(P4.SCFSR2, .SCFSR2).*;
-
-            if (!stdin_intialized) {
-                stdin_reader = std.Io.File.stdin().readerStreaming(SH4Module.Context.io, &stdin_buffer);
-                stdin_intialized = true;
-            }
-            var fds = [_]std.posix.pollfd{.{
-                .fd = std.Io.File.stdin().handle,
-                .events = std.posix.POLL.IN,
-                .revents = 0,
-            }};
-
-            const ready = std.posix.poll(&fds, 0) catch return @bitCast(val);
-            if (ready > 0) {
-                const byte = stdin_reader.interface.takeByte() catch unreachable;
-                log.debug("Read from stdin: {}", .{byte});
-                self.p4_register(u8, .SCFRDR2).* = byte;
-                const control_register = self.p4_register(P4.SCFCR2, .SCFCR2).*;
-                val.rdf = stdin_reader.interface.bufferedLen() >= control_register.rtrg.bytes();
-                val.dr = stdin_reader.interface.bufferedLen() < control_register.rtrg.bytes();
-
-                self.p4_register(P4.SCFSR2, .SCFSR2).* = val;
-                update_interrupts(@constCast(self));
-            }
-            return @bitCast(val);
+            check_rx(self);
+            const status = self.p4_register(P4.SCFSR2, .SCFSR2).*;
+            read_scfsr2 = status;
+            return @bitCast(status);
+        },
+        .SCFRDR2 => {
+            // FIXME: Currently blocking if stdin is empty (should poll).
+            const byte = stdin_reader.interface.takeByte() catch unreachable;
+            check_rx(self);
+            return byte;
         },
         else => {
             return self.p4_register_addr(T, virtual_addr).*;
@@ -80,10 +100,10 @@ pub fn write(self: *SH4, comptime T: type, virtual_addr: u32, value: T) void {
             log.debug("Write to SCFSR2: {any}", .{val});
             // Writable bits can only be cleared.
             // "Note: * Only 0 can be written, to clear the flag.""
-            // TODO: "Also note that in order to clear these flags they must be read as 1 beforehand."
+            // "Also note that in order to clear these flags they must be read as 1 beforehand."
             const scfsr2 = self.p4_register(P4.SCFSR2, .SCFSR2);
             inline for (.{ "dr", "rdf", "brk", "tdfe", "tend", "er" }) |flag| {
-                if (!@field(val, flag)) @field(scfsr2, flag) = false;
+                if (!@field(val, flag) and @field(read_scfsr2, flag)) @field(scfsr2, flag) = false;
             }
             // Always mark transmission as complete/FIFO not full.
             scfsr2.tdfe = true;
