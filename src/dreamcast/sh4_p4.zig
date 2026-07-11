@@ -107,13 +107,21 @@ pub const P4Register = enum(u32) {
     TCPR2 = 0xFFD8002C,
 
     // SCI
+    /// Serial mode register
     SCSMR1 = 0xFFE00000,
+    /// Bit rate register
     SCBRR1 = 0xFFE00004,
+    /// Serial control register
     SCSCR1 = 0xFFE00008,
+    /// Transmit data register
     SCTDR1 = 0xFFE0000C,
+    /// Serial status register
     SCSSR1 = 0xFFE00010,
+    /// Receive data register
     SCRDR1 = 0xFFE00014,
+    /// Smart card mode register
     SCSCMR1 = 0xFFE00018,
+    /// Serial port register
     SCSPTR1 = 0xFFE0001C,
 
     // SCIF
