@@ -507,7 +507,9 @@ pub const Dreamcast = struct {
             _ = disc.load_file("IP.BIN;1", self.ram[0x00008000..]) catch {
                 switch (disc.get_format()) {
                     .CDROM_XA => {
-                        _ = disc.load_sectors(150, 16, self.ram[0x00008000..]);
+                        if (disc.get_first_data_track()) |data_track| {
+                            _ = disc.load_sectors(data_track.fad, 16, self.ram[0x00008000..]);
+                        } else return error.IPBINLoadFailed;
                     },
                     .GDROM => {
                         // If not found, load the first 16 sectors of the first data track of the high density session (normal behaviour).
