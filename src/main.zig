@@ -65,6 +65,8 @@ pub fn main(init: std.process.Init) !void {
     try DreamcastModule.HostPaths.init(io, allocator, init.environ_map.*);
     defer DreamcastModule.HostPaths.deinit(allocator);
 
+    defer DreamcastModule.SH4Module.SCIF.deinit(io);
+
     if (builtin.os.tag == .windows and config.no_console) {
         // When built with the GUI subsystem on Windows, try to attach to the console if we received any arguments.
         if (init.minimal.args.vector.len > 1)
@@ -146,6 +148,8 @@ pub fn main(init: std.process.Init) !void {
                     std.log.err(termcolor.red("Invalid state number after --load-state: {d}"), .{load_state.?});
                     return error.InvalidArguments;
                 }
+            } else if (std.mem.eql(u8, arg, "--scif")) {
+                try DreamcastModule.SH4Module.SCIF.init(io);
             } else if (std.mem.eql(u8, arg, "--attach-console")) {
                 // Argument used to attach the console on Windows in GUI subsystem, see above.
             } else {

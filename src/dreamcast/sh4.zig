@@ -22,7 +22,7 @@ pub const P4 = @import("./sh4_p4.zig");
 pub const P4Register = P4.P4Register;
 pub const Interrupts = @import("sh4_interrupts.zig");
 pub const Interrupt = Interrupts.Interrupt;
-const SCIF = @import("sh4_scif.zig");
+pub const SCIF = @import("sh4_scif.zig");
 
 pub const Exception = @import("sh4_exceptions.zig").Exception;
 
