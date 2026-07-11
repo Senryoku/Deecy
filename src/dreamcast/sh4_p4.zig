@@ -486,6 +486,13 @@ pub const SCFSR2 = packed struct(u16) {
     per_number: u4 = 0,
 };
 
+/// Line Status Register
+pub const SCLSR2 = packed struct(u16) {
+    /// Overrun Error (ORER): Indicates that an overrun error occurred during reception, causing abnormal termination.
+    orer: bool = false,
+    _: u15 = 0,
+};
+
 const PerformanceMeasurementItems = enum(u6) {
     @"(nop)" = 0x00,
     @"Operand access (read/with cache)" = 0x01, // Count

@@ -20,8 +20,8 @@ const HardwareRegister = HardwareRegisters.HardwareRegister;
 pub const mmu = @import("./sh4_mmu.zig");
 pub const P4 = @import("./sh4_p4.zig");
 pub const P4Register = P4.P4Register;
-const Interrupts = @import("sh4_interrupts.zig");
-const Interrupt = Interrupts.Interrupt;
+pub const Interrupts = @import("sh4_interrupts.zig");
+pub const Interrupt = Interrupts.Interrupt;
 const SCIF = @import("sh4_scif.zig");
 
 pub const Exception = @import("sh4_exceptions.zig").Exception;
@@ -777,8 +777,8 @@ pub const SH4 = struct {
         self._interrupt_levels[@intFromEnum(Interrupt.SCI1_TEI)] = IPRB.sci1;
         self._interrupt_levels[@intFromEnum(Interrupt.SCIF_ERI)] = IPRC.scif;
         self._interrupt_levels[@intFromEnum(Interrupt.SCIF_RXI)] = IPRC.scif;
+        self._interrupt_levels[@intFromEnum(Interrupt.SCIF_BRI)] = IPRC.scif;
         self._interrupt_levels[@intFromEnum(Interrupt.SCIF_TXI)] = IPRC.scif;
-        self._interrupt_levels[@intFromEnum(Interrupt.SCIF_TEI)] = IPRC.scif;
         self._interrupt_levels[@intFromEnum(Interrupt.ITI)] = IPRB.wdt;
         self._interrupt_levels[@intFromEnum(Interrupt.RCMI)] = IPRB.ref;
         self._interrupt_levels[@intFromEnum(Interrupt.ROVI)] = IPRB.ref;
@@ -1291,6 +1291,9 @@ pub const SH4 = struct {
             0xFC000000...0xFFFFFFFF => {
                 // Control register area
                 if (virtual_addr >= 0xFF000000) {
+                    if (virtual_addr >= 0xFFE80000 and virtual_addr <= 0xFFE80026)
+                        return SCIF.read(self, T, virtual_addr);
+
                     const p4_reg: P4Register = @enumFromInt(virtual_addr);
                     switch (p4_reg) {
                         .RFCR => {

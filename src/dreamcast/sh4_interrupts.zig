@@ -41,8 +41,8 @@ pub const Interrupt = enum {
     SCI1_TEI,
     SCIF_ERI,
     SCIF_RXI,
+    SCIF_BRI,
     SCIF_TXI,
-    SCIF_TEI,
     ITI,
     RCMI,
     ROVI,
@@ -85,8 +85,8 @@ pub const InterruptINTEVTCodes: [41]u32 = .{
     0x540, // SCI1_TEI
     0x700, // SCIF_ERI
     0x720, // SCIF_RXI
-    0x740, // SCIF_TXI
-    0x760, // SCIF_TEI
+    0x740, // SCIF_BRI
+    0x760, // SCIF_TXI
     0x560, // ITI
     0x580, // RCMI
     0x5A0, // ROVI
@@ -130,8 +130,8 @@ pub const DefaultInterruptPriorities: [41]Interrupt = .{
     .SCI1_TEI,
     .SCIF_ERI,
     .SCIF_RXI,
+    .SCIF_BRI,
     .SCIF_TXI,
-    .SCIF_TEI,
     .ITI,
     .RCMI,
     .ROVI,
@@ -175,8 +175,8 @@ pub const DefaultInterruptLevels: [41]u32 = .{
     0, // SCI1_TEI
     0, // SCIF_ERI
     0, // SCIF_RXI
+    0, // SCIF_BRI
     0, // SCIF_TXI
-    0, // SCIF_TEI
     0, // ITI
     0, // RCMI
     0, // ROVI
