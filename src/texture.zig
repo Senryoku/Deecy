@@ -178,13 +178,15 @@ fn decode_vq_yuv(dest_bgra: [*][4]u8, code_book: []const u8, indices: []const u8
             }
         }
     } else {
-        log.warn("Untested non-twiddled VQ compressed YUV422 texture", .{});
         for (0..v_size) |v| {
             for (0..u_size / 4) |u| {
                 const index: u32 = indices[v * u_size / 4 + u];
                 const block_index = (v * u_size + 4 * u);
-                const bgra = decode_yuv_block(texels[4 * index ..][0..4]);
-                for (0..4) |tidx|
+                const block = texels[4 * index ..][0..4];
+                const bgra = decode_yuv_block(&[_]u16{
+                    block[0], block[2], block[1], block[3],
+                });
+                inline for (0..4) |tidx|
                     dest_bgra[block_index + tidx] = bgra[tidx];
             }
         }
