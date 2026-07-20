@@ -33,6 +33,7 @@
             },
         },
     },
+    // Retail Games
     .{
         .game = .{
             .name = "Crazy Taxi (EU)",
@@ -64,9 +65,33 @@
     },
     .{
         .game = .{
+            .name = "Fragrance Tail (JP)",
+            .product_name = "FRAGRANCE TAIL",
+            .product_id = "T37905M   V1.002",
+        },
+        .settings = .{
+            .rendering = .{
+                .delay_render = true,
+            },
+        },
+    },
+    .{
+        .game = .{
             .name = "Happy Lesson (JP)",
             .product_name = "HAPPY LESSON",
             .product_id = "T19503M   V1.002",
+        },
+        .settings = .{
+            .rendering = .{
+                .delay_render = true,
+            },
+        },
+    },
+    .{
+        .game = .{
+            .name = "Kaitou Apricot (JP)",
+            .product_name = "APRICOT",
+            .product_id = "T37910M   V1.006",
         },
         .settings = .{
             .rendering = .{
@@ -144,6 +169,18 @@
                 .actions = .{
                     .{ .Write = .{ .address = 0x0C2D6138, .value = .{ .u32 = 0x3F400000 } } },
                 },
+            },
+        },
+    },
+    .{
+        .game = .{
+            .name = "South Park: Chef's Luv Shack (USA)",
+            .product_name = "SOUTH PARK CHEFS",
+            .product_id = "T-8105N   V1.000",
+        },
+        .settings = .{
+            .rendering = .{
+                .delay_render = true,
             },
         },
     },

@@ -27,30 +27,9 @@ const Builtin = struct {
     cheats: []const BuiltinCheat = &.{},
 };
 
-const Builtins: []const Builtin = if (builtin.mode == .Debug) &.{} else @import("default_game_settings.zon");
+const Builtins: []const Builtin = @import("default_game_settings.zon");
 
 pub fn get(product_name: []const u8, product_id: []const u8) ?Builtin {
-    if (builtin.mode == .Debug) {
-        // Load from disc at runtime in debug mode
-        var threaded: std.Io.Threaded = .init_single_threaded;
-        const io = threaded.io();
-        const file = std.Io.Dir.cwd().readFileAllocOptions(io, "./src/default_game_settings.zon", std.heap.page_allocator, .unlimited, .@"8", 0) catch |err| {
-            std.log.err("Failed to read default_game_settings.zon: {}", .{err});
-            return null;
-        };
-        defer std.heap.page_allocator.free(file);
-        const zon = std.zon.parse.fromSliceAlloc([]const Builtin, std.heap.page_allocator, file, null, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
-            std.log.err("Failed to parse default_game_settings.zon: {}", .{err});
-            return null;
-        };
-        defer std.zon.parse.free(std.heap.page_allocator, zon);
-        for (zon) |entry| {
-            if (std.mem.eql(u8, entry.game.product_name, product_name) and std.mem.eql(u8, entry.game.product_id, product_id))
-                return entry;
-        }
-        return null;
-    }
-
     for (Builtins) |entry| {
         if (std.mem.eql(u8, entry.game.product_name, product_name) and std.mem.eql(u8, entry.game.product_id, product_id)) {
             return entry;
