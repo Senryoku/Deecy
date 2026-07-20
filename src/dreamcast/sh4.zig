@@ -12,7 +12,7 @@ pub const sh4_log = std.log.scoped(.sh4);
 pub const mmu_log = std.log.scoped(.mmu);
 
 const DreamcastModule = @import("dreamcast.zig");
-const Context = DreamcastModule.Context;
+pub const Context = DreamcastModule.Context;
 const Dreamcast = DreamcastModule.Dreamcast;
 const HardwareRegisters = DreamcastModule.HardwareRegisters;
 const HardwareRegister = HardwareRegisters.HardwareRegister;
@@ -20,8 +20,9 @@ const HardwareRegister = HardwareRegisters.HardwareRegister;
 pub const mmu = @import("./sh4_mmu.zig");
 pub const P4 = @import("./sh4_p4.zig");
 pub const P4Register = P4.P4Register;
-const Interrupts = @import("sh4_interrupts.zig");
-const Interrupt = Interrupts.Interrupt;
+pub const Interrupts = @import("sh4_interrupts.zig");
+pub const Interrupt = Interrupts.Interrupt;
+pub const SCIF = @import("sh4_scif.zig");
 
 pub const Exception = @import("sh4_exceptions.zig").Exception;
 
@@ -376,6 +377,15 @@ pub const SH4 = struct {
             self.p4_register(u16, timer.control).* = 0x0000;
         }
 
+        self.p4_register(u8, .SCSMR1).* = 0x00;
+        self.p4_register(u8, .SCBRR1).* = 0xFF;
+        self.p4_register(u8, .SCSCR1).* = 0x00;
+        self.p4_register(u8, .SCTDR1).* = 0xFF;
+        self.p4_register(u8, .SCSSR1).* = 0x84;
+        self.p4_register(u8, .SCRDR1).* = 0x00;
+        self.p4_register(u8, .SCSPTR1).* = 0x00;
+
+        self.p4_register(u16, .SCSMR2).* = 0x0000;
         self.p4_register(u8, .SCBRR2).* = 0xFF;
         self.p4_register(u16, .SCSCR2).* = 0x0000;
         self.p4_register(u16, .SCFSR2).* = 0x0060;
@@ -767,8 +777,8 @@ pub const SH4 = struct {
         self._interrupt_levels[@intFromEnum(Interrupt.SCI1_TEI)] = IPRB.sci1;
         self._interrupt_levels[@intFromEnum(Interrupt.SCIF_ERI)] = IPRC.scif;
         self._interrupt_levels[@intFromEnum(Interrupt.SCIF_RXI)] = IPRC.scif;
+        self._interrupt_levels[@intFromEnum(Interrupt.SCIF_BRI)] = IPRC.scif;
         self._interrupt_levels[@intFromEnum(Interrupt.SCIF_TXI)] = IPRC.scif;
-        self._interrupt_levels[@intFromEnum(Interrupt.SCIF_TEI)] = IPRC.scif;
         self._interrupt_levels[@intFromEnum(Interrupt.ITI)] = IPRB.wdt;
         self._interrupt_levels[@intFromEnum(Interrupt.RCMI)] = IPRB.ref;
         self._interrupt_levels[@intFromEnum(Interrupt.ROVI)] = IPRB.ref;
@@ -1189,12 +1199,6 @@ pub const SH4 = struct {
         });
     }
 
-    inline fn check_type(comptime Valid: []const type, comptime T: type, comptime fmt: []const u8, param: anytype) void {
-        inline for (Valid) |V| if (T == V) return;
-        std.debug.print(fmt, param);
-        unreachable;
-    }
-
     pub fn read_p4(self: *const @This(), comptime T: type, virtual_addr: u32) T {
         std.debug.assert(virtual_addr & 0xE0000000 == 0xE0000000);
 
@@ -1287,6 +1291,9 @@ pub const SH4 = struct {
             0xFC000000...0xFFFFFFFF => {
                 // Control register area
                 if (virtual_addr >= 0xFF000000) {
+                    if (virtual_addr >= 0xFFE80000 and virtual_addr <= 0xFFE80026)
+                        return SCIF.read(self, T, virtual_addr);
+
                     const p4_reg: P4Register = @enumFromInt(virtual_addr);
                     switch (p4_reg) {
                         .RFCR => {
@@ -1592,50 +1599,8 @@ pub const SH4 = struct {
                             }
                             return;
                         },
-                        // Serial Interface
-                        @intFromEnum(P4Register.SCFTDR2) => {
-                            check_type(&[_]type{u8}, T, "Invalid P4 Write({}) to SCFTDR2\n", .{T});
-
-                            var stdout_buffer: [128]u8 = undefined;
-                            var stdout_writer = std.Io.File.stdout().writer(Context.io, &stdout_buffer);
-                            const stdout = &stdout_writer.interface;
-
-                            stdout.print("\u{001b}[44m\u{001b}[97m{c}\u{001b}[0m", .{value}) catch |err| {
-                                sh4_log.err(termcolor.red("Error writing serial output: {}\n"), .{err});
-                            };
-                            stdout.flush() catch |err| {
-                                sh4_log.err(termcolor.red("Error flushing stdout: {}\n"), .{err});
-                            };
-
-                            // Immediately mark transfer as complete.
-                            const status_register = self.p4_register(P4.SCFSR2, .SCFSR2);
-                            status_register.tdfe = true;
-
-                            const control_register = self.p4_register(P4.SCSCR2, .SCSCR2);
-                            const fifo_control = self.p4_register(P4.SCFCR2, .SCFCR2);
-                            if (control_register.tie) {
-                                sh4_log.warn("Unimplemented SCIF_TXI interrupt enabled at {d} bytes.", .{fifo_control.ttrg.bytes()});
-                                // self.request_interrupt(Interrupt.SCIF_TXI);
-                            }
-                            return;
-                        },
-                        @intFromEnum(P4Register.SCFSR2) => {
-                            check_type(&[_]type{u16}, T, "Invalid P4 Write({}) to SCFSR2\n", .{T});
-                            const val: P4.SCFSR2 = @bitCast(value);
-                            sh4_log.debug("Write to SCFSR2: {any}", .{val});
-                            // Writable bits can only be cleared.
-                            // TODO: "Also note that in order to clear these flags they must be read as 1 beforehand."
-                            // self.p4_register(u16, .SCFSR2).* &= (value | 0b11111111_00001100);
-                            return;
-                        },
-                        @intFromEnum(P4Register.SCFCR2) => {
-                            // FIFO Control Register
-                            check_type(&[_]type{u16}, T, "Invalid P4 Write({}) to SCFCR2\n", .{T});
-                            const val: P4.SCFCR2 = @bitCast(value);
-                            sh4_log.debug("Write to SCFCR2: {any}", .{val});
-                            if (val.rfrst) sh4_log.debug("  Resetting Receive FIFO", .{});
-                            if (val.tfrst) sh4_log.debug("  Resetting Transmit FIFO", .{});
-                            // self.p4_register(P4.SCFCR2, .SCFSR2).* = val;
+                        0xFFE80000...0xFFE80026 => {
+                            SCIF.write(self, T, virtual_addr, value);
                             return;
                         },
                         0xFFEB0000 => {
@@ -1975,3 +1940,9 @@ pub const SH4 = struct {
         self.check_mmu_state();
     }
 };
+
+pub inline fn check_type(comptime Valid: []const type, comptime T: type, comptime fmt: []const u8, param: anytype) void {
+    inline for (Valid) |V| if (T == V) return;
+    std.debug.print(fmt, param);
+    unreachable;
+}
