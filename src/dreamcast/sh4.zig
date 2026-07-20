@@ -496,7 +496,8 @@ pub const SH4 = struct {
         self.pr = 0x0C00043C; // 0xAC00043C;
         self.fpul = 0x00000000;
 
-        self.pc = 0xAC008300; // Start address of IP.bin Licence screen
+        // self.pc = 0xAC008300; // Start address of IP.bin Licence screen
+        self.pc = 0xAC010000; // Start address of 1ST_READ
         self.execution_state = .Running;
     }
 
