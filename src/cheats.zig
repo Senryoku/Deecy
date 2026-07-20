@@ -52,15 +52,6 @@ pub const Cheat = struct {
     }
 };
 
-const Game = struct {
-    /// Nice name
-    name: []const u8,
-    /// Title from IP.BIN
-    product_name: []const u8,
-    /// Version from IP.BIN
-    product_id: []const u8,
-};
-
 /// Caller owns the returned memory
 pub fn path(allocator: std.mem.Allocator, product_name: []const u8, product_id: []const u8) ![]const u8 {
     const game_dir = try HostPaths.userdata_game_directory(allocator, product_name, product_id);

@@ -1374,9 +1374,8 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
     }
 
     const game_settings = try GameSettings.load(self.io, self._allocator, self.get_product_name(), self.get_product_id());
-    inline for (@typeInfo(RendererModule.GameSettings).@"struct".fields) |field| {
-        deecy_log.info("GameSettings.{s}: {}", .{ field.name, @field(game_settings.rendering, field.name) });
-    }
+    inline for (@typeInfo(RendererModule.GameSettings).@"struct".fields) |field|
+        deecy_log.info("GameSettings." ++ field.name ++ ": {}", .{@field(game_settings.rendering, field.name)});
     self.renderer.set_game_settings(game_settings.rendering);
 
     switch (self.config.bios_emulation) {
@@ -1501,6 +1500,11 @@ pub fn get_product_name(self: *const @This()) []const u8 {
 pub fn get_product_id(self: *const @This()) []const u8 {
     if (self.dc.gdrom.disc) |*disc| return disc.get_product_id() orelse "NO_DISC_ID";
     return "NO_ID";
+}
+
+pub const ProductUID = struct { name: []const u8, id: []const u8 };
+pub fn get_product_uid(self: *const @This()) ProductUID {
+    return .{ .name = self.get_product_name(), .id = self.get_product_id() };
 }
 
 /// Game specific sub directory name (for VMUs, save states...)

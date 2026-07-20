@@ -50,6 +50,32 @@
     },
     .{
         .game = .{
+            .name = "Dynamite Cop (USA)",
+            .product_name = "DYNAMITE COP",
+            .product_id = "MK-51013  V1.005",
+        },
+        .settings = .{
+            .rendering = .{
+                // Required for the pause screen to be displayed correctly. See #257
+                .delay_render = true,
+                .synchronous_render = true,
+            },
+        },
+    },
+    .{
+        .game = .{
+            .name = "Happy Lesson (JP)",
+            .product_name = "HAPPY LESSON",
+            .product_id = "T19503M   V1.002",
+        },
+        .settings = .{
+            .rendering = .{
+                .delay_render = true,
+            },
+        },
+    },
+    .{
+        .game = .{
             .name = "Grandia II (US)",
             .product_name = "GRANDIA2",
             .product_id = "T17716N   V1.001",
@@ -61,6 +87,20 @@
                     .{ .Condition = .{ .condition = .@"=", .count = 1, .address = 0x0C301582, .value = .{ .u16 = 0x8BFB } } },
                     .{ .Write = .{ .address = 0x0C301582, .value = .{ .u16 = 0x0009 } } },
                 },
+            },
+        },
+    },
+    .{
+        .game = .{
+            .name = "House of the Dead 2 (USA)",
+            .product_name = "THE HOUSE OF THE",
+            .product_id = "MK-51002  V1.001",
+        },
+        .settings = .{
+            .rendering = .{
+                // Required for the pause screen to be displayed correctly. See #257
+                .delay_render = true,
+                .synchronous_render = true,
             },
         },
     },

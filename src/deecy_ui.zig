@@ -889,6 +889,8 @@ pub fn draw(self: *@This()) !void {
                         d.config.renderer.internal_resolution_factor = @intFromEnum(resolution);
                     }
                     zgui.setNextItemWidth(dropdown_size);
+                    _ = zgui.comboFromEnum("Display Mode", &d.config.renderer.display_mode);
+                    zgui.setNextItemWidth(dropdown_size);
                     if (zgui.comboFromEnum("MSAA", &d.config.renderer.msaa))
                         try d.renderer.on_msaa_change();
                     zgui.setItemTooltip("Multisample anti-aliasing setting for the opaque pass.", .{});
@@ -944,51 +946,20 @@ pub fn draw(self: *@This()) !void {
                     _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
 
                     zgui.separatorText("Game settings");
-                    zgui.setNextItemWidth(dropdown_size);
-                    _ = zgui.comboFromEnum("Display Mode", &d.config.renderer.display_mode);
-                    zgui.setNextItemWidth(dropdown_size);
-                    if (zgui.comboFromEnum("Aspect Ratio", &d.renderer.game_settings.aspect_ratio)) {
-                        resolution_update = true;
+                    const prev_value = d.renderer.game_settings;
+                    if (@import("./ui/game_settings.zig").draw_renderer_game_settings(&d.renderer.game_settings)) {
+                        if (d.renderer.game_settings.aspect_ratio != prev_value.aspect_ratio)
+                            resolution_update = true;
+                        if (d.renderer.game_settings.scaling_filter != prev_value.scaling_filter)
+                            d.renderer.on_scaling_filter_change();
                     }
-                    zgui.setItemTooltip(
-                        \\ Anything other than 4:3 will require a compatible (or modified) game.
-                        \\   4:3             Default
-                        \\   16:9 (Stretch)  Rendered at the normal resolution, but streched horizontally to 16:9. Cheap and accurate. (Anamorphic widescreen)
-                        \\   16:9            Rendered at an increased horizontal resolution. More expensive and might be less compatible.
-                    , .{});
-                    zgui.setNextItemWidth(dropdown_size);
-                    if (zgui.comboFromEnum("Scaling Filter", &d.renderer.game_settings.scaling_filter)) {
-                        d.renderer.on_scaling_filter_change();
-                    }
-                    zgui.separatorText("Game tweaks");
-                    _ = zgui.checkbox("Framebuffer Emulation", .{ .v = &d.renderer.game_settings.framebuffer_emulation });
-                    zgui.setItemTooltip("Allow re-use of the result of rendering to the framebuffer.\nSlower, particularly with 'Copy to Guest VRAM' enabled, but necessary for some effects (Static loading screens for example).", .{});
-                    if (d.renderer.game_settings.framebuffer_emulation and d.renderer.game_settings.copy_to_vram) {
-                        zgui.sameLine(.{});
-                        zgui.textUnformattedColored(common.Yellow, Icons.TriangleExclamation);
-                        zgui.setItemTooltip("'Framebuffer Emulation' and 'Copy to Guest VRAM' are rarely necessary at the same time and can hinder performance.", .{});
-                    }
-                    _ = zgui.checkbox("Copy to Guest VRAM", .{ .v = &d.renderer.game_settings.copy_to_vram });
-                    zgui.setItemTooltip("Copy the result of rendering to the guest VRAM.\nSlower, particularly with 'Framebuffer Emulation' enabled, but necessary for some effects.", .{});
-                    _ = zgui.checkbox("Clamp Sprites UVs", .{ .v = &d.renderer.game_settings.clamp_sprites_uvs });
-                    zgui.setItemTooltip("Avoid some seams around sprites when upscaling.", .{});
-                    _ = zgui.checkbox("Synchronous Render", .{ .v = &d.renderer.game_settings.synchronous_render });
-                    zgui.setItemTooltip(
-                        \\ Render synchronously with the guest system.
-                        \\ Can avoid some synchronization issues at a slight performance cost.
-                        \\ Try this when you notice corrupted textures, especially during transitions.
-                    , .{});
-                    _ = zgui.checkbox("Delayed Render", .{ .v = &d.renderer.game_settings.delay_render });
-                    zgui.setItemTooltip(
-                        \\ Delay rendering until a frame is actually presented.
-                        \\ Can prevent flickering or missing pause screens, it should only be enabled when encountering these issues.
-                        \\ Might require 'Synchronous Render' to be enabled as well."
-                    , .{});
                     {
                         zgui.beginDisabled(.{ .disabled = d.dc.gdrom.disc == null });
                         defer zgui.endDisabled();
                         if (zgui.button("Save game settings", .{})) {
-                            // TODO!
+                            const settings = @import("GameSettings.zig"){ .rendering = d.renderer.game_settings };
+                            settings.save(d.io, d._allocator, d.get_product_name(), d.get_product_id()) catch |err|
+                                std.log.err("Failed to save game settings: {}", .{err});
                         }
                     }
 
@@ -1653,7 +1624,7 @@ pub fn draw_game_library(self: *@This()) !void {
                     },
                 }
                 if (open_game_settings) self.game_settings.open();
-                try self.game_settings.draw(self.allocator, self.deecy.io);
+                try self.game_settings.draw(d.io, self.allocator);
             } else {
                 zgui.dummy(.{ .w = 0, .h = 64 });
                 zgui.pushFont(null, 80);
