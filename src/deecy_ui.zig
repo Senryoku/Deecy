@@ -937,31 +937,13 @@ pub fn draw(self: *@This()) !void {
                     _ = zgui.checkbox("Use Pipeline Cache", .{ .v = &d.config.enable_dawn_pipeline_cache });
                     zgui.setItemTooltip("Restart Required.\nReduces 'pop-in' due to pipeline creation delay (shader compilation).", .{});
                     if (builtin.mode == .Debug) {
-                        if (zgui.button("Reset Pipeline Cache", .{})) {
+                        zgui.sameLine(.{});
+                        if (zgui.button("Reset", .{}))
                             try @import("pipeline_cache.zig").clear(d._allocator);
-                        }
                     }
 
                     zgui.setNextItemWidth(dropdown_size);
                     _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
-
-                    zgui.separatorText("Game settings");
-                    const prev_value = d.renderer.game_settings;
-                    if (@import("./ui/game_settings.zig").draw_renderer_game_settings(&d.renderer.game_settings)) {
-                        if (d.renderer.game_settings.aspect_ratio != prev_value.aspect_ratio)
-                            resolution_update = true;
-                        if (d.renderer.game_settings.scaling_filter != prev_value.scaling_filter)
-                            d.renderer.on_scaling_filter_change();
-                    }
-                    {
-                        zgui.beginDisabled(.{ .disabled = d.dc.gdrom.disc == null });
-                        defer zgui.endDisabled();
-                        if (zgui.button("Save game settings", .{})) {
-                            const settings = @import("GameSettings.zig"){ .rendering = d.renderer.game_settings };
-                            settings.save(d.io, d._allocator, d.get_product_name(), d.get_product_id()) catch |err|
-                                std.log.err("Failed to save game settings: {}", .{err});
-                        }
-                    }
 
                     if (resolution_update) {
                         d.gctx_queue_mutex.lockUncancelable(d.io);
@@ -974,6 +956,27 @@ pub fn draw(self: *@This()) !void {
                         d.rewind.on_inner_resolution_change(d.gctx);
                         //  Force a re-render if we're paused
                         if (!d.running) try d.renderer.render(&d.dc.gpu, false);
+                    }
+
+                    zgui.separatorText("Game settings");
+                    {
+                        zgui.indent(.{});
+                        defer zgui.unindent(.{});
+                        var value = d.renderer.game_settings;
+                        if (@import("./ui/game_settings.zig").draw_renderer_game_settings(&value)) {
+                            d.renderer.set_game_settings(value);
+                            if (!d.running) try d.renderer.render(&d.dc.gpu, false);
+                        }
+                        {
+                            zgui.beginDisabled(.{ .disabled = d.dc.gdrom.disc == null });
+                            defer zgui.endDisabled();
+                            if (zgui.button("Save game settings", .{})) {
+                                const settings = @import("GameSettings.zig"){ .rendering = d.renderer.game_settings };
+                                settings.save(d.io, d._allocator, d.product_uid()) catch |err|
+                                    std.log.err("Failed to save game settings: {}", .{err});
+                            }
+                            zgui.setTooltip("Save these settings for '{s}' ({s})", .{ d.product_name(), d.product_id() });
+                        }
                     }
 
                     zgui.endTabItem();

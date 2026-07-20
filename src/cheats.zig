@@ -53,14 +53,14 @@ pub const Cheat = struct {
 };
 
 /// Caller owns the returned memory
-pub fn path(allocator: std.mem.Allocator, product_name: []const u8, product_id: []const u8) ![]const u8 {
-    const game_dir = try HostPaths.userdata_game_directory(allocator, product_name, product_id);
+pub fn path(allocator: std.mem.Allocator, uid: Default.ProductUID) ![]const u8 {
+    const game_dir = try HostPaths.userdata_game_directory(allocator, uid);
     defer allocator.free(game_dir);
     return try std.fs.path.join(allocator, &[_][]const u8{ game_dir, "cheats.zon" });
 }
 
-pub fn save(allocator: std.mem.Allocator, io: std.Io, product_name: []const u8, product_id: []const u8, cheats: []const Cheat) !void {
-    const cheat_path = try path(allocator, product_name, product_id);
+pub fn save(allocator: std.mem.Allocator, io: std.Io, product_uid: Default.ProductUID, cheats: []const Cheat) !void {
+    const cheat_path = try path(allocator, product_uid);
     defer allocator.free(cheat_path);
 
     if (std.fs.path.dirname(cheat_path)) |dir| try std.Io.Dir.cwd().createDirPath(io, dir);
@@ -75,15 +75,15 @@ pub fn save(allocator: std.mem.Allocator, io: std.Io, product_name: []const u8, 
 }
 
 /// Caller owns the returned memory
-pub fn load(allocator: std.mem.Allocator, io: std.Io, product_name: []const u8, product_id: []const u8) !?[]Cheat {
-    const cheat_path = try path(allocator, product_name, product_id);
+pub fn load(allocator: std.mem.Allocator, io: std.Io, uid: Default.ProductUID) !?[]Cheat {
+    const cheat_path = try path(allocator, uid);
     defer allocator.free(cheat_path);
 
     const cheats_str = std.Io.Dir.cwd().readFileAllocOptions(io, cheat_path, allocator, .limited(8 * 1024 * 1024), .@"8", 0) catch |err| {
         switch (err) {
             error.FileNotFound => {
                 // Load default cheats.
-                if (Default.get(product_name, product_id)) |builtin| {
+                if (Default.get(uid)) |builtin| {
                     var cheat_list: std.ArrayList(Cheat) = .empty;
                     errdefer {
                         for (cheat_list.items) |cheat| cheat.deinit(allocator);
@@ -93,7 +93,7 @@ pub fn load(allocator: std.mem.Allocator, io: std.Io, product_name: []const u8, 
                         try cheat_list.append(allocator, try cheat.dupe(allocator));
                     const slice = try cheat_list.toOwnedSlice(allocator);
 
-                    try save(allocator, io, product_name, product_id, slice);
+                    try save(allocator, io, uid, slice);
 
                     return slice;
                 }

@@ -1,10 +1,7 @@
 const Game = struct {
     /// Nice name
     name: []const u8,
-    /// Title from IP.BIN
-    product_name: []const u8,
-    /// Version from IP.BIN
-    product_id: []const u8,
+    versions: []const ProductUID,
 };
 
 const BuiltinCheat = struct {
@@ -29,10 +26,11 @@ const Builtin = struct {
 
 const Builtins: []const Builtin = @import("default_game_settings.zon");
 
-pub fn get(product_name: []const u8, product_id: []const u8) ?Builtin {
+pub fn get(uid: ProductUID) ?Builtin {
     for (Builtins) |entry| {
-        if (std.mem.eql(u8, entry.game.product_name, product_name) and std.mem.eql(u8, entry.game.product_id, product_id)) {
-            return entry;
+        for (entry.game.versions) |version| {
+            if (uid.eql(version))
+                return entry;
         }
     }
     return null;
@@ -44,3 +42,4 @@ const cheats = @import("cheats.zig");
 const GameSettings = @import("GameSettings.zig");
 const Partial = @import("helpers").Partial;
 const HostPaths = @import("dreamcast").HostPaths;
+pub const ProductUID = @import("dreamcast").ProductUID;

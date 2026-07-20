@@ -1,8 +1,8 @@
 //! Game specific Settings
 rendering: @import("renderer.zig").GameSettings = .{},
 
-pub fn save(self: @This(), io: std.Io, allocator: std.mem.Allocator, product_name: []const u8, product_id: []const u8) !void {
-    const file_path = try path(allocator, product_name, product_id);
+pub fn save(self: @This(), io: std.Io, allocator: std.mem.Allocator, product_uid: Default.ProductUID) !void {
+    const file_path = try path(allocator, product_uid);
     defer allocator.free(file_path);
 
     if (std.fs.path.dirname(file_path)) |dir| try std.Io.Dir.cwd().createDirPath(io, dir);
@@ -16,14 +16,14 @@ pub fn save(self: @This(), io: std.Io, allocator: std.mem.Allocator, product_nam
     try writer.end();
 }
 
-pub fn load(io: std.Io, allocator: std.mem.Allocator, product_name: []const u8, product_id: []const u8) !@This() {
-    const file_path = try path(allocator, product_name, product_id);
+pub fn load(io: std.Io, allocator: std.mem.Allocator, product_uid: Default.ProductUID) !@This() {
+    const file_path = try path(allocator, product_uid);
     defer allocator.free(file_path);
 
     const settings_str = std.Io.Dir.cwd().readFileAllocOptions(io, file_path, allocator, .limited(8 * 1024 * 1024), .@"8", 0) catch |err| {
         switch (err) {
             error.FileNotFound => {
-                if (Default.get(product_name, product_id)) |builtin| {
+                if (Default.get(product_uid)) |builtin| {
                     if (builtin.settings) |settings|
                         return helpers.to_complete(@This(), settings);
                 }
@@ -42,8 +42,8 @@ pub fn load(io: std.Io, allocator: std.mem.Allocator, product_name: []const u8, 
 }
 
 /// Caller owns the returned memory
-fn path(allocator: std.mem.Allocator, product_name: []const u8, product_id: []const u8) ![]const u8 {
-    const game_dir = try HostPaths.userdata_game_directory(allocator, product_name, product_id);
+fn path(allocator: std.mem.Allocator, product_uid: Default.ProductUID) ![]const u8 {
+    const game_dir = try HostPaths.userdata_game_directory(allocator, product_uid);
     defer allocator.free(game_dir);
     return try std.fs.path.join(allocator, &[_][]const u8{ game_dir, "settings.zon" });
 }

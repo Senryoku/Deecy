@@ -15,10 +15,12 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
 pub fn setup(self: *@This(), allocator: std.mem.Allocator, io: std.Io, entry: *const GameFile) !void {
     std.debug.assert(self.selected_file == null);
     self.selected_file = entry;
-    if (entry.product_name != null and entry.product_id != null) {
-        if (try Cheats.load(allocator, io, entry.product_name.?, entry.product_id.?)) |cheats|
-            self.cheats = .fromOwnedSlice(cheats);
-        self.settings = try GameSettings.load(io, allocator, entry.product_name.?, entry.product_id.?);
+    if (entry.product_name) |name| {
+        if (entry.product_id) |id| {
+            if (try Cheats.load(allocator, io, .{ .name = name, .id = id })) |cheats|
+                self.cheats = .fromOwnedSlice(cheats);
+            self.settings = try GameSettings.load(io, allocator, .{ .name = name, .id = id });
+        }
     }
 }
 
@@ -28,10 +30,9 @@ pub fn open(self: *@This()) void {
 }
 
 fn close(self: *@This(), io: std.Io, allocator: std.mem.Allocator) void {
-    if (self.selected_file) |f|
-        if (f.product_name != null and f.product_id != null)
-            Cheats.save(allocator, io, f.product_name.?, f.product_id.?, self.cheats.items) catch |err|
-                std.log.err("Failed to save cheats: {t}", .{err});
+    if (self.selected_file) |f| if (f.product_name) |name| if (f.product_id) |id|
+        Cheats.save(allocator, io, .{ .name = name, .id = id }, self.cheats.items) catch |err|
+            std.log.err("Failed to save cheats: {t}", .{err});
     zgui.closeCurrentPopup();
     self.deinit(allocator);
 }
@@ -39,12 +40,16 @@ fn close(self: *@This(), io: std.Io, allocator: std.mem.Allocator) void {
 /// Needs to be called on the same stack ID as open()
 pub fn draw(self: *@This(), io: std.Io, allocator: std.mem.Allocator) !void {
     if (zgui.beginPopupModal("Game Settings", .{ .flags = .{ .always_auto_resize = true } })) {
+        defer zgui.endPopup();
+        const name = self.selected_file.?.product_name orelse return;
+        const id = self.selected_file.?.product_id orelse return;
+        zgui.text("Settings for '{s}' ({s})", .{ name, id });
         if (zgui.beginTabBar("Game Settings Tab Bar", .{})) {
             defer zgui.endTabBar();
             if (zgui.beginTabItem("Settings", .{})) {
                 defer zgui.endTabItem();
                 if (draw_renderer_game_settings(&self.settings.rendering))
-                    self.settings.save(io, allocator, self.selected_file.?.product_name.?, self.selected_file.?.product_id.?) catch |err|
+                    self.settings.save(io, allocator, .{ .name = name, .id = id }) catch |err|
                         std.log.err("Failed to save game settings: {}", .{err});
             }
             if (zgui.beginTabItem("Cheats", .{})) {
@@ -159,7 +164,6 @@ pub fn draw(self: *@This(), io: std.Io, allocator: std.mem.Allocator) !void {
             }
         }
         if (zgui.button("Save & Close", .{})) self.close(io, allocator);
-        zgui.endPopup();
     }
 }
 pub fn draw_renderer_game_settings(game_settings: *Renderer.GameSettings) bool {
@@ -175,7 +179,7 @@ pub fn draw_renderer_game_settings(game_settings: *Renderer.GameSettings) bool {
     , .{});
     zgui.setNextItemWidth(dropdown_size);
     modified = zgui.comboFromEnum("Scaling Filter", &game_settings.scaling_filter) or modified;
-    zgui.separatorText("Game tweaks");
+    zgui.separatorText("Compatibility Tweaks");
     modified = zgui.checkbox("Framebuffer Emulation", .{ .v = &game_settings.framebuffer_emulation }) or modified;
     zgui.setItemTooltip("Allow re-use of the result of rendering to the framebuffer.\nSlower, particularly with 'Copy to Guest VRAM' enabled, but necessary for some effects (Static loading screens for example).", .{});
     if (game_settings.framebuffer_emulation and game_settings.copy_to_vram) {

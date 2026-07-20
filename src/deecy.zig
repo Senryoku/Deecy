@@ -30,6 +30,7 @@ const Dreamcast = DreamcastModule.Dreamcast;
 const AICA = DreamcastModule.AICAModule.AICA;
 const Disc = DreamcastModule.GDROM.Disc;
 pub const HostPaths = DreamcastModule.HostPaths;
+const ProductUID = DreamcastModule.ProductUID;
 const PreciseSleep = @import("precise_sleep.zig");
 
 pub const RendererModule = @import("./renderer.zig");
@@ -1359,7 +1360,7 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
 
     // Load cheats
     self.deinit_enabled_cheats();
-    if (try Cheats.load(self._allocator, self.io, self.get_product_name(), self.get_product_id())) |cheats| {
+    if (try Cheats.load(self._allocator, self.io, self.product_uid())) |cheats| {
         defer self._allocator.free(cheats);
         // Filter out disabled cheats
         var cheat_list = std.ArrayList(Cheats.Cheat).empty;
@@ -1373,9 +1374,9 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
         self.enabled_cheats = try cheat_list.toOwnedSlice(self._allocator);
     }
 
-    const game_settings = try GameSettings.load(self.io, self._allocator, self.get_product_name(), self.get_product_id());
+    const game_settings = try GameSettings.load(self.io, self._allocator, self.product_uid());
     inline for (@typeInfo(RendererModule.GameSettings).@"struct".fields) |field|
-        deecy_log.info("GameSettings." ++ field.name ++ ": {}", .{@field(game_settings.rendering, field.name)});
+        deecy_log.info("Renderer setting " ++ field.name ++ ": {}", .{@field(game_settings.rendering, field.name)});
     self.renderer.set_game_settings(game_settings.rendering);
 
     switch (self.config.bios_emulation) {
@@ -1412,15 +1413,15 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
     if (self.config.per_game_vmu) try self.load_per_game_vmu();
     try self.check_save_state_slots();
 
-    deecy_log.info("Loaded '{s}' ({s}).", .{ self.get_product_name(), self.get_product_id() });
+    deecy_log.info("Loaded '{s}' ({s}).", .{ self.product_name(), self.product_id() });
 
     var title = try std.ArrayList(u8).initCapacity(self._allocator, 64);
     defer title.deinit(self._allocator);
     try title.appendSlice(self._allocator, "Deecy");
     try title.appendSlice(self._allocator, " - ");
-    try title.appendSlice(self._allocator, self.get_product_name());
+    try title.appendSlice(self._allocator, self.product_name());
     try title.appendSlice(self._allocator, " (");
-    try title.appendSlice(self._allocator, self.get_product_id());
+    try title.appendSlice(self._allocator, self.product_id());
     try title.append(self._allocator, ')');
     try title.append(self._allocator, 0);
     self.window.setTitle(title.items[0 .. title.items.len - 1 :0]);
@@ -1492,25 +1493,25 @@ pub fn load_binary(self: *@This(), path: []const u8, ip_bin_path: ?[]const u8) !
     self.ui.binary_loaded = true;
 }
 
-pub fn get_product_name(self: *const @This()) []const u8 {
+pub fn product_name(self: *const @This()) []const u8 {
     if (self.dc.gdrom.disc) |*disc| return disc.get_product_name() orelse "UNNAMED_DISC";
     return "UNNAMED";
 }
 
-pub fn get_product_id(self: *const @This()) []const u8 {
+pub fn product_id(self: *const @This()) []const u8 {
     if (self.dc.gdrom.disc) |*disc| return disc.get_product_id() orelse "NO_DISC_ID";
     return "NO_ID";
 }
 
-pub const ProductUID = struct { name: []const u8, id: []const u8 };
-pub fn get_product_uid(self: *const @This()) ProductUID {
-    return .{ .name = self.get_product_name(), .id = self.get_product_id() };
+/// UID (Title and ID) of currently loaded disc
+pub fn product_uid(self: *const @This()) ProductUID {
+    return .{ .name = self.product_name(), .id = self.product_id() };
 }
 
 /// Game specific sub directory name (for VMUs, save states...)
 /// Caller owns the returned string.
 fn userdata_game_directory(self: *const @This()) ![]const u8 {
-    return HostPaths.userdata_game_directory(self._allocator, self.get_product_name(), self.get_product_id());
+    return HostPaths.userdata_game_directory(self._allocator, self.product_uid());
 }
 
 /// Caller owns the returned string
@@ -2059,7 +2060,7 @@ fn save_screenshot_impl(self: *const @This()) !void {
     const year_day = epoch_seconds.getEpochDay().calculateYearDay();
     const month_day = year_day.calculateMonthDay();
     const filepath = try std.fmt.allocPrint(self._allocator, "screenshots/{s}_{d:0>4}-{d:0>2}-{d:0>2}_{d:0>2}-{d:0>2}-{d:0>2}.png", .{
-        self.get_product_name(),
+        self.product_name(),
         year_day.year,
         month_day.month.numeric(),
         month_day.day_index + 1,

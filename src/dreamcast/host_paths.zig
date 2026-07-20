@@ -1,7 +1,3 @@
-const std = @import("std");
-pub const path_config = @import("path_config");
-const known_folders = @import("known-folders");
-
 var data_path: []const u8 = "";
 var userdata_path: []const u8 = "";
 
@@ -56,10 +52,15 @@ pub fn get_userdata_path() []const u8 {
 }
 
 /// Caller owns the returned memory
-pub fn userdata_game_directory(allocator: std.mem.Allocator, product_name: []const u8, product_id: []const u8) ![]const u8 {
-    const folder_name = try std.fmt.allocPrint(allocator, "{s}[{s}]", .{ product_name, product_id });
+pub fn userdata_game_directory(allocator: std.mem.Allocator, uid: ProductUID) ![]const u8 {
+    const folder_name = try std.fmt.allocPrint(allocator, "{s}[{s}]", .{ uid.name, uid.id });
     safe_path(folder_name);
     defer allocator.free(folder_name);
     const path = try std.fs.path.join(allocator, &[_][]const u8{ get_userdata_path(), folder_name });
     return path;
 }
+
+const std = @import("std");
+pub const path_config = @import("path_config");
+const known_folders = @import("known-folders");
+const ProductUID = @import("ProductUID.zig");

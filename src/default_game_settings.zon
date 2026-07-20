@@ -2,8 +2,7 @@
     .{
         .game = .{
             .name = "Loop Checker version 1.00",
-            .product_name = "THIS IS A SAMPLE",
-            .product_id = "61000000  V0.800",
+            .versions = .{.{ .name = "THIS IS A SAMPLE", .id = "61000000  V0.800" }},
         },
         .cheats = .{
             .{
@@ -19,8 +18,7 @@
     .{
         .game = .{
             .name = "DC CHECKER for Repair v2.050",
-            .product_name = "DC CHECKER",
-            .product_id = "DC CHECKERV2.050",
+            .versions = .{.{ .name = "DC CHECKER", .id = "DC CHECKERV2.050" }},
         },
         .cheats = .{
             .{
@@ -37,8 +35,7 @@
     .{
         .game = .{
             .name = "Crazy Taxi (EU)",
-            .product_name = "CRAZY TAXI",
-            .product_id = "MK-51035  V1.000",
+            .versions = .{.{ .name = "CRAZY TAXI", .id = "MK-51035  V1.000" }},
         },
         .cheats = .{
             .{
@@ -52,8 +49,7 @@
     .{
         .game = .{
             .name = "Dynamite Cop (USA)",
-            .product_name = "DYNAMITE COP",
-            .product_id = "MK-51013  V1.005",
+            .versions = .{.{ .name = "DYNAMITE COP", .id = "MK-51013  V1.005" }},
         },
         .settings = .{
             .rendering = .{
@@ -66,8 +62,7 @@
     .{
         .game = .{
             .name = "Fragrance Tail (JP)",
-            .product_name = "FRAGRANCE TAIL",
-            .product_id = "T37905M   V1.002",
+            .versions = .{.{ .name = "FRAGRANCE TAIL", .id = "T37905M   V1.002" }},
         },
         .settings = .{
             .rendering = .{
@@ -78,8 +73,7 @@
     .{
         .game = .{
             .name = "Happy Lesson (JP)",
-            .product_name = "HAPPY LESSON",
-            .product_id = "T19503M   V1.002",
+            .versions = .{.{ .name = "HAPPY LESSON", .id = "T19503M   V1.002" }},
         },
         .settings = .{
             .rendering = .{
@@ -90,8 +84,7 @@
     .{
         .game = .{
             .name = "Kaitou Apricot (JP)",
-            .product_name = "APRICOT",
-            .product_id = "T37910M   V1.006",
+            .versions = .{.{ .name = "APRICOT", .id = "T37910M   V1.006" }},
         },
         .settings = .{
             .rendering = .{
@@ -102,8 +95,7 @@
     .{
         .game = .{
             .name = "Grandia II (US)",
-            .product_name = "GRANDIA2",
-            .product_id = "T17716N   V1.001",
+            .versions = .{.{ .name = "GRANDIA2", .id = "T17716N   V1.001" }},
         },
         .cheats = .{
             .{
@@ -118,8 +110,7 @@
     .{
         .game = .{
             .name = "House of the Dead 2 (USA)",
-            .product_name = "THE HOUSE OF THE",
-            .product_id = "MK-51002  V1.001",
+            .versions = .{.{ .name = "THE HOUSE OF THE", .id = "MK-51002  V1.001" }},
         },
         .settings = .{
             .rendering = .{
@@ -132,8 +123,7 @@
     .{
         .game = .{
             .name = "Ready 2 Rumble Boxing: Round 2 (PAL)",
-            .product_name = "READY 2 RUMBLE B",
-            .product_id = "T9711D  50V1.001",
+            .versions = .{.{ .name = "READY 2 RUMBLE B", .id = "T9711D  50V1.001" }},
         },
         .cheats = .{
             .{
@@ -145,8 +135,7 @@
     .{
         .game = .{
             .name = "SoulCalibur (US)",
-            .product_name = "SOULCALIBUR",
-            .product_id = "T1401N    V1.000",
+            .versions = .{.{ .name = "SOULCALIBUR", .id = "T1401N    V1.000" }},
         },
         .cheats = .{
             .{
@@ -160,8 +149,7 @@
     .{
         .game = .{
             .name = "SoulCalibur (EU)",
-            .product_name = "SOULCALIBUR",
-            .product_id = "T1401D  50V1.001",
+            .versions = .{.{ .name = "SOULCALIBUR", .id = "T1401D  50V1.001" }},
         },
         .cheats = .{
             .{
@@ -175,8 +163,7 @@
     .{
         .game = .{
             .name = "South Park: Chef's Luv Shack (USA)",
-            .product_name = "SOUTH PARK CHEFS",
-            .product_id = "T-8105N   V1.000",
+            .versions = .{.{ .name = "SOUTH PARK CHEFS", .id = "T-8105N   V1.000" }},
         },
         .settings = .{
             .rendering = .{
@@ -187,8 +174,7 @@
     .{
         .game = .{
             .name = "Speed Devils (US)",
-            .product_name = "SPEED DEVILS",
-            .product_id = "T17702N   V1.004",
+            .versions = .{.{ .name = "SPEED DEVILS", .id = "T17702N   V1.004" }},
         },
         .cheats = .{
             .{
@@ -203,8 +189,7 @@
     .{
         .game = .{
             .name = "TrickStyle",
-            .product_name = "TRICKSTYLE",
-            .product_id = "T-8102N   V1.000",
+            .versions = .{.{ .name = "TRICKSTYLE", .id = "T-8102N   V1.000" }},
         },
         .cheats = .{
             .{
