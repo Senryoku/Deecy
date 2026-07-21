@@ -293,7 +293,7 @@ pub const PresentMode = enum(u32) {
     }
 };
 
-const Configuration = struct {
+pub const Configuration = struct {
     log_output: custom_log.Output = if (!comptime_config.no_console) .Console else .File,
     per_game_vmu: bool = true,
     performance_overlay: enum { Off, Simple, Detailed } = .Simple,
@@ -315,38 +315,10 @@ const Configuration = struct {
     keyboard_bindings: [4]KeyboardBindings = .{ .Default, .{}, .{}, .{} },
     controllers_bindings: [4]ControllerBindings = .{ .{}, .{}, .{}, .{} },
     controllers: [4]ControllerSettings = .{ .{ .enabled = true }, .{ .enabled = true }, .{ .enabled = false }, .{ .enabled = false } },
-    region: enum(u8) {
-        /// USA by default and auto detect when using a disc.
-        Auto = std.math.maxInt(u8),
-        Japan = @intFromEnum(DreamcastModule.Region.Japan),
-        USA = @intFromEnum(DreamcastModule.Region.USA),
-        Europe = @intFromEnum(DreamcastModule.Region.Europe),
-        pub fn to_dreamcast(self: @This()) DreamcastModule.Region {
-            return switch (self) {
-                .Auto => .USA,
-                .Japan => .Japan,
-                .USA => .USA,
-                .Europe => .Europe,
-            };
-        }
-    } = .Auto,
-    video_cable: enum(u16) {
-        /// VGA by default but can be automatically overridden when using a non-compatible disc.
-        Auto = std.math.maxInt(u16),
-        VGA = @intFromEnum(DreamcastModule.CableType.VGA),
-        RGB = @intFromEnum(DreamcastModule.CableType.RGB),
-        Composite = @intFromEnum(DreamcastModule.CableType.Composite),
-        pub fn to_dreamcast(self: @This()) DreamcastModule.CableType {
-            return switch (self) {
-                .Auto => .VGA,
-                .VGA => .VGA,
-                .RGB => .RGB,
-                .Composite => .Composite,
-            };
-        }
-    } = .Auto,
+    region: Region = .Auto,
+    video_cable: VideoCable = .Auto,
     bios_config: Dreamcast.BiosConfig = .{},
-    bios_emulation: enum { Original, @"HLE Replacement" } = .Original,
+    bios_emulation: BiosEmulation = .Original,
 
     audio_volume: f32 = 0.3,
     dsp_emulation: DreamcastModule.AICAModule.DSPEmulation = .JIT,
@@ -362,6 +334,38 @@ const Configuration = struct {
         compression: Rewind.Snapshot.Compression = .lz4,
         history: enum { Linear, Logarithmic } = .Linear,
     } = .{},
+
+    pub const Region = enum(u8) {
+        /// USA by default and auto detect when using a disc.
+        Auto = std.math.maxInt(u8),
+        Japan = @intFromEnum(DreamcastModule.Region.Japan),
+        USA = @intFromEnum(DreamcastModule.Region.USA),
+        Europe = @intFromEnum(DreamcastModule.Region.Europe),
+        pub fn to_dreamcast(self: @This()) DreamcastModule.Region {
+            return switch (self) {
+                .Auto => .USA,
+                .Japan => .Japan,
+                .USA => .USA,
+                .Europe => .Europe,
+            };
+        }
+    };
+    pub const VideoCable = enum(u16) {
+        /// VGA by default but can be automatically overridden when using a non-compatible disc.
+        Auto = std.math.maxInt(u16),
+        VGA = @intFromEnum(DreamcastModule.CableType.VGA),
+        RGB = @intFromEnum(DreamcastModule.CableType.RGB),
+        Composite = @intFromEnum(DreamcastModule.CableType.Composite),
+        pub fn to_dreamcast(self: @This()) DreamcastModule.CableType {
+            return switch (self) {
+                .Auto => .VGA,
+                .VGA => .VGA,
+                .RGB => .RGB,
+                .Composite => .Composite,
+            };
+        }
+    };
+    pub const BiosEmulation = enum { Original, @"HLE Replacement" };
 };
 
 pub const ConfigFile = "config.zon";
@@ -816,7 +820,7 @@ fn ui_init(self: *@This()) !void {
     style.setColor(.text_disabled, .{ 0.4980392158031464, 0.4980392158031464, 0.4980392158031464, 1.0 });
     style.setColor(.window_bg, .{ 0.09803921729326248, 0.09803921729326248, 0.09803921729326248, 1.0 });
     style.setColor(.child_bg, .{ 0.0, 0.0, 0.0, 0.0 });
-    style.setColor(.popup_bg, .{ 0.1882352977991104, 0.1882352977991104, 0.1882352977991104, 0.9200000166893005 });
+    style.setColor(.popup_bg, .{ 0.09803921729326248, 0.09803921729326248, 0.09803921729326248, 1.0 });
     style.setColor(.border, .{ 0.1882352977991104, 0.1882352977991104, 0.1882352977991104, 0.2899999916553497 });
     style.setColor(.border_shadow, .{ 0.0, 0.0, 0.0, 0.239999994635582 });
     style.setColor(.frame_bg, .{ 0.0470588244497776, 0.0470588244497776, 0.0470588244497776, 0.5400000214576721 });
@@ -1340,24 +1344,6 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
     if (self.dc.gdrom.disc) |*disc| disc.deinit(self._allocator, self.io);
     self.dc.gdrom.disc = tmp;
 
-    if (self.config.region == .Auto) {
-        self.dc.load_flash(self.io, self.dc.gdrom.disc.?.get_region(), self.config.bios_config) catch |err| {
-            switch (err) {
-                error.FileNotFound => return error.MissingFlash,
-                else => return err,
-            }
-        };
-    }
-    if (self.config.video_cable == .Auto) {
-        self.dc.cable_type = .VGA;
-        if (self.dc.gdrom.disc.?.get_ip_bin_header()) |ip_bin| {
-            if (!ip_bin.peripherals().vga) {
-                self.dc.cable_type = .RGB;
-                deecy_log.info("Game claims not to support VGA, defaulting to RGB.", .{});
-            }
-        }
-    }
-
     // Load cheats
     self.deinit_enabled_cheats();
     if (try Cheats.load(self._allocator, self.io, self.product_uid())) |cheats| {
@@ -1375,11 +1361,39 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
     }
 
     const game_settings = try GameSettings.load(self.io, self._allocator, self.product_uid());
-    inline for (@typeInfo(RendererModule.GameSettings).@"struct".fields) |field|
-        deecy_log.info("Renderer setting " ++ field.name ++ ": {}", .{@field(game_settings.rendering, field.name)});
     self.renderer.set_game_settings(game_settings.rendering);
 
-    switch (self.config.bios_emulation) {
+    // Override default settings if game-specific settings are present
+    const region = switch (game_settings.region orelse self.config.region) {
+        .Auto => self.dc.gdrom.disc.?.get_region(),
+        else => |r| r.to_dreamcast(),
+    };
+    const video_cable = game_settings.video_cable orelse self.config.video_cable;
+    const bios_emulation = game_settings.bios_emulation orelse self.config.bios_emulation;
+
+    deecy_log.info("Using settings: Region={t}, Video Cable={t}, Bios Emulation={t}", .{ region, video_cable, bios_emulation });
+
+    self.dc.load_flash(self.io, region, self.config.bios_config) catch |err| {
+        switch (err) {
+            error.FileNotFound => return error.MissingFlash,
+            else => return err,
+        }
+    };
+
+    switch (video_cable) {
+        .Auto => {
+            self.dc.cable_type = .VGA;
+            if (self.dc.gdrom.disc.?.get_ip_bin_header()) |ip_bin| {
+                if (!ip_bin.peripherals().vga) {
+                    self.dc.cable_type = .RGB;
+                    deecy_log.info("Game claims not to support VGA, defaulting to RGB.", .{});
+                }
+            }
+        },
+        else => self.dc.cable_type = video_cable.to_dreamcast(),
+    }
+
+    switch (bios_emulation) {
         .Original => {},
         .@"HLE Replacement" => {
             try self.dc.skip_bios();

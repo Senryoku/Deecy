@@ -57,3 +57,9 @@ pub fn word_filter_score(query: []const u8, value: []const u8) i32 {
     }
     return score;
 }
+
+pub fn optional_bool(label: []const u8, value: *?bool) bool {
+    zgui.pushItemFlag(@enumFromInt(1 << 12), true);
+    defer zgui.popItemFlag();
+    zgui.checkbox(label, .{ .v = value });
+}

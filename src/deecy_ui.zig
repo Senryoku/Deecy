@@ -975,7 +975,7 @@ pub fn draw(self: *@This()) !void {
                                 settings.save(d.io, d._allocator, d.product_uid()) catch |err|
                                     std.log.err("Failed to save game settings: {}", .{err});
                             }
-                            zgui.setTooltip("Save these settings for '{s}' ({s})", .{ d.product_name(), d.product_id() });
+                            zgui.setItemTooltip("Save these settings for '{s}' ({s})", .{ d.product_name(), d.product_id() });
                         }
                     }
 

@@ -30,15 +30,24 @@ pub fn open(self: *@This()) void {
 }
 
 fn close(self: *@This(), io: std.Io, allocator: std.mem.Allocator) void {
-    if (self.selected_file) |f| if (f.product_name) |name| if (f.product_id) |id|
-        Cheats.save(allocator, io, .{ .name = name, .id = id }, self.cheats.items) catch |err|
-            std.log.err("Failed to save cheats: {t}", .{err});
+    if (self.selected_file) |f| {
+        if (f.product_name) |name| {
+            if (f.product_id) |id| {
+                Cheats.save(allocator, io, .{ .name = name, .id = id }, self.cheats.items) catch |err| {
+                    std.log.err("Failed to save cheats: {t}", .{err});
+                };
+                self.settings.save(io, allocator, .{ .name = name, .id = id }) catch |err|
+                    std.log.err("Failed to save game settings: {}", .{err});
+            }
+        }
+    }
     zgui.closeCurrentPopup();
     self.deinit(allocator);
 }
 
 /// Needs to be called on the same stack ID as open()
 pub fn draw(self: *@This(), io: std.Io, allocator: std.mem.Allocator) !void {
+    const dropdown_size = 196;
     if (zgui.beginPopupModal("Game Settings", .{ .flags = .{ .always_auto_resize = true } })) {
         defer zgui.endPopup();
         const name = self.selected_file.?.product_name orelse return;
@@ -48,9 +57,14 @@ pub fn draw(self: *@This(), io: std.Io, allocator: std.mem.Allocator) !void {
             defer zgui.endTabBar();
             if (zgui.beginTabItem("Settings", .{})) {
                 defer zgui.endTabItem();
-                if (draw_renderer_game_settings(&self.settings.rendering))
-                    self.settings.save(io, allocator, .{ .name = name, .id = id }) catch |err|
-                        std.log.err("Failed to save game settings: {}", .{err});
+                zgui.setNextItemWidth(dropdown_size);
+                _ = zgui.comboFromEnum("Region", &self.settings.region);
+                zgui.setNextItemWidth(dropdown_size);
+                _ = zgui.comboFromEnum("Video Cable", &self.settings.video_cable);
+                zgui.setNextItemWidth(dropdown_size);
+                _ = zgui.comboFromEnum("BIOS Emulation", &self.settings.bios_emulation);
+                zgui.separatorText("Rendering");
+                _ = draw_renderer_game_settings(&self.settings.rendering);
             }
             if (zgui.beginTabItem("Cheats", .{})) {
                 defer zgui.endTabItem();
@@ -163,6 +177,7 @@ pub fn draw(self: *@This(), io: std.Io, allocator: std.mem.Allocator) !void {
                 }
             }
         }
+        zgui.separator();
         if (zgui.button("Save & Close", .{})) self.close(io, allocator);
     }
 }

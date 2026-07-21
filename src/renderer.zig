@@ -1273,6 +1273,10 @@ pub const Renderer = struct {
     pub fn set_game_settings(self: *@This(), game_settings: GameSettings) void {
         const previous = self.game_settings;
         self.game_settings = game_settings;
+
+        inline for (@typeInfo(GameSettings).@"struct".fields) |field|
+            log.info("Setting " ++ field.name ++ ": {}", .{@field(self.game_settings, field.name)});
+
         if (previous.aspect_ratio != game_settings.aspect_ratio) {
             self.resolution = .{
                 .width = self.game_settings.aspect_ratio.width() * self.config.internal_resolution_factor,

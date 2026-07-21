@@ -1,4 +1,7 @@
 //! Game specific Settings
+region: ?Deecy.Configuration.Region = null,
+video_cable: ?Deecy.Configuration.VideoCable = null,
+bios_emulation: ?Deecy.Configuration.BiosEmulation = null,
 rendering: @import("renderer.zig").GameSettings = .{},
 
 pub fn save(self: @This(), io: std.Io, allocator: std.mem.Allocator, product_uid: Default.ProductUID) !void {
@@ -54,5 +57,7 @@ const log = std.log.scoped(.game_settings);
 const helpers = @import("helpers");
 const Partial = helpers.Partial;
 
+const Deecy = @import("deecy.zig");
+const Dreamcast = @import("dreamcast");
 const HostPaths = @import("dreamcast").HostPaths;
 const Default = @import("default_game_settings.zig");

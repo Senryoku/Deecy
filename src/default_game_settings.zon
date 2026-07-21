@@ -134,6 +134,15 @@
     },
     .{
         .game = .{
+            .name = "Roadsters (USA)",
+            .versions = .{.{ .name = "ROADSTERS RC7", .id = "T22901N   V1.007" }},
+        },
+        .settings = .{
+            .video_cable = .Composite,
+        },
+    },
+    .{
+        .game = .{
             .name = "SoulCalibur (US)",
             .versions = .{.{ .name = "SOULCALIBUR", .id = "T1401N    V1.000" }},
         },
@@ -184,6 +193,16 @@
                     .{ .Write = .{ .address = 0x0C05B6EC, .value = .{ .u16 = 0x0444 } } },
                 },
             },
+        },
+    },
+    .{
+        .game = .{
+            .name = "Stupid Invaders (USA) ",
+            .versions = .{.{ .name = "STUPID INVADERS", .id = "T17708N   V1.001" }},
+        },
+        .settings = .{
+            // Workaround. Gets stuck on the SEGA licence screen with the original BIOS. See #250.
+            .bios_emulation = .@"HLE Replacement",
         },
     },
     .{
