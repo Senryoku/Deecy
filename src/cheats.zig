@@ -2,6 +2,7 @@ const std = @import("std");
 const log = std.log.scoped(.cheats);
 
 const HostPaths = @import("dreamcast").HostPaths;
+const Default = @import("default_game_settings.zig");
 const codebreaker = @import("codebreaker.zig");
 
 pub const Condition = enum {
@@ -51,49 +52,15 @@ pub const Cheat = struct {
     }
 };
 
-const Game = struct {
-    /// Nice name
-    name: []const u8,
-    /// Title from IP.BIN
-    product_name: []const u8,
-    /// Version from IP.BIN
-    product_id: []const u8,
-};
-
-const BuiltinCheat = struct {
-    name: []const u8,
-    enabled: bool = false,
-    actions: []const Action,
-
-    pub fn dupe(self: @This(), allocator: std.mem.Allocator) !Cheat {
-        return .{
-            .name = try allocator.dupe(u8, self.name),
-            .enabled = self.enabled,
-            .actions = try allocator.dupe(Action, self.actions),
-        };
-    }
-};
-
-const Builtin: []const struct { game: Game, cheats: []const BuiltinCheat } = @import("cheats.zon");
-
-pub fn get_builtin_cheats(product_name: []const u8, product_id: []const u8) ?[]const BuiltinCheat {
-    for (Builtin) |entry| {
-        if (std.mem.eql(u8, entry.game.product_name, product_name) and std.mem.eql(u8, entry.game.product_id, product_id)) {
-            return entry.cheats;
-        }
-    }
-    return null;
-}
-
 /// Caller owns the returned memory
-pub fn path(allocator: std.mem.Allocator, product_name: []const u8, product_id: []const u8) ![]const u8 {
-    const game_dir = try HostPaths.userdata_game_directory(allocator, product_name, product_id);
+pub fn path(allocator: std.mem.Allocator, uid: Default.ProductUID) ![]const u8 {
+    const game_dir = try HostPaths.userdata_game_directory(allocator, uid);
     defer allocator.free(game_dir);
     return try std.fs.path.join(allocator, &[_][]const u8{ game_dir, "cheats.zon" });
 }
 
-pub fn save(allocator: std.mem.Allocator, io: std.Io, product_name: []const u8, product_id: []const u8, cheats: []const Cheat) !void {
-    const cheat_path = try path(allocator, product_name, product_id);
+pub fn save(allocator: std.mem.Allocator, io: std.Io, product_uid: Default.ProductUID, cheats: []const Cheat) !void {
+    const cheat_path = try path(allocator, product_uid);
     defer allocator.free(cheat_path);
 
     if (std.fs.path.dirname(cheat_path)) |dir| try std.Io.Dir.cwd().createDirPath(io, dir);
@@ -108,25 +75,25 @@ pub fn save(allocator: std.mem.Allocator, io: std.Io, product_name: []const u8, 
 }
 
 /// Caller owns the returned memory
-pub fn load(allocator: std.mem.Allocator, io: std.Io, product_name: []const u8, product_id: []const u8) !?[]Cheat {
-    const cheat_path = try path(allocator, product_name, product_id);
+pub fn load(allocator: std.mem.Allocator, io: std.Io, uid: Default.ProductUID) !?[]Cheat {
+    const cheat_path = try path(allocator, uid);
     defer allocator.free(cheat_path);
 
     const cheats_str = std.Io.Dir.cwd().readFileAllocOptions(io, cheat_path, allocator, .limited(8 * 1024 * 1024), .@"8", 0) catch |err| {
         switch (err) {
             error.FileNotFound => {
                 // Load default cheats.
-                if (get_builtin_cheats(product_name, product_id)) |builtin_cheats| {
+                if (Default.get(uid)) |builtin| {
                     var cheat_list: std.ArrayList(Cheat) = .empty;
                     errdefer {
                         for (cheat_list.items) |cheat| cheat.deinit(allocator);
                         cheat_list.deinit(allocator);
                     }
-                    for (builtin_cheats) |cheat|
+                    for (builtin.cheats) |cheat|
                         try cheat_list.append(allocator, try cheat.dupe(allocator));
                     const slice = try cheat_list.toOwnedSlice(allocator);
 
-                    try save(allocator, io, product_name, product_id, slice);
+                    try save(allocator, io, uid, slice);
 
                     return slice;
                 }

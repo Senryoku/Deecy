@@ -2,8 +2,7 @@
     .{
         .game = .{
             .name = "Loop Checker version 1.00",
-            .product_name = "THIS IS A SAMPLE",
-            .product_id = "61000000  V0.800",
+            .versions = .{.{ .name = "THIS IS A SAMPLE", .id = "61000000  V0.800" }},
         },
         .cheats = .{
             .{
@@ -19,8 +18,7 @@
     .{
         .game = .{
             .name = "DC CHECKER for Repair v2.050",
-            .product_name = "DC CHECKER",
-            .product_id = "DC CHECKERV2.050",
+            .versions = .{.{ .name = "DC CHECKER", .id = "DC CHECKERV2.050" }},
         },
         .cheats = .{
             .{
@@ -33,11 +31,11 @@
             },
         },
     },
+    // Retail Games
     .{
         .game = .{
             .name = "Crazy Taxi (EU)",
-            .product_name = "CRAZY TAXI",
-            .product_id = "MK-51035  V1.000",
+            .versions = .{.{ .name = "CRAZY TAXI", .id = "MK-51035  V1.000" }},
         },
         .cheats = .{
             .{
@@ -50,9 +48,54 @@
     },
     .{
         .game = .{
+            .name = "Dynamite Cop (USA)",
+            .versions = .{.{ .name = "DYNAMITE COP", .id = "MK-51013  V1.005" }},
+        },
+        .settings = .{
+            .rendering = .{
+                // Required for the pause screen to be displayed correctly. See #257
+                .delay_render = true,
+                .synchronous_render = true,
+            },
+        },
+    },
+    .{
+        .game = .{
+            .name = "Fragrance Tail (JP)",
+            .versions = .{.{ .name = "FRAGRANCE TAIL", .id = "T37905M   V1.002" }},
+        },
+        .settings = .{
+            .rendering = .{
+                .delay_render = true,
+            },
+        },
+    },
+    .{
+        .game = .{
+            .name = "Happy Lesson (JP)",
+            .versions = .{.{ .name = "HAPPY LESSON", .id = "T19503M   V1.002" }},
+        },
+        .settings = .{
+            .rendering = .{
+                .delay_render = true,
+            },
+        },
+    },
+    .{
+        .game = .{
+            .name = "Kaitou Apricot (JP)",
+            .versions = .{.{ .name = "APRICOT", .id = "T37910M   V1.006" }},
+        },
+        .settings = .{
+            .rendering = .{
+                .delay_render = true,
+            },
+        },
+    },
+    .{
+        .game = .{
             .name = "Grandia II (US)",
-            .product_name = "GRANDIA2",
-            .product_id = "T17716N   V1.001",
+            .versions = .{.{ .name = "GRANDIA2", .id = "T17716N   V1.001" }},
         },
         .cheats = .{
             .{
@@ -66,9 +109,21 @@
     },
     .{
         .game = .{
+            .name = "House of the Dead 2 (USA)",
+            .versions = .{.{ .name = "THE HOUSE OF THE", .id = "MK-51002  V1.001" }},
+        },
+        .settings = .{
+            .rendering = .{
+                // Required for the pause screen to be displayed correctly. See #257
+                .delay_render = true,
+                .synchronous_render = true,
+            },
+        },
+    },
+    .{
+        .game = .{
             .name = "Ready 2 Rumble Boxing: Round 2 (PAL)",
-            .product_name = "READY 2 RUMBLE B",
-            .product_id = "T9711D  50V1.001",
+            .versions = .{.{ .name = "READY 2 RUMBLE B", .id = "T9711D  50V1.001" }},
         },
         .cheats = .{
             .{
@@ -79,9 +134,17 @@
     },
     .{
         .game = .{
+            .name = "Roadsters (USA)",
+            .versions = .{.{ .name = "ROADSTERS RC7", .id = "T22901N   V1.007" }},
+        },
+        .settings = .{
+            .video_cable = .Composite,
+        },
+    },
+    .{
+        .game = .{
             .name = "SoulCalibur (US)",
-            .product_name = "SOULCALIBUR",
-            .product_id = "T1401N    V1.000",
+            .versions = .{.{ .name = "SOULCALIBUR", .id = "T1401N    V1.000" }},
         },
         .cheats = .{
             .{
@@ -95,8 +158,7 @@
     .{
         .game = .{
             .name = "SoulCalibur (EU)",
-            .product_name = "SOULCALIBUR",
-            .product_id = "T1401D  50V1.001",
+            .versions = .{.{ .name = "SOULCALIBUR", .id = "T1401D  50V1.001" }},
         },
         .cheats = .{
             .{
@@ -109,9 +171,19 @@
     },
     .{
         .game = .{
+            .name = "South Park: Chef's Luv Shack (USA)",
+            .versions = .{.{ .name = "SOUTH PARK CHEFS", .id = "T-8105N   V1.000" }},
+        },
+        .settings = .{
+            .rendering = .{
+                .delay_render = true,
+            },
+        },
+    },
+    .{
+        .game = .{
             .name = "Speed Devils (US)",
-            .product_name = "SPEED DEVILS",
-            .product_id = "T17702N   V1.004",
+            .versions = .{.{ .name = "SPEED DEVILS", .id = "T17702N   V1.004" }},
         },
         .cheats = .{
             .{
@@ -125,9 +197,18 @@
     },
     .{
         .game = .{
+            .name = "Stupid Invaders (USA) ",
+            .versions = .{.{ .name = "STUPID INVADERS", .id = "T17708N   V1.001" }},
+        },
+        .settings = .{
+            // Workaround. Gets stuck on the SEGA licence screen with the original BIOS. See #250.
+            .bios_emulation = .@"HLE Replacement",
+        },
+    },
+    .{
+        .game = .{
             .name = "TrickStyle",
-            .product_name = "TRICKSTYLE",
-            .product_id = "T-8102N   V1.000",
+            .versions = .{.{ .name = "TRICKSTYLE", .id = "T-8102N   V1.000" }},
         },
         .cheats = .{
             .{

@@ -30,6 +30,7 @@ const Dreamcast = DreamcastModule.Dreamcast;
 const AICA = DreamcastModule.AICAModule.AICA;
 const Disc = DreamcastModule.GDROM.Disc;
 pub const HostPaths = DreamcastModule.HostPaths;
+const ProductUID = DreamcastModule.ProductUID;
 const PreciseSleep = @import("precise_sleep.zig");
 
 pub const RendererModule = @import("./renderer.zig");
@@ -43,6 +44,7 @@ const Shortcuts = @import("./ui/shortcuts.zig");
 const ELF = @import("elf.zig");
 
 const Cheats = @import("./cheats.zig");
+const GameSettings = @import("./GameSettings.zig");
 
 const lz4 = @import("lz4");
 
@@ -291,7 +293,7 @@ pub const PresentMode = enum(u32) {
     }
 };
 
-const Configuration = struct {
+pub const Configuration = struct {
     log_output: custom_log.Output = if (!comptime_config.no_console) .Console else .File,
     per_game_vmu: bool = true,
     performance_overlay: enum { Off, Simple, Detailed } = .Simple,
@@ -313,38 +315,10 @@ const Configuration = struct {
     keyboard_bindings: [4]KeyboardBindings = .{ .Default, .{}, .{}, .{} },
     controllers_bindings: [4]ControllerBindings = .{ .{}, .{}, .{}, .{} },
     controllers: [4]ControllerSettings = .{ .{ .enabled = true }, .{ .enabled = true }, .{ .enabled = false }, .{ .enabled = false } },
-    region: enum(u8) {
-        /// USA by default and auto detect when using a disc.
-        Auto = std.math.maxInt(u8),
-        Japan = @intFromEnum(DreamcastModule.Region.Japan),
-        USA = @intFromEnum(DreamcastModule.Region.USA),
-        Europe = @intFromEnum(DreamcastModule.Region.Europe),
-        pub fn to_dreamcast(self: @This()) DreamcastModule.Region {
-            return switch (self) {
-                .Auto => .USA,
-                .Japan => .Japan,
-                .USA => .USA,
-                .Europe => .Europe,
-            };
-        }
-    } = .Auto,
-    video_cable: enum(u16) {
-        /// VGA by default but can be automatically overridden when using a non-compatible disc.
-        Auto = std.math.maxInt(u16),
-        VGA = @intFromEnum(DreamcastModule.CableType.VGA),
-        RGB = @intFromEnum(DreamcastModule.CableType.RGB),
-        Composite = @intFromEnum(DreamcastModule.CableType.Composite),
-        pub fn to_dreamcast(self: @This()) DreamcastModule.CableType {
-            return switch (self) {
-                .Auto => .VGA,
-                .VGA => .VGA,
-                .RGB => .RGB,
-                .Composite => .Composite,
-            };
-        }
-    } = .Auto,
+    region: Region = .Auto,
+    video_cable: VideoCable = .Auto,
     bios_config: Dreamcast.BiosConfig = .{},
-    bios_emulation: enum { Original, @"HLE Replacement" } = .Original,
+    bios_emulation: BiosEmulation = .Original,
 
     audio_volume: f32 = 0.3,
     dsp_emulation: DreamcastModule.AICAModule.DSPEmulation = .JIT,
@@ -360,6 +334,38 @@ const Configuration = struct {
         compression: Rewind.Snapshot.Compression = .lz4,
         history: enum { Linear, Logarithmic } = .Linear,
     } = .{},
+
+    pub const Region = enum(u8) {
+        /// USA by default and auto detect when using a disc.
+        Auto = std.math.maxInt(u8),
+        Japan = @intFromEnum(DreamcastModule.Region.Japan),
+        USA = @intFromEnum(DreamcastModule.Region.USA),
+        Europe = @intFromEnum(DreamcastModule.Region.Europe),
+        pub fn to_dreamcast(self: @This()) DreamcastModule.Region {
+            return switch (self) {
+                .Auto => .USA,
+                .Japan => .Japan,
+                .USA => .USA,
+                .Europe => .Europe,
+            };
+        }
+    };
+    pub const VideoCable = enum(u16) {
+        /// VGA by default but can be automatically overridden when using a non-compatible disc.
+        Auto = std.math.maxInt(u16),
+        VGA = @intFromEnum(DreamcastModule.CableType.VGA),
+        RGB = @intFromEnum(DreamcastModule.CableType.RGB),
+        Composite = @intFromEnum(DreamcastModule.CableType.Composite),
+        pub fn to_dreamcast(self: @This()) DreamcastModule.CableType {
+            return switch (self) {
+                .Auto => .VGA,
+                .VGA => .VGA,
+                .RGB => .RGB,
+                .Composite => .Composite,
+            };
+        }
+    };
+    pub const BiosEmulation = enum { Original, @"HLE Replacement" };
 };
 
 pub const ConfigFile = "config.zon";
@@ -814,7 +820,7 @@ fn ui_init(self: *@This()) !void {
     style.setColor(.text_disabled, .{ 0.4980392158031464, 0.4980392158031464, 0.4980392158031464, 1.0 });
     style.setColor(.window_bg, .{ 0.09803921729326248, 0.09803921729326248, 0.09803921729326248, 1.0 });
     style.setColor(.child_bg, .{ 0.0, 0.0, 0.0, 0.0 });
-    style.setColor(.popup_bg, .{ 0.1882352977991104, 0.1882352977991104, 0.1882352977991104, 0.9200000166893005 });
+    style.setColor(.popup_bg, .{ 0.09803921729326248, 0.09803921729326248, 0.09803921729326248, 1.0 });
     style.setColor(.border, .{ 0.1882352977991104, 0.1882352977991104, 0.1882352977991104, 0.2899999916553497 });
     style.setColor(.border_shadow, .{ 0.0, 0.0, 0.0, 0.239999994635582 });
     style.setColor(.frame_bg, .{ 0.0470588244497776, 0.0470588244497776, 0.0470588244497776, 0.5400000214576721 });
@@ -1338,27 +1344,9 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
     if (self.dc.gdrom.disc) |*disc| disc.deinit(self._allocator, self.io);
     self.dc.gdrom.disc = tmp;
 
-    if (self.config.region == .Auto) {
-        self.dc.load_flash(self.io, self.dc.gdrom.disc.?.get_region(), self.config.bios_config) catch |err| {
-            switch (err) {
-                error.FileNotFound => return error.MissingFlash,
-                else => return err,
-            }
-        };
-    }
-    if (self.config.video_cable == .Auto) {
-        self.dc.cable_type = .VGA;
-        if (self.dc.gdrom.disc.?.get_ip_bin_header()) |ip_bin| {
-            if (!ip_bin.peripherals().vga) {
-                self.dc.cable_type = .RGB;
-                deecy_log.info("Game claims not to support VGA, defaulting to RGB.", .{});
-            }
-        }
-    }
-
     // Load cheats
     self.deinit_enabled_cheats();
-    if (try Cheats.load(self._allocator, self.io, self.get_product_name(), self.get_product_id())) |cheats| {
+    if (try Cheats.load(self._allocator, self.io, self.product_uid())) |cheats| {
         defer self._allocator.free(cheats);
         // Filter out disabled cheats
         var cheat_list = std.ArrayList(Cheats.Cheat).empty;
@@ -1372,7 +1360,40 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
         self.enabled_cheats = try cheat_list.toOwnedSlice(self._allocator);
     }
 
-    switch (self.config.bios_emulation) {
+    const game_settings = try GameSettings.load(self.io, self._allocator, self.product_uid());
+    self.renderer.set_game_settings(game_settings.rendering);
+
+    // Override default settings if game-specific settings are present
+    const region = switch (game_settings.region orelse self.config.region) {
+        .Auto => self.dc.gdrom.disc.?.get_region(),
+        else => |r| r.to_dreamcast(),
+    };
+    const video_cable = game_settings.video_cable orelse self.config.video_cable;
+    const bios_emulation = game_settings.bios_emulation orelse self.config.bios_emulation;
+
+    deecy_log.info("Using settings: Region={t}, Video Cable={t}, Bios Emulation={t}", .{ region, video_cable, bios_emulation });
+
+    self.dc.load_flash(self.io, region, self.config.bios_config) catch |err| {
+        switch (err) {
+            error.FileNotFound => return error.MissingFlash,
+            else => return err,
+        }
+    };
+
+    switch (video_cable) {
+        .Auto => {
+            self.dc.cable_type = .VGA;
+            if (self.dc.gdrom.disc.?.get_ip_bin_header()) |ip_bin| {
+                if (!ip_bin.peripherals().vga) {
+                    self.dc.cable_type = .RGB;
+                    deecy_log.info("Game claims not to support VGA, defaulting to RGB.", .{});
+                }
+            }
+        },
+        else => self.dc.cable_type = video_cable.to_dreamcast(),
+    }
+
+    switch (bios_emulation) {
         .Original => {},
         .@"HLE Replacement" => {
             try self.dc.skip_bios();
@@ -1406,15 +1427,15 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
     if (self.config.per_game_vmu) try self.load_per_game_vmu();
     try self.check_save_state_slots();
 
-    deecy_log.info("Loaded '{s}' ({s}).", .{ self.get_product_name(), self.get_product_id() });
+    deecy_log.info("Loaded '{s}' ({s}).", .{ self.product_name(), self.product_id() });
 
     var title = try std.ArrayList(u8).initCapacity(self._allocator, 64);
     defer title.deinit(self._allocator);
     try title.appendSlice(self._allocator, "Deecy");
     try title.appendSlice(self._allocator, " - ");
-    try title.appendSlice(self._allocator, self.get_product_name());
+    try title.appendSlice(self._allocator, self.product_name());
     try title.appendSlice(self._allocator, " (");
-    try title.appendSlice(self._allocator, self.get_product_id());
+    try title.appendSlice(self._allocator, self.product_id());
     try title.append(self._allocator, ')');
     try title.append(self._allocator, 0);
     self.window.setTitle(title.items[0 .. title.items.len - 1 :0]);
@@ -1486,20 +1507,25 @@ pub fn load_binary(self: *@This(), path: []const u8, ip_bin_path: ?[]const u8) !
     self.ui.binary_loaded = true;
 }
 
-pub fn get_product_name(self: *const @This()) []const u8 {
+pub fn product_name(self: *const @This()) []const u8 {
     if (self.dc.gdrom.disc) |*disc| return disc.get_product_name() orelse "UNNAMED_DISC";
     return "UNNAMED";
 }
 
-pub fn get_product_id(self: *const @This()) []const u8 {
+pub fn product_id(self: *const @This()) []const u8 {
     if (self.dc.gdrom.disc) |*disc| return disc.get_product_id() orelse "NO_DISC_ID";
     return "NO_ID";
+}
+
+/// UID (Title and ID) of currently loaded disc
+pub fn product_uid(self: *const @This()) ProductUID {
+    return .{ .name = self.product_name(), .id = self.product_id() };
 }
 
 /// Game specific sub directory name (for VMUs, save states...)
 /// Caller owns the returned string.
 fn userdata_game_directory(self: *const @This()) ![]const u8 {
-    return HostPaths.userdata_game_directory(self._allocator, self.get_product_name(), self.get_product_id());
+    return HostPaths.userdata_game_directory(self._allocator, self.product_uid());
 }
 
 /// Caller owns the returned string
@@ -2048,7 +2074,7 @@ fn save_screenshot_impl(self: *const @This()) !void {
     const year_day = epoch_seconds.getEpochDay().calculateYearDay();
     const month_day = year_day.calculateMonthDay();
     const filepath = try std.fmt.allocPrint(self._allocator, "screenshots/{s}_{d:0>4}-{d:0>2}-{d:0>2}_{d:0>2}-{d:0>2}-{d:0>2}.png", .{
-        self.get_product_name(),
+        self.product_name(),
         year_day.year,
         month_day.month.numeric(),
         month_day.day_index + 1,
