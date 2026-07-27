@@ -3911,24 +3911,38 @@ pub const Renderer = struct {
                 -1.0, -1.0, 0.0, 1.0,
             },
         };
-        const defaults =
-            if (self.spg_control.PAL == 1)
-                if (self.spg_control.interlace) HollyModule.VideoModes.PALInterlace else HollyModule.VideoModes.PAL
-            else if (self.spg_control.NTSC == 1)
-                if (self.spg_control.interlace) HollyModule.VideoModes.NTSCInterlace else HollyModule.VideoModes.NTSC
-            else
-                HollyModule.VideoModes.VGA;
-        const pixel_shifts: [2]f32 = .{
+        const ps = self.pixel_shifts();
+        const blit_scale = .{ blit_vertex_data[4], blit_vertex_data[5] };
+        for (0..4) |i| {
+            blit_vertex_data[i * 4 + 0] += blit_scale[0] * 2.0 * ps[0] / 640.0;
+            blit_vertex_data[i * 4 + 1] -= blit_scale[1] * 2.0 * ps[1] / 480.0; // Coordinates are [-1, 1], with -1 being up.
+        }
+        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.blit_to_window_vertex_buffer).?, 0, f32, blit_vertex_data[0..]);
+    }
+
+    /// Returns shifts due to VO_STARTX/Y in pixels.
+    pub fn pixel_shifts(self: *const @This()) [2]f32 {
+        const defaults = HollyModule.VideoModes.match_defaults(self.spg_control);
+        const diff: [2]f32 = .{
             @as(f32, @floatFromInt(self.vo_startx.horizontal_start_position)) - @as(f32, @floatFromInt(defaults.vo_startx.horizontal_start_position)),
             @as(f32, @floatFromInt(self.vo_starty.vertical_start_position_on_field1)) - @as(f32, @floatFromInt(defaults.vo_starty.vertical_start_position_on_field1)),
         };
-        const native_horizontal_resolution: f32 = if (self.write_back_parameters.video_out_ctrl.pixel_double) 320 else 640;
-        const native_vertical_resolution: f32 = if ((self.spg_control.NTSC == 1 or self.spg_control.PAL == 1) and !self.spg_control.interlace) 240 else 480;
-        for (0..4) |i| {
-            blit_vertex_data[i * 4 + 0] += 2.0 * pixel_shifts[0] / native_horizontal_resolution;
-            blit_vertex_data[i * 4 + 1] -= 2.0 * pixel_shifts[1] / native_vertical_resolution; // Coordinates are [-1, 1], with -1 being up.
-        }
-        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.blit_to_window_vertex_buffer).?, 0, f32, blit_vertex_data[0..]);
+        const pixel_double: f32 = if (self.write_back_parameters.video_out_ctrl.pixel_double) 2.0 else 1.0;
+        const interlace: f32 = if ((self.spg_control.NTSC == 1 or self.spg_control.PAL == 1) and !self.spg_control.interlace) 2.0 else 1.0;
+        return .{
+            diff[0] * pixel_double,
+            diff[1] * interlace,
+        };
+    }
+
+    /// Returns scaling factors accounting for the scaler (SCALER_CTL), horizontal pixel doubling and interlacing.
+    pub fn scale(self: *const @This()) [2]f32 {
+        const pixel_double: f32 = if (self.write_back_parameters.video_out_ctrl.pixel_double) 2.0 else 1.0;
+        const interlace: f32 = if ((self.spg_control.NTSC == 1 or self.spg_control.PAL == 1) and !self.spg_control.interlace) 2.0 else 1.0;
+        return .{
+            self.write_back_parameters.scaler_ctl.get_x_scale_factor() * pixel_double,
+            self.write_back_parameters.scaler_ctl.get_y_scale_factor() * interlace,
+        };
     }
 
     /// Creates all resources that depends on the render size (and sample count)

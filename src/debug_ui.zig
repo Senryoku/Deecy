@@ -1081,6 +1081,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         d.gctx_queue_mutex.lockUncancelable(d.io);
         defer d.gctx_queue_mutex.unlock(d.io);
 
+        const spg_control = dc.gpu._get_register(Holly.SPG_CONTROL, .SPG_CONTROL).*;
+        const expected_defaults = Holly.VideoModes.match_defaults(spg_control);
         if (zgui.collapsingHeader("SPG Registers", .{ .frame_padding = true })) {
             zgui.indent(.{});
             zgui.text("SPG_HBLANK_INT: {X:0>8}", .{dc.gpu._get_register(u32, .SPG_HBLANK_INT).*});
@@ -1088,7 +1090,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.text("SPG_VBLANK_INT: {X:0>8}", .{dc.gpu._get_register(u32, .SPG_VBLANK_INT).*});
             display(dc.gpu._get_register(Holly.SPG_VBLANK_INT, .SPG_VBLANK_INT).*);
             zgui.text("SPG_CONTROL:    {X:0>8}", .{dc.gpu._get_register(u32, .SPG_CONTROL).*});
-            display(dc.gpu._get_register(Holly.SPG_CONTROL, .SPG_CONTROL).*);
+            display(spg_control);
             zgui.text("SPG_HBLANK:     {X:0>8}", .{dc.gpu._get_register(u32, .SPG_HBLANK).*});
             display(dc.gpu._get_register(Holly.SPG_HBLANK, .SPG_HBLANK).*);
             zgui.text("SPG_VBLANK:     {X:0>8}", .{dc.gpu._get_register(u32, .SPG_VBLANK).*});
@@ -1129,8 +1131,14 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             display(dc.gpu.read_register(Holly.FB_R_SIZE, .FB_R_SIZE));
         if (zgui.collapsingHeader("VO_CONTROL", .{ .default_open = false }))
             display(dc.gpu.read_register(Holly.VO_CONTROL, .VO_CONTROL));
-        zgui.text("VO_STARTX:  0x{X:0>8}", .{dc.gpu.read_register(u32, .VO_STARTX)});
-        zgui.text("VO_STARTY:  0x{X:0>8}", .{dc.gpu.read_register(u32, .VO_STARTY)});
+        const vo_startx = dc.gpu.read_register(Holly.VO_STARTX, .VO_STARTX);
+        var x_diff: f32 = @floatFromInt(vo_startx.horizontal_start_position);
+        x_diff -= @floatFromInt(expected_defaults.vo_startx.horizontal_start_position);
+        const vo_starty = dc.gpu.read_register(Holly.VO_STARTY, .VO_STARTY);
+        var y_diff: f32 = @floatFromInt(vo_starty.vertical_start_position_on_field1);
+        y_diff -= @floatFromInt(expected_defaults.vo_starty.vertical_start_position_on_field1);
+        zgui.text("VO_STARTX:  {X:0>2} ({d})", .{ vo_startx.horizontal_start_position, x_diff });
+        zgui.text("VO_STARTY:  {X:0>2}/{X:0>2} ({d})", .{ vo_starty.vertical_start_position_on_field1, vo_starty.vertical_start_position_on_field2, y_diff });
         if (zgui.collapsingHeader("FPU_PARAM_CFG", .{ .default_open = false }))
             display(dc.gpu.read_register(Holly.FPU_PARAM_CFG, .FPU_PARAM_CFG));
         if (zgui.collapsingHeader("SCALER_CTL", .{ .default_open = false }))
@@ -1654,7 +1662,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     self.draw_overlay(d);
 }
 
-fn draw_strip(draw_list: zgui.DrawList, min: [2]f32, scale: [2]f32, display_list: *const Holly.DisplayList, index: u32, color: u32) void {
+fn draw_strip(draw_list: zgui.DrawList, transform: anytype, display_list: *const Holly.DisplayList, index: u32, color: u32) void {
     if (index < display_list.vertex_strips.items.len) {
         const parameters = display_list.vertex_parameters.items;
         const strip = &display_list.vertex_strips.items[index];
@@ -1664,16 +1672,16 @@ fn draw_strip(draw_list: zgui.DrawList, min: [2]f32, scale: [2]f32, display_list
                     for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count) |i| {
                         const pos = parameters[i].sprite_positions();
                         draw_list.addTriangle(.{
-                            .p1 = add(mul(scale, pos[0][0..2].*), min),
-                            .p2 = add(mul(scale, pos[3][0..2].*), min),
-                            .p3 = add(mul(scale, pos[1][0..2].*), min),
+                            .p1 = transform.apply(pos[0][0..2].*),
+                            .p2 = transform.apply(pos[3][0..2].*),
+                            .p3 = transform.apply(pos[1][0..2].*),
                             .col = color,
                             .thickness = 1.0,
                         });
                         draw_list.addTriangle(.{
-                            .p1 = add(mul(scale, pos[3][0..2].*), min),
-                            .p2 = add(mul(scale, pos[2][0..2].*), min),
-                            .p3 = add(mul(scale, pos[1][0..2].*), min),
+                            .p1 = transform.apply(pos[3][0..2].*),
+                            .p2 = transform.apply(pos[2][0..2].*),
+                            .p3 = transform.apply(pos[1][0..2].*),
                             .col = color,
                             .thickness = 1.0,
                         });
@@ -1682,9 +1690,9 @@ fn draw_strip(draw_list: zgui.DrawList, min: [2]f32, scale: [2]f32, display_list
                 else => {
                     if (strip.vertex_parameter_count >= 3) {
                         for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count - 2) |i| {
-                            const p1 = add(mul(scale, parameters[i].position()[0..2].*), min);
-                            const p2 = add(mul(scale, parameters[i + 1].position()[0..2].*), min);
-                            const p3 = add(mul(scale, parameters[i + 2].position()[0..2].*), min);
+                            const p1 = transform.apply(parameters[i].position()[0..2].*);
+                            const p2 = transform.apply(parameters[i + 1].position()[0..2].*);
+                            const p3 = transform.apply(parameters[i + 2].position()[0..2].*);
                             draw_list.addTriangle(.{ .p1 = p1, .p2 = p2, .p3 = p3, .col = color, .thickness = 1.0 });
                         }
                     }
@@ -1694,11 +1702,11 @@ fn draw_strip(draw_list: zgui.DrawList, min: [2]f32, scale: [2]f32, display_list
     }
 }
 
-fn draw_modifier_volume(d: *Deecy, draw_list: zgui.DrawList, volume: *const Holly.ModifierVolume, min: [2]f32, scale: [2]f32, color: u32) void {
+fn draw_modifier_volume(d: *Deecy, draw_list: zgui.DrawList, volume: *const Holly.ModifierVolume, transform: anytype, color: u32) void {
     for (0..volume.triangle_count) |i| {
-        const p1 = add(mul(scale, d.renderer.modifier_volume_vertices.items[3 * volume.first_triangle_index + 3 * i + 0][0..2].*), min);
-        const p2 = add(mul(scale, d.renderer.modifier_volume_vertices.items[3 * volume.first_triangle_index + 3 * i + 1][0..2].*), min);
-        const p3 = add(mul(scale, d.renderer.modifier_volume_vertices.items[3 * volume.first_triangle_index + 3 * i + 2][0..2].*), min);
+        const p1 = transform.apply(d.renderer.modifier_volume_vertices.items[3 * volume.first_triangle_index + 3 * i + 0][0..2].*);
+        const p2 = transform.apply(d.renderer.modifier_volume_vertices.items[3 * volume.first_triangle_index + 3 * i + 1][0..2].*);
+        const p3 = transform.apply(d.renderer.modifier_volume_vertices.items[3 * volume.first_triangle_index + 3 * i + 2][0..2].*);
         draw_list.addTriangle(.{ .p1 = p1, .p2 = p2, .p3 = p3, .col = color, .thickness = 1.0 });
     }
 }
@@ -1710,34 +1718,34 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
 
     const draw_list = zgui.getBackgroundDrawList();
 
-    const min, const scale = dc_to_window_transform(d);
+    const transform = dc_to_window_transform(d);
 
     if (self.draw_wireframe) {
         for (d.renderer.ta_lists.items) |list| {
             for ([_]*const Holly.DisplayList{ &list.opaque_list, &list.translucent_list, &list.punchthrough_list }, 0..) |l, idx| {
                 if (self.draw_list_wireframe[idx]) {
                     for (0..l.vertex_strips.items.len) |strip_idx| {
-                        draw_strip(draw_list, min, scale, l, @intCast(strip_idx), self.list_wireframe_colors[idx]);
+                        draw_strip(draw_list, transform, l, @intCast(strip_idx), self.list_wireframe_colors[idx]);
                     }
                 }
             }
         }
         if (self.draw_modifier_volume_wireframe[0]) {
             for (d.renderer.ta_lists.items[self.selected_volume_pass_idx].opaque_modifier_volumes.items) |*vol|
-                draw_modifier_volume(d, draw_list, vol, min, scale, 0xFFE6197A);
+                draw_modifier_volume(d, draw_list, vol, transform, 0xFFE6197A);
         }
         if (self.draw_modifier_volume_wireframe[1]) {
             for (d.renderer.ta_lists.items[self.selected_volume_pass_idx].translucent_modifier_volumes.items) |*vol|
-                draw_modifier_volume(d, draw_list, vol, min, scale, 0xFF19E6A2);
+                draw_modifier_volume(d, draw_list, vol, transform, 0xFF19E6A2);
         }
     }
 
     if (self.selected_strip_list == .Opaque or self.selected_strip_list == .PunchThrough or self.selected_strip_list == .Translucent) {
         const list = d.renderer.ta_lists.items[self.selected_strip_pass_idx].get_list(self.selected_strip_list);
-        draw_strip(draw_list, min, scale, list, self.selected_strip_index, 0xFFFF00FF);
+        draw_strip(draw_list, transform, list, self.selected_strip_index, 0xFFFF00FF);
     }
     if (self.selected_vertex) |vertex| {
-        draw_list.addCircleFilled(.{ .p = add(mul(scale, vertex), min), .r = 5.0, .col = 0xFF4000FF });
+        draw_list.addCircleFilled(.{ .p = transform.apply(vertex), .r = 5.0, .col = 0xFF4000FF });
     }
     if (self.selected_volume_index) |idx| {
         const list = switch (self.selected_volume_list) {
@@ -1745,7 +1753,7 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
             .TranslucentModifierVolume => d.renderer.ta_lists.items[self.selected_volume_pass_idx].translucent_modifier_volumes.items,
             else => unreachable,
         };
-        if (idx < list.len) draw_modifier_volume(d, draw_list, &list[idx], min, scale, 0xFF0000FF);
+        if (idx < list.len) draw_modifier_volume(d, draw_list, &list[idx], transform, 0xFF0000FF);
     }
 }
 
@@ -1946,9 +1954,9 @@ fn display_vertex_data(self: *@This(), vertex: *const Holly.VertexParameter) voi
 
 fn select_strip(self: *@This(), d: *Deecy, lists: []Holly.TALists) void {
     var mouse = zgui.getMousePos();
-    const min, const scale = dc_to_window_transform(d);
-    mouse[0] = (mouse[0] - min[0]) / scale[0];
-    mouse[1] = (mouse[1] - min[1]) / scale[1];
+    const transform = dc_to_window_transform(d);
+    mouse[0] = (mouse[0] - transform.position[0]) / transform.scale[0];
+    mouse[1] = (mouse[1] - transform.position[1]) / transform.scale[1];
     if (mouse[0] < 0 or mouse[0] > 640 or mouse[1] < 0 or mouse[1] > 480) return;
 
     var previous_hit: ?struct { list: Holly.ListType, pass_idx: usize, strip_idx: u32 } = null;
@@ -2045,19 +2053,26 @@ fn point_in_strip(parameters: []Holly.VertexParameter, strip: Holly.VertexStrip,
     return false;
 }
 
-fn dc_to_window_transform(d: *Deecy) struct { [2]f32, [2]f32 } {
-    const native_resolution = [2]f32{ 640.0, 480.0 };
+fn dc_to_window_transform(d: *Deecy) struct {
+    position: @Vector(2, f32),
+    scale: @Vector(2, f32),
+    pub inline fn apply(self: @This(), p: [2]f32) [2]f32 {
+        return self.position + self.scale * p;
+    }
+} {
+    // TODO: Handle 16:9
+    const native_resolution = @Vector(2, f32){ 640.0, 480.0 };
     const aspect_ratio = native_resolution[0] / native_resolution[1];
     const fb_size = d.window.getFramebufferSize();
-    const window_size = [2]f32{ @floatFromInt(fb_size[0]), @floatFromInt(fb_size[1]) };
-    const resolution = [2]f32{ @floatFromInt(d.renderer.resolution.width), @floatFromInt(d.renderer.resolution.height) };
+    const window_size = @Vector(2, f32){ @floatFromInt(fb_size[0]), @floatFromInt(fb_size[1]) };
+    const resolution = @Vector(2, f32){ @floatFromInt(d.renderer.resolution.width), @floatFromInt(d.renderer.resolution.height) };
 
-    const size = switch (d.config.renderer.display_mode) {
+    const size: @Vector(2, f32) = switch (d.config.renderer.display_mode) {
         .Center, .Fit => if (d.config.renderer.display_mode == .Fit or resolution[0] > window_size[0] or resolution[1] > window_size[1])
-            (if (window_size[0] / window_size[1] < aspect_ratio) [2]f32{
+            (if (window_size[0] / window_size[1] < aspect_ratio) .{
                 window_size[0],
                 window_size[0] / aspect_ratio,
-            } else [2]f32{
+            } else .{
                 aspect_ratio * window_size[1],
                 window_size[1],
             })
@@ -2065,18 +2080,13 @@ fn dc_to_window_transform(d: *Deecy) struct { [2]f32, [2]f32 } {
             resolution,
         .Stretch => window_size,
     };
-    const scaler_ctl = d.dc.gpu.read_register(Holly.SCALER_CTL, .SCALER_CTL);
-    // Scale of inner render compared to native DC resolution.
-    const scale = [2]f32{
-        scaler_ctl.get_x_scale_factor() * size[0] / native_resolution[0],
-        scaler_ctl.get_y_scale_factor() * size[1] / native_resolution[1],
+    const display_scale = size / native_resolution;
+    const min: @Vector(2, f32) = switch (d.config.renderer.display_mode) {
+        .Stretch => .{ 0, 0 },
+        else => @Vector(2, f32){ 0.5, 0.5 } * (window_size - size),
     };
-    const min = switch (d.config.renderer.display_mode) {
-        .Stretch => [2]f32{ 0, 0 },
-        else => [2]f32{
-            window_size[0] / 2.0 - size[0] / 2.0,
-            window_size[1] / 2.0 - size[1] / 2.0,
-        },
+    return .{
+        .position = min + display_scale * d.renderer.pixel_shifts(),
+        .scale = display_scale * d.renderer.scale(),
     };
-    return .{ min, scale };
 }

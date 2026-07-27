@@ -171,6 +171,15 @@ pub const VideoModes = struct {
         .vo_starty = @bitCast(@as(u32, 0x00280028)),
         .vo_control = @bitCast(@as(u32, 0x00160000)),
     };
+
+    pub fn match_defaults(spg_control: SPG_CONTROL) VideoModeDefaultRegisters {
+        return if (spg_control.PAL == 1)
+            if (spg_control.interlace) PALInterlace else PAL
+        else if (spg_control.NTSC == 1)
+            if (spg_control.interlace) NTSCInterlace else NTSC
+        else
+            VGA;
+    }
 };
 
 pub const SOFT_RESET = packed struct(u32) {
