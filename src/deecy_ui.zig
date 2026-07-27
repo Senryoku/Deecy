@@ -889,8 +889,11 @@ pub fn draw(self: *@This()) !void {
                         d.config.renderer.internal_resolution_factor = @intFromEnum(resolution);
                     }
                     zgui.setNextItemWidth(dropdown_size);
-                    if (zgui.comboFromEnum("MSAA", &d.config.renderer.msaa))
+                    if (zgui.comboFromEnum("MSAA", &d.config.renderer.msaa)) canceled: {
+                        d.gctx_queue_mutex.lock(d.io) catch break :canceled;
+                        defer d.gctx_queue_mutex.unlock(d.io);
                         try d.renderer.on_msaa_change();
+                    }
                     zgui.setItemTooltip("Multisample anti-aliasing setting for the opaque pass.", .{});
                     zgui.setNextItemWidth(dropdown_size);
                     if (zgui.comboFromEnum("Aspect Ratio", &d.config.renderer.aspect_ratio)) {
@@ -902,8 +905,8 @@ pub fn draw(self: *@This()) !void {
                         \\   16:9 (Stretch)  Rendered at the normal resolution, but streched horizontally to 16:9. Cheap and accurate. (Anamorphic widescreen)
                         \\   16:9            Rendered at an increased horizontal resolution. More expensive and might be less compatible.
                     , .{});
-                    if (resolution_update) {
-                        d.gctx_queue_mutex.lockUncancelable(d.io);
+                    if (resolution_update) canceled: {
+                        d.gctx_queue_mutex.lock(d.io) catch break :canceled;
                         defer d.gctx_queue_mutex.unlock(d.io);
                         d.renderer.resolution = .{
                             .width = d.config.renderer.aspect_ratio.width() * d.config.renderer.internal_resolution_factor,
@@ -917,7 +920,9 @@ pub fn draw(self: *@This()) !void {
                     zgui.setNextItemWidth(dropdown_size);
                     _ = zgui.comboFromEnum("Display Mode", &d.config.renderer.display_mode);
                     zgui.setNextItemWidth(dropdown_size);
-                    if (zgui.comboFromEnum("Scaling Filter", &d.config.renderer.scaling_filter)) {
+                    if (zgui.comboFromEnum("Scaling Filter", &d.config.renderer.scaling_filter)) canceled: {
+                        d.gctx_queue_mutex.lock(d.io) catch break :canceled;
+                        defer d.gctx_queue_mutex.unlock(d.io);
                         d.renderer.on_scaling_filter_change();
                     }
                     zgui.setNextItemWidth(dropdown_size);
@@ -943,7 +948,9 @@ pub fn draw(self: *@This()) !void {
                         zgui.setNextItemWidth(dropdown_size);
                         if (zgui.beginCombo("Present Mode", .{ .preview_value = @tagName(Deecy.PresentMode.fromWGPU(d.gctx.present_mode)) })) {
                             for (static.present_modes) |present_mode| {
-                                if (zgui.selectable(@tagName(Deecy.PresentMode.fromWGPU(present_mode)), .{ .selected = d.gctx.present_mode == present_mode })) {
+                                if (zgui.selectable(@tagName(Deecy.PresentMode.fromWGPU(present_mode)), .{ .selected = d.gctx.present_mode == present_mode })) canceled: {
+                                    d.gctx_queue_mutex.lock(d.io) catch break :canceled;
+                                    defer d.gctx_queue_mutex.unlock(d.io);
                                     d.gctx.present_mode = present_mode;
                                     d.config.present_mode = Deecy.PresentMode.fromWGPU(d.gctx.present_mode);
                                     const fb_size = d.window.getFramebufferSize();
@@ -964,29 +971,41 @@ pub fn draw(self: *@This()) !void {
                     zgui.separatorText("Experimental settings");
                     zgui.setNextItemWidth(dropdown_size);
                     _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
-                    _ = zgui.checkbox("Framebuffer Emulation", .{ .v = &d.config.renderer.framebuffer_emulation });
-                    zgui.setItemTooltip("Allow re-use of the result of rendering to the framebuffer.\nSlower, particularly with 'Copy to Guest VRAM' enabled, but necessary for some effects (Static loading screens for example).", .{});
-                    if (d.config.renderer.framebuffer_emulation and d.config.renderer.copy_to_vram) {
-                        zgui.sameLine(.{});
-                        zgui.textUnformattedColored(common.Yellow, Icons.TriangleExclamation);
-                        zgui.setItemTooltip("'Framebuffer Emulation' and 'Copy to Guest VRAM' are rarely necessary at the same time and can hinder performance.", .{});
+                    {
+                        var modified = false;
+                        var renderer_config = d.config.renderer;
+                        defer {
+                            if (modified) canceled: {
+                                d.gctx_queue_mutex.lock(d.io) catch break :canceled;
+                                defer d.gctx_queue_mutex.unlock(d.io);
+                                d.config.renderer = renderer_config;
+                            }
+                        }
+                        modified = zgui.checkbox("Framebuffer Emulation", .{ .v = &renderer_config.framebuffer_emulation }) or modified;
+                        zgui.setItemTooltip("Allow re-use of the result of rendering to the framebuffer.\nSlower, particularly with 'Copy to Guest VRAM' enabled, but necessary for some effects (Static loading screens for example).", .{});
+                        if (renderer_config.framebuffer_emulation and renderer_config.copy_to_vram) {
+                            zgui.sameLine(.{});
+                            zgui.textUnformattedColored(common.Yellow, Icons.TriangleExclamation);
+                            zgui.setItemTooltip("'Framebuffer Emulation' and 'Copy to Guest VRAM' are rarely necessary at the same time and can hinder performance.", .{});
+                        }
+                        modified = zgui.checkbox("Copy to Guest VRAM", .{ .v = &renderer_config.copy_to_vram }) or modified;
+                        zgui.setItemTooltip("Copy the result of rendering to the guest VRAM.\nSlower, particularly with 'Framebuffer Emulation' enabled, but necessary for some effects.", .{});
+                        modified = zgui.checkbox("Clamp Sprites UVs", .{ .v = &renderer_config.clamp_sprites_uvs }) or modified;
+                        zgui.setItemTooltip("Avoid some seams around sprites when upscaling.", .{});
+                        modified = zgui.checkbox("Synchronous Render", .{ .v = &renderer_config.synchronous_render }) or modified;
+                        zgui.setItemTooltip(
+                            \\ Render synchronously with the guest system.
+                            \\ Can avoid some synchronization issues at a slight performance cost.
+                            \\ Try this when you notice corrupted textures, especially during transitions.
+                        , .{});
+                        modified = zgui.checkbox("Delayed Render", .{ .v = &renderer_config.delay_render }) or modified;
+                        zgui.setItemTooltip(
+                            \\ Delay rendering until a frame is actually presented.
+                            \\ Can prevent flickering or missing pause screens, it should only be enabled when encountering these issues.
+                            \\ Might require 'Synchronous Render' to be enabled as well."
+                        , .{});
                     }
-                    _ = zgui.checkbox("Copy to Guest VRAM", .{ .v = &d.config.renderer.copy_to_vram });
-                    zgui.setItemTooltip("Copy the result of rendering to the guest VRAM.\nSlower, particularly with 'Framebuffer Emulation' enabled, but necessary for some effects.", .{});
-                    _ = zgui.checkbox("Clamp Sprites UVs", .{ .v = &d.config.renderer.clamp_sprites_uvs });
-                    zgui.setItemTooltip("Avoid some seams around sprites when upscaling.", .{});
-                    _ = zgui.checkbox("Synchronous Render", .{ .v = &d.config.renderer.synchronous_render });
-                    zgui.setItemTooltip(
-                        \\ Render synchronously with the guest system.
-                        \\ Can avoid some synchronization issues at a slight performance cost.
-                        \\ Try this when you notice corrupted textures, especially during transitions.
-                    , .{});
-                    _ = zgui.checkbox("Delayed Render", .{ .v = &d.config.renderer.delay_render });
-                    zgui.setItemTooltip(
-                        \\ Delay rendering until a frame is actually presented.
-                        \\ Can prevent flickering or missing pause screens, it should only be enabled when encountering these issues.
-                        \\ Might require 'Synchronous Render' to be enabled as well."
-                    , .{});
+
                     _ = zgui.checkbox("Use Pipeline Cache", .{ .v = &d.config.enable_dawn_pipeline_cache });
                     zgui.setItemTooltip("Restart Required.\nReduces 'pop-in' due to pipeline creation delay (shader compilation).", .{});
                     if (builtin.mode == .Debug) {
