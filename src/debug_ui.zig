@@ -389,7 +389,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
     self.reset_hover();
     {
-        d.gctx_queue_mutex.lockUncancelable(d.io);
+        d.gctx_queue_mutex.lock(d.io) catch return;
         defer d.gctx_queue_mutex.unlock(d.io);
         try self.init_texture_views(d); // Make sure these are up-to-date.
     }
@@ -1703,7 +1703,11 @@ fn draw_modifier_volume(d: *Deecy, draw_list: zgui.DrawList, volume: *const Holl
     }
 }
 
+/// Locks `_gctx_queue_mutex`.
 fn draw_overlay(self: *@This(), d: *Deecy) void {
+    d.gctx_queue_mutex.lock(d.io) catch return;
+    defer d.gctx_queue_mutex.unlock(d.io);
+
     const draw_list = zgui.getBackgroundDrawList();
 
     const min, const scale = dc_to_window_transform(d);
