@@ -2581,6 +2581,13 @@ pub const Holly = struct {
                         self.vram[addr + 1] = src[1];
                         self.vram[addr + 2] = src[0];
                     },
+                    .KRGB0888 => {
+                        const addr = fb_pixel_addr(4, fb_addr, x, y, stride);
+                        self.vram[addr + 0] = parameters.w_ctrl.fb_kval;
+                        self.vram[addr + 1] = src[2];
+                        self.vram[addr + 2] = src[1];
+                        self.vram[addr + 3] = src[0];
+                    },
                     .ARGB8888 => {
                         const addr = fb_pixel_addr(4, fb_addr, x, y, stride);
                         self.vram[addr + 0] = src[3];
