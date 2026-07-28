@@ -1138,52 +1138,56 @@ pub fn stop_rumble(self: *@This()) void {
 }
 
 pub fn poll_controllers(self: *@This()) void {
+    // Ignore keyboard binding if there's an emulated keyboard plugged in.
+    const emulated_keyboard = self.get_dc_keyboard() != null;
     for (0..4) |controller_idx| {
         switch (self.dc.maple.ports[controller_idx]) {
             .emulated => |*e| {
                 switch (e.main) {
                     .Controller => |*c| {
                         var any_keyboard_key_pressed = false;
-                        const keyboard_bindings = self.config.keyboard_bindings[controller_idx];
-                        inline for ([_][]const u8{ "start", "up", "down", "left", "right", "a", "b", "x", "y" }) |button_name| {
-                            if (@field(keyboard_bindings, button_name)) |key| {
-                                const key_status = self.window.getKey(key);
-                                var button: DreamcastModule.Maple.Controller.Buttons = .{};
-                                @field(button, button_name) = 0;
-                                if (key_status == .press) {
-                                    any_keyboard_key_pressed = true;
-                                    c.press_buttons(button);
-                                } else if (key_status == .release) {
-                                    c.release_buttons(button);
+                        if (!emulated_keyboard) {
+                            const keyboard_bindings = self.config.keyboard_bindings[controller_idx];
+                            inline for ([_][]const u8{ "start", "up", "down", "left", "right", "a", "b", "x", "y" }) |button_name| {
+                                if (@field(keyboard_bindings, button_name)) |key| {
+                                    const key_status = self.window.getKey(key);
+                                    var button: DreamcastModule.Maple.Controller.Buttons = .{};
+                                    @field(button, button_name) = 0;
+                                    if (key_status == .press) {
+                                        any_keyboard_key_pressed = true;
+                                        c.press_buttons(button);
+                                    } else if (key_status == .release) {
+                                        c.release_buttons(button);
+                                    }
                                 }
                             }
-                        }
 
-                        const DefaultAxisValues = [6]u8{ 0, 0, 0x80, 0x80, 0x80, 0x80 };
-                        c.axis = DefaultAxisValues;
+                            const DefaultAxisValues = [6]u8{ 0, 0, 0x80, 0x80, 0x80, 0x80 };
+                            c.axis = DefaultAxisValues;
 
-                        if (keyboard_bindings.right_trigger) |key|
-                            c.axis[0] = if (self.window.getKey(key) == .press) 0xFF else 0;
-                        if (keyboard_bindings.left_trigger) |key|
-                            c.axis[1] = if (self.window.getKey(key) == .press) 0xFF else 0;
+                            if (keyboard_bindings.right_trigger) |key|
+                                c.axis[0] = if (self.window.getKey(key) == .press) 0xFF else 0;
+                            if (keyboard_bindings.left_trigger) |key|
+                                c.axis[1] = if (self.window.getKey(key) == .press) 0xFF else 0;
 
-                        inline for (.{
-                            .{ 2, keyboard_bindings.left_stick_left, keyboard_bindings.left_stick_right },
-                            .{ 3, keyboard_bindings.left_stick_up, keyboard_bindings.left_stick_down },
-                            .{ 4, keyboard_bindings.right_stick_left, keyboard_bindings.right_stick_right },
-                            .{ 5, keyboard_bindings.right_stick_up, keyboard_bindings.right_stick_down },
-                        }) |tuple| {
-                            const axis_idx, const binding_0, const binding_FF = tuple;
-                            if (binding_0) |key| {
-                                if (self.window.getKey(key) == .press) c.axis[axis_idx] = 0;
+                            inline for (.{
+                                .{ 2, keyboard_bindings.left_stick_left, keyboard_bindings.left_stick_right },
+                                .{ 3, keyboard_bindings.left_stick_up, keyboard_bindings.left_stick_down },
+                                .{ 4, keyboard_bindings.right_stick_left, keyboard_bindings.right_stick_right },
+                                .{ 5, keyboard_bindings.right_stick_up, keyboard_bindings.right_stick_down },
+                            }) |tuple| {
+                                const axis_idx, const binding_0, const binding_FF = tuple;
+                                if (binding_0) |key| {
+                                    if (self.window.getKey(key) == .press) c.axis[axis_idx] = 0;
+                                }
+                                if (binding_FF) |key| {
+                                    if (self.window.getKey(key) == .press) c.axis[axis_idx] = 0xFF;
+                                }
                             }
-                            if (binding_FF) |key| {
-                                if (self.window.getKey(key) == .press) c.axis[axis_idx] = 0xFF;
-                            }
-                        }
 
-                        if (!std.mem.eql(u8, &c.axis, &DefaultAxisValues))
-                            any_keyboard_key_pressed = true;
+                            if (!std.mem.eql(u8, &c.axis, &DefaultAxisValues))
+                                any_keyboard_key_pressed = true;
+                        }
 
                         if (!any_keyboard_key_pressed) {
                             if (self.controllers[controller_idx]) |*host_controller| {

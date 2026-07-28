@@ -376,6 +376,8 @@ pub fn draw_controller_settings(d: *Deecy, comptime port: u8) !void {
     if (zgui.collapsingHeader("Keyboard Bindings", .{})) {
         zgui.indent(.{});
         defer zgui.unindent(.{});
+        if (d.get_dc_keyboard() != null)
+            zgui.textUnformattedColored(common.Yellow, Icons.TriangleExclamation ++ " Note: Keyboard bindings are disabled while an emulated keyboard is connected.");
         if (zgui.beginTable("##KeyboardBindings", .{ .column = 2, .flags = .{ .sizing = .fixed_fit } })) {
             zgui.tableSetupColumn("Guest", .{});
             zgui.tableSetupColumn("Host", .{});
