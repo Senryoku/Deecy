@@ -1,8 +1,13 @@
 var data_path: []const u8 = "";
 var userdata_path: []const u8 = "";
 
+var root_dir: std.Io.Dir = undefined;
+var data_dir: std.Io.Dir = undefined;
+var userdata_dir: std.Io.Dir = undefined;
+
 pub fn init(io: std.Io, allocator: std.mem.Allocator, environ: std.process.Environ.Map) !void {
-    if (path_config.use_appdata_dir) {
+    var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const deecy_folder = if (path_config.use_appdata_dir) dir: {
         const app_data_dir = try known_folders.getPath(io, allocator, environ, .local_configuration) orelse {
             std.log.warn("No known 'local_configuration' folder.", .{});
             return error.MissingKnownFolder;
@@ -13,20 +18,54 @@ pub fn init(io: std.Io, allocator: std.mem.Allocator, environ: std.process.Envir
         defer allocator.free(deecy_folder);
         std.log.info("Using App data folder as '{s}'", .{deecy_folder});
 
-        data_path = try std.fs.path.resolve(allocator, &[_][]const u8{ deecy_folder, path_config.data_path });
-        userdata_path = try std.fs.path.resolve(allocator, &[_][]const u8{ deecy_folder, path_config.userdata_path });
+        break :dir deecy_folder;
 
-        try std.Io.Dir.cwd().createDirPath(io, deecy_folder);
-        try std.Io.Dir.cwd().createDirPath(io, data_path);
-        try std.Io.Dir.cwd().createDirPath(io, userdata_path);
-    }
+        // data_path = try std.fs.path.resolve(allocator, &[_][]const u8{ deecy_folder, path_config.data_path });
+        // userdata_path = try std.fs.path.resolve(allocator, &[_][]const u8{ deecy_folder, path_config.userdata_path });
+
+        // try std.Io.Dir.createDirAbsolute(io, deecy_folder);
+        // try std.Io.Dir.createDirAbsolute(io, data_path);
+        // try std.Io.Dir.createDirAbsolute(io, userdata_path);
+
+        // root_dir = try std.Io.Dir.openDirAbsolute(io, deecy_folder, .{});
+        // data_dir = try std.Io.Dir.openDirAbsolute(io, get_data_path(), .{});
+        // userdata_dir = try std.Io.Dir.openDirAbsolute(io, get_userdata_path(), .{});
+    } else dir: {
+        const path_len = try std.process.executableDirPath(io, &path_buffer);
+        break :dir path_buffer[0..path_len];
+
+        // data_path = try std.fs.path.resolve(allocator, &[_][]const u8{ path, path_config.data_path });
+        // userdata_path = try std.fs.path.resolve(allocator, &[_][]const u8{ path, path_config.userdata_path });
+
+        // try root_dir.createDirPath(io, get_data_path());
+        // try root_dir.createDirPath(io, get_userdata_path());
+
+        // data_dir = try root_dir.openDir(io, get_data_path(), .{});
+        // userdata_dir = try root_dir.openDir(io, get_userdata_path(), .{});
+    };
+
+    root_dir = try std.Io.Dir.openDirAbsolute(io, deecy_folder, .{});
+    data_path = try std.fs.path.resolve(allocator, &[_][]const u8{ deecy_folder, path_config.data_path });
+    userdata_path = try std.fs.path.resolve(allocator, &[_][]const u8{ deecy_folder, path_config.userdata_path });
+
+    try std.Io.Dir.createDirAbsolute(io, deecy_folder, .default_dir);
+    try std.Io.Dir.createDirAbsolute(io, data_path, .default_dir);
+    try std.Io.Dir.createDirAbsolute(io, userdata_path, .default_dir);
+
+    root_dir = try std.Io.Dir.openDirAbsolute(io, deecy_folder, .{});
+    data_dir = try std.Io.Dir.openDirAbsolute(io, get_data_path(), .{});
+    userdata_dir = try std.Io.Dir.openDirAbsolute(io, get_userdata_path(), .{});
 }
 
-pub fn deinit(allocator: std.mem.Allocator) void {
+pub fn deinit(io: std.Io, allocator: std.mem.Allocator) void {
     if (path_config.use_appdata_dir) {
         allocator.free(data_path);
         allocator.free(userdata_path);
     }
+
+    userdata_dir.close(io);
+    data_dir.close(io);
+    root_dir.close(io);
 }
 
 /// Replaces invalid characters with underscores
@@ -39,16 +78,28 @@ pub fn safe_path(path: []u8) void {
     }
 }
 
+/// Absolute path to data folder.
 pub fn get_data_path() []const u8 {
-    if (path_config.use_appdata_dir)
-        return data_path;
-    return path_config.data_path;
+    return data_path;
 }
 
+/// Absolute path to userdata folder.
 pub fn get_userdata_path() []const u8 {
-    if (path_config.use_appdata_dir)
-        return userdata_path;
-    return path_config.userdata_path;
+    return userdata_path;
+}
+
+/// Root directory of saved files.
+///   Executable directory if not using appdata.
+pub fn root() std.Io.Dir {
+    return root_dir;
+}
+
+pub fn data() std.Io.Dir {
+    return data_dir;
+}
+
+pub fn userdata() std.Io.Dir {
+    return userdata_dir;
 }
 
 /// Caller owns the returned memory

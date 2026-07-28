@@ -366,7 +366,7 @@ const GameInfoCache = struct {
     }
 
     pub fn load(self: *@This(), io: std.Io) !void {
-        const data = try std.Io.Dir.cwd().readFileAlloc(io, self._path, self._arena.allocator(), .unlimited);
+        const data = try HostPaths.root().readFileAlloc(io, self._path, self._arena.allocator(), .unlimited);
         defer self._arena.allocator().free(data);
         try self.deserialize(data);
     }
@@ -396,7 +396,7 @@ const GameInfoCache = struct {
     }
 
     pub fn save_to_disk(self: *@This(), io: std.Io) !void {
-        var file = try std.Io.Dir.cwd().createFile(io, self._path, .{});
+        var file = try HostPaths.root().createFile(io, self._path, .{});
         defer file.close(io);
 
         var allocating_writer = std.Io.Writer.Allocating.init(self._arena.allocator());
@@ -508,7 +508,7 @@ pub fn refresh_games(self: *@This()) !void {
             var tmp_disc_files: std.ArrayList(GameFile) = .empty;
             errdefer tmp_disc_files.deinit(self.allocator);
 
-            var dir = std.Io.Dir.cwd().openDir(self.deecy.io, dir_path, .{ .iterate = true }) catch |err| {
+            var dir = HostPaths.root().openDir(self.deecy.io, dir_path, .{ .iterate = true }) catch |err| {
                 ui_log.err(termcolor.red("Failed to open game directory: {t}"), .{err});
                 return;
             };

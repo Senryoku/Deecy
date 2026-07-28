@@ -2,7 +2,9 @@ const std = @import("std");
 const log = std.log.scoped(.maple);
 const termcolor = @import("termcolor");
 
-const Context = @import("../dreamcast.zig").Context;
+const Dreamcast = @import("../dreamcast.zig");
+const Context = Dreamcast.Context;
+const HostPaths = Dreamcast.HostPaths;
 const common = @import("../maple.zig");
 const FunctionCodesMask = common.FunctionCodesMask;
 const DeviceInfoPayload = common.DeviceInfoPayload;
@@ -119,10 +121,10 @@ pub fn init(allocator: std.mem.Allocator, backing_file_path: []const u8) !@This(
 
 fn load_or_init(self: *@This()) !void {
     if (std.fs.path.dirname(self.backing_file_path)) |dir|
-        try std.Io.Dir.cwd().createDirPath(Context.io, dir);
+        try HostPaths.root().createDirPath(Context.io, dir);
 
     log.info("Loading VMU from file '{s}'.", .{self.backing_file_path});
-    _ = std.Io.Dir.cwd().readFile(Context.io, self.backing_file_path, @as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize]) catch {
+    _ = HostPaths.root().readFile(Context.io, self.backing_file_path, @as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize]) catch {
         log.info("  Not found: Initializing new VMU at '{s}'.", .{self.backing_file_path});
         // FIXME: Something's wrong here. I'm not initiliazing it properly.
         //        Switching to a dumb copy of a freshly formatted VMU by the bios, until I understand it better.
@@ -186,7 +188,7 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
 pub fn save(self: *@This()) void {
     self.save_backup();
 
-    std.Io.Dir.cwd().writeFile(
+    HostPaths.root().writeFile(
         Context.io,
         .{
             .sub_path = self.backing_file_path,
@@ -208,7 +210,7 @@ pub fn save_backup(self: *const @This()) void {
         log.err("Failed to format backup filename: {t}", .{err});
         return;
     };
-    std.Io.Dir.cwd().copyFile(self.backing_file_path, std.Io.Dir.cwd(), backup_file_path, Context.io, .{ .make_path = false, .replace = true }) catch |err| {
+    HostPaths.root().copyFile(self.backing_file_path, HostPaths.root(), backup_file_path, Context.io, .{ .make_path = false, .replace = true }) catch |err| {
         log.err("Failed to backup VMU file '{s}': {t}", .{ backup_file_path, err });
     };
 }

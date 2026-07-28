@@ -20,7 +20,7 @@ pub fn open(allocator: std.mem.Allocator, io: std.Io) !void {
         defer mutex.unlock(io);
         const path = try get_path(allocator);
         defer allocator.free(path);
-        file = try std.Io.Dir.cwd().createFile(io, path, .{});
+        file = try HostPaths.root().createFile(io, path, .{});
         file_writer = file.writer(io, &buffer);
         writer = &file_writer.interface;
         _opened = true;

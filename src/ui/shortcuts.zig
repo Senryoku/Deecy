@@ -228,7 +228,7 @@ fn serialize(self: @This(), allocator: std.mem.Allocator, io: std.Io) !void {
     const config_path = try get_config_path(allocator);
     defer allocator.free(config_path);
 
-    var config_file = try std.Io.Dir.cwd().createFile(io, config_path, .{});
+    var config_file = try HostPaths.root().createFile(io, config_path, .{});
     defer config_file.close(io);
 
     const buffer = try allocator.alloc(u8, 8192);
@@ -242,7 +242,7 @@ fn deserialize(self: *@This(), allocator: std.mem.Allocator, io: std.Io) !void {
     const config_path = try get_config_path(allocator);
     defer allocator.free(config_path);
 
-    const data = try std.Io.Dir.cwd().readFileAllocOptions(io, config_path, allocator, .limited(32 * 1024 * 1024), .@"8", 0);
+    const data = try HostPaths.root().readFileAllocOptions(io, config_path, allocator, .limited(32 * 1024 * 1024), .@"8", 0);
     defer allocator.free(data);
 
     var diagnostics: std.zon.parse.Diagnostics = .{};

@@ -63,7 +63,7 @@ pub fn main(init: std.process.Init) !void {
     defer custom_log.deinit();
 
     try DreamcastModule.HostPaths.init(io, allocator, init.environ_map.*);
-    defer DreamcastModule.HostPaths.deinit(allocator);
+    defer DreamcastModule.HostPaths.deinit(io, allocator);
 
     defer DreamcastModule.SH4Module.SCIF.deinit(io);
 

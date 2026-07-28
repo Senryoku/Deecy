@@ -203,12 +203,7 @@ pub const Dreamcast = struct {
 
         errdefer dc.destroy();
 
-        // Create 'userdata' folder if it doesn't exist
-        try std.Io.Dir.cwd().createDirPath(Context.io, HostPaths.get_userdata_path());
-
-        const bios_path = try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_data_path(), "dc_boot.bin" });
-        defer allocator.free(bios_path);
-        dc.load_bios(bios_path) catch |err| {
+        dc.load_bios(Context.io, "dc_boot.bin") catch |err| {
             switch (err) {
                 error.FileNotFound => return error.BiosNotFound,
                 else => return err,
@@ -312,8 +307,8 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_TFREM).* = 8;
     }
 
-    pub fn load_bios(self: *@This(), boot_path: []const u8) !void {
-        if ((try std.Io.Dir.cwd().readFile(Context.io, boot_path, self.boot)).len != 0x200000)
+    pub fn load_bios(self: *@This(), io: std.Io, boot_path: []const u8) !void {
+        if ((try HostPaths.data().readFile(io, boot_path, self.boot)).len != 0x200000)
             return error.InvalidBootROMSize;
     }
 
@@ -321,8 +316,7 @@ pub const Dreamcast = struct {
 
     pub fn load_flash(self: *@This(), io: std.Io, region: Region, bios_config: BiosConfig) !void {
         // FIXME: User flash is sometimes corrupted. Always load default until I understand what's going on.
-        const default_flash_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_data_path(), "dc_flash.bin" });
-        defer self._allocator.free(default_flash_path);
+        if ((try HostPaths.data().readFile(io, "dc_flash.bin", self.flash.data)).len != 0x20000) return error.InvalidFlashSize;
 
         // var flash_file = std.fs.cwd().openFile(get_user_flash_path(), .{}) catch |err| f: {
         //     if (err == error.FileNotFound) {
@@ -336,8 +330,6 @@ pub const Dreamcast = struct {
         //         return err;
         //     }
         // };
-
-        if ((try std.Io.Dir.cwd().readFile(io, default_flash_path, self.flash.data)).len != 0x20000) return error.InvalidFlashSize;
 
         // Some flash dumps floating around are missing some partition headers (not fully formatted, I guess).
         const PartitionHeader: []const u8 = "KATANA_FLASH____";

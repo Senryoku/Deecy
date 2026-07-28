@@ -32,7 +32,7 @@ pub const SaveStateHeader = extern struct {
 };
 
 pub fn load_state(dc: *Dreamcast, io: std.Io, path: []const u8) !void {
-    const file = try std.Io.Dir.cwd().readFileAllocOptions(io, path, dc._allocator, .limited(32 * 1024 * 1024), .@"8", null);
+    const file = try HostPaths.root().readFileAllocOptions(io, path, dc._allocator, .limited(32 * 1024 * 1024), .@"8", null);
     defer dc._allocator.free(file);
 
     const header = std.mem.bytesToValue(SaveStateHeader, file[0..@sizeOf(SaveStateHeader)]);

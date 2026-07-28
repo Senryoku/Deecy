@@ -162,7 +162,7 @@ const DefaultFont = @embedFile(assets_dir ++ "fonts/Hack-Regular.ttf");
 const IconFont = @embedFile(assets_dir ++ "fonts/Font Awesome 7 Free-Solid-900.otf");
 
 fn file_exists(io: std.Io, path: []const u8) !bool {
-    std.Io.Dir.cwd().access(io, path, .{}) catch |err| switch (err) {
+    HostPaths.root().access(io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return false,
         else => return err,
     };
@@ -468,16 +468,11 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
     const start_time = std.Io.Clock.awake.now(io);
     defer deecy_log.info("Deecy initialized in {f}", .{start_time.durationTo(std.Io.Clock.awake.now(io))});
 
-    std.Io.Dir.cwd().createDirPath(io, HostPaths.get_userdata_path()) catch |err| switch (err) {
-        error.PathAlreadyExists => {},
-        else => return err,
-    };
-
     // Load user config
     const config: Configuration = config: {
         const config_path = try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_userdata_path(), ConfigFile });
         defer allocator.free(config_path);
-        if (std.Io.Dir.cwd().readFileAllocOptions(io, config_path, allocator, .limited(1024 * 1024), .@"8", 0)) |conf_str| {
+        if (HostPaths.root().readFileAllocOptions(io, config_path, allocator, .limited(1024 * 1024), .@"8", 0)) |conf_str| {
             defer allocator.free(conf_str);
             @setEvalBranchQuota(2000);
             const zon = std.zon.parse.fromSliceAlloc(helpers.Partial(Configuration), allocator, conf_str, null, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
@@ -1923,8 +1918,6 @@ fn display_missing_file_error(self: *@This(), filename: []const u8, expected_siz
             }
             zgui.sameLine(.{});
             if (zgui.button(UI.Icons.Folder ++ " Open folder", .{})) {
-                const absolute_path = try std.Io.Dir.cwd().realPathFileAlloc(self.io, HostPaths.get_data_path(), self._allocator);
-                defer self._allocator.free(absolute_path);
                 var file_explorer = try std.process.spawn(
                     self.io,
                     .{
@@ -1933,7 +1926,7 @@ fn display_missing_file_error(self: *@This(), filename: []const u8, expected_siz
                             .linux => "xdg-open",
                             .macos => "open",
                             else => @compileError("Unsupported OS"),
-                        }, absolute_path },
+                        }, HostPaths.get_data_path() },
                     },
                 );
                 _ = try file_explorer.wait(self.io);
@@ -1964,9 +1957,7 @@ fn copy_file(io: std.Io, filename: []const u8, expected_size: ?usize) !bool {
             const stat = try std.Io.Dir.cwd().statFile(io, path, .{});
             if (es != stat.size) return error.@"Unexpected File Size";
         }
-        const dest_dir = try std.Io.Dir.cwd().openDir(io, HostPaths.get_data_path(), .{});
-        defer dest_dir.close(io);
-        try std.Io.Dir.cwd().copyFile(path, dest_dir, filename, io, .{});
+        try HostPaths.root().copyFile(path, HostPaths.data(), filename, io, .{});
         return true;
     }
 
@@ -2091,8 +2082,8 @@ fn save_screenshot_impl(self: *const @This()) !void {
 
     // Make sure the directory exists.
     if (std.fs.path.dirname(filepath)) |dir|
-        try std.Io.Dir.cwd().createDirPath(self.io, dir);
-    var file = try std.Io.Dir.cwd().createFile(self.io, filepath, .{});
+        try HostPaths.root().createDirPath(self.io, dir);
+    var file = try HostPaths.root().createFile(self.io, filepath, .{});
     defer file.close(self.io);
 
     var buffer: [1024]u8 = undefined;
@@ -2193,9 +2184,9 @@ fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array
     defer self._allocator.free(save_slot_path);
 
     if (std.fs.path.dirname(save_slot_path)) |dirname|
-        try std.Io.Dir.cwd().createDirPath(self.io, dirname);
+        try HostPaths.root().createDirPath(self.io, dirname);
 
-    var file = try std.Io.Dir.cwd().createFile(self.io, save_slot_path, .{});
+    var file = try HostPaths.root().createFile(self.io, save_slot_path, .{});
     defer file.close(self.io);
     var buffer: [1024]u8 = undefined;
     var writer = file.writer(self.io, &buffer);
@@ -2227,7 +2218,7 @@ pub fn load_state(self: *@This(), index: usize) !void {
 
     const start_time = std.Io.Timestamp.now(self.io, .awake);
 
-    const file = try std.Io.Dir.cwd().readFileAllocOptions(self.io, save_slot_path, self._allocator, .limited(32 * 1024 * 1024), .@"8", null);
+    const file = try HostPaths.root().readFileAllocOptions(self.io, save_slot_path, self._allocator, .limited(32 * 1024 * 1024), .@"8", null);
     defer self._allocator.free(file);
 
     const header = std.mem.bytesToValue(SaveStateHeader, file[0..@sizeOf(SaveStateHeader)]);
@@ -2256,7 +2247,7 @@ fn deserialize(self: *@This(), serialized: []const u8) !void {
 fn save_config(self: *@This()) !void {
     const config_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), ConfigFile });
     defer self._allocator.free(config_path);
-    var config_file = try std.Io.Dir.cwd().createFile(self.io, config_path, .{});
+    var config_file = try HostPaths.root().createFile(self.io, config_path, .{});
     defer config_file.close(self.io);
     const buffer = try self._allocator.alloc(u8, 8192);
     defer self._allocator.free(buffer);

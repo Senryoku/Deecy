@@ -63,9 +63,9 @@ pub fn save(allocator: std.mem.Allocator, io: std.Io, product_uid: Default.Produ
     const cheat_path = try path(allocator, product_uid);
     defer allocator.free(cheat_path);
 
-    if (std.fs.path.dirname(cheat_path)) |dir| try std.Io.Dir.cwd().createDirPath(io, dir);
+    if (std.fs.path.dirname(cheat_path)) |dir| try HostPaths.root().createDirPath(io, dir);
 
-    const file = try std.Io.Dir.cwd().createFile(io, cheat_path, .{});
+    const file = try HostPaths.root().createFile(io, cheat_path, .{});
     defer file.close(io);
     const buffer = try allocator.alloc(u8, 8192);
     defer allocator.free(buffer);
@@ -79,7 +79,7 @@ pub fn load(allocator: std.mem.Allocator, io: std.Io, uid: Default.ProductUID) !
     const cheat_path = try path(allocator, uid);
     defer allocator.free(cheat_path);
 
-    const cheats_str = std.Io.Dir.cwd().readFileAllocOptions(io, cheat_path, allocator, .limited(8 * 1024 * 1024), .@"8", 0) catch |err| {
+    const cheats_str = HostPaths.root().readFileAllocOptions(io, cheat_path, allocator, .limited(8 * 1024 * 1024), .@"8", 0) catch |err| {
         switch (err) {
             error.FileNotFound => {
                 // Load default cheats.

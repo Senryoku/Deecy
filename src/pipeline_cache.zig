@@ -39,7 +39,7 @@ fn load_pipeline_cache_impl(allocator: std.mem.Allocator, key: []const u8, value
     const path = try std.fs.path.join(allocator, &.{ userdata_path, CacheDir, hex_name });
     defer allocator.free(path);
 
-    const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    const file = try HostPaths.root().openFile(io, path, .{});
     defer file.close(io);
 
     const size = (try file.stat(io)).size;
@@ -76,9 +76,9 @@ fn store_pipeline_cache_impl(allocator: std.mem.Allocator, key: []const u8, valu
     const path = try std.fs.path.join(allocator, &.{ HostPaths.get_userdata_path(), CacheDir, hex_name });
     defer allocator.free(path);
 
-    if (std.fs.path.dirname(path)) |dir| try std.Io.Dir.cwd().createDirPath(io, dir);
+    if (std.fs.path.dirname(path)) |dir| try HostPaths.root().createDirPath(io, dir);
 
-    try std.Io.Dir.cwd().writeFile(io, .{
+    try HostPaths.root().writeFile(io, .{
         .sub_path = path,
         .data = value,
         .flags = .{ .truncate = true },
@@ -93,6 +93,6 @@ pub fn clear(allocator: std.mem.Allocator) !void {
     const dir = try std.fs.path.join(allocator, &.{ userdata_path, CacheDir });
     defer allocator.free(dir);
     log.warn("Deleting '{s}'", .{dir});
-    try std.Io.Dir.cwd().deleteTree(io, dir);
-    try std.Io.Dir.cwd().createDirPath(io, dir);
+    try HostPaths.root().deleteTree(io, dir);
+    try HostPaths.root().createDirPath(io, dir);
 }
