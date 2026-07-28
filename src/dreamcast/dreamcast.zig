@@ -52,6 +52,8 @@ pub const CableType = enum(u16) {
     Composite = 3,
 };
 
+pub const ProductUID = @import("ProductUID.zig");
+
 pub const AICASync = enum { @"1 ARM Cycle", @"4 ARM Cycles", @"8 ARM Cycles", @"16 ARM Cycles", @"32 ARM Cycles", Sample };
 
 const Callback = struct {
