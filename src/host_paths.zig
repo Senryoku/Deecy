@@ -1,11 +1,14 @@
-var data_path: []const u8 = "";
-var userdata_path: []const u8 = "";
+var context: ?struct {
+    data_path: []const u8,
+    userdata_path: []const u8,
 
-var root_dir: std.Io.Dir = undefined;
-var data_dir: std.Io.Dir = undefined;
-var userdata_dir: std.Io.Dir = undefined;
+    root_dir: std.Io.Dir,
+    data_dir: std.Io.Dir,
+    userdata_dir: std.Io.Dir,
+} = null;
 
 pub fn init(io: std.Io, allocator: std.mem.Allocator, environ: std.process.Environ.Map) !void {
+    std.debug.assert(context == null);
     var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
 
     const root_path = if (path_config.use_appdata_dir) dir: {
@@ -25,17 +28,20 @@ pub fn init(io: std.Io, allocator: std.mem.Allocator, environ: std.process.Envir
     };
     std.log.info("Using directory '{s}'", .{root_path});
 
-    root_dir = try std.Io.Dir.openDirAbsolute(io, root_path, .{});
-    data_path = try std.fs.path.resolve(allocator, &[_][]const u8{ root_path, path_config.data_path });
-    userdata_path = try std.fs.path.resolve(allocator, &[_][]const u8{ root_path, path_config.userdata_path });
+    const data_path = try std.fs.path.resolve(allocator, &[_][]const u8{ root_path, path_config.data_path });
+    const userdata_path = try std.fs.path.resolve(allocator, &[_][]const u8{ root_path, path_config.userdata_path });
 
     try ensure_dir(io, root_path);
     try ensure_dir(io, data_path);
     try ensure_dir(io, userdata_path);
 
-    root_dir = try std.Io.Dir.openDirAbsolute(io, root_path, .{});
-    data_dir = try std.Io.Dir.openDirAbsolute(io, get_data_path(), .{});
-    userdata_dir = try std.Io.Dir.openDirAbsolute(io, get_userdata_path(), .{});
+    context = .{
+        .root_dir = try std.Io.Dir.openDirAbsolute(io, root_path, .{}),
+        .data_dir = try std.Io.Dir.openDirAbsolute(io, data_path, .{}),
+        .userdata_dir = try std.Io.Dir.openDirAbsolute(io, userdata_path, .{}),
+        .data_path = data_path,
+        .userdata_path = userdata_path,
+    };
 }
 
 /// Make sure `path` exists by calling createDirAbsolute. Does not return an error if `path` already exists.
@@ -47,12 +53,14 @@ fn ensure_dir(io: std.Io, path: []const u8) !void {
 }
 
 pub fn deinit(io: std.Io, allocator: std.mem.Allocator) void {
-    userdata_dir.close(io);
-    data_dir.close(io);
-    root_dir.close(io);
-
-    allocator.free(data_path);
-    allocator.free(userdata_path);
+    if (context) |ctx| {
+        ctx.userdata_dir.close(io);
+        ctx.data_dir.close(io);
+        ctx.root_dir.close(io);
+        allocator.free(ctx.userdata_path);
+        allocator.free(ctx.data_path);
+    }
+    context = null;
 }
 
 /// Replaces invalid characters with underscores in place.
@@ -67,26 +75,26 @@ pub fn safe_path(path: []u8) void {
 
 /// Absolute path to data folder.
 pub fn get_data_path() []const u8 {
-    return data_path;
+    return context.?.data_path;
 }
 
 /// Absolute path to userdata folder.
 pub fn get_userdata_path() []const u8 {
-    return userdata_path;
+    return context.?.userdata_path;
 }
 
 /// Root directory of saved files.
 ///   Executable directory if not using appdata.
 pub fn root() std.Io.Dir {
-    return root_dir;
+    return context.?.root_dir;
 }
 
 pub fn data() std.Io.Dir {
-    return data_dir;
+    return context.?.data_dir;
 }
 
 pub fn userdata() std.Io.Dir {
-    return userdata_dir;
+    return context.?.userdata_dir;
 }
 
 /// Caller owns the returned memory.

@@ -1153,7 +1153,9 @@ pub fn draw(self: *@This()) !void {
                                                 if (e.subperipherals[slot]) |*s| {
                                                     switch (s.*) {
                                                         .VMU => |vmu| {
-                                                            zgui.textDisabled("Loaded: {s}", .{vmu.backing_file_path});
+                                                            zgui.pushStyleColor1u(.{ .idx = .text, .c = 0xFF808080 });
+                                                            zgui.textWrapped("Loaded: '{s}'", .{vmu.backing_file_path});
+                                                            zgui.popStyleColor(.{});
                                                             if (d.config.controllers[port].subperipherals[slot] == .VMU) {
                                                                 const vmu_config = &d.config.controllers[port].subperipherals[slot].VMU;
                                                                 if (vmu_config.filename.len < static.VMUFilenamesInputBuffers[port][slot].len - 1) {
