@@ -1,7 +1,7 @@
 const std = @import("std");
 
-const HostPaths = @import("dreamcast").HostPaths;
 const Deecy = @import("deecy.zig");
+const host_paths = Deecy.host_paths;
 
 const log = std.log.scoped(.pipeline_cache);
 
@@ -35,11 +35,11 @@ fn load_pipeline_cache_impl(allocator: std.mem.Allocator, key: []const u8, value
     var name_buf: [64]u8 = undefined;
     const hex_name = try cache_file_name(key, &name_buf);
 
-    const userdata_path = HostPaths.get_userdata_path();
+    const userdata_path = host_paths.get_userdata_path();
     const path = try std.fs.path.join(allocator, &.{ userdata_path, CacheDir, hex_name });
     defer allocator.free(path);
 
-    const file = try HostPaths.root().openFile(io, path, .{});
+    const file = try host_paths.root().openFile(io, path, .{});
     defer file.close(io);
 
     const size = (try file.stat(io)).size;
@@ -73,12 +73,12 @@ fn store_pipeline_cache_impl(allocator: std.mem.Allocator, key: []const u8, valu
     var name_buf: [64]u8 = undefined;
     const hex_name = try cache_file_name(key, &name_buf);
 
-    const path = try std.fs.path.join(allocator, &.{ HostPaths.get_userdata_path(), CacheDir, hex_name });
+    const path = try std.fs.path.join(allocator, &.{ host_paths.get_userdata_path(), CacheDir, hex_name });
     defer allocator.free(path);
 
-    if (std.fs.path.dirname(path)) |dir| try HostPaths.root().createDirPath(io, dir);
+    if (std.fs.path.dirname(path)) |dir| try host_paths.root().createDirPath(io, dir);
 
-    try HostPaths.root().writeFile(io, .{
+    try host_paths.root().writeFile(io, .{
         .sub_path = path,
         .data = value,
         .flags = .{ .truncate = true },
@@ -89,10 +89,10 @@ pub fn clear(allocator: std.mem.Allocator) !void {
     var threaded: std.Io.Threaded = .init_single_threaded;
     const io = threaded.io();
 
-    const userdata_path = HostPaths.get_userdata_path();
+    const userdata_path = host_paths.get_userdata_path();
     const dir = try std.fs.path.join(allocator, &.{ userdata_path, CacheDir });
     defer allocator.free(dir);
     log.warn("Deleting '{s}'", .{dir});
-    try HostPaths.root().deleteTree(io, dir);
-    try HostPaths.root().createDirPath(io, dir);
+    try host_paths.root().deleteTree(io, dir);
+    try host_paths.root().createDirPath(io, dir);
 }

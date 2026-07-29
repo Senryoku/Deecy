@@ -52,7 +52,6 @@ pub fn build(b: *std.Build) !void {
         },
     });
     dc_module.addOptions("dc_config", dc_options);
-    dc_module.addOptions("path_config", path_options);
 
     if (use_appdata_dir) {
         if (b.lazyDependency("known_folders", .{
@@ -100,6 +99,7 @@ pub fn build(b: *std.Build) !void {
         .stack_check = false,
     });
     deecy_module.addOptions("config", deecy_options);
+    deecy_module.addOptions("path_config", path_options);
 
     const exe = b.addExecutable(.{
         .name = "Deecy",

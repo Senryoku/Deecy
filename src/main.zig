@@ -6,6 +6,7 @@ const termcolor = @import("termcolor");
 const custom_log = @import("custom_log.zig");
 
 const DreamcastModule = @import("dreamcast");
+const host_paths = @import("host_paths.zig");
 const Holly = DreamcastModule.HollyModule;
 const MapleModule = DreamcastModule.Maple;
 const PreciseSleep = @import("precise_sleep.zig");
@@ -59,11 +60,11 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const allocator = init.gpa;
 
-    custom_log.init(io, allocator);
+    custom_log.init(io);
     defer custom_log.deinit();
 
-    try DreamcastModule.HostPaths.init(io, allocator, init.environ_map.*);
-    defer DreamcastModule.HostPaths.deinit(io, allocator);
+    try host_paths.init(io, allocator, init.environ_map.*);
+    defer host_paths.deinit(io, allocator);
 
     defer DreamcastModule.SH4Module.SCIF.deinit(io);
 

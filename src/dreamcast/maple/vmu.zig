@@ -4,7 +4,6 @@ const termcolor = @import("termcolor");
 
 const Dreamcast = @import("../dreamcast.zig");
 const Context = Dreamcast.Context;
-const HostPaths = Dreamcast.HostPaths;
 const common = @import("../maple.zig");
 const FunctionCodesMask = common.FunctionCodesMask;
 const DeviceInfoPayload = common.DeviceInfoPayload;
@@ -110,21 +109,21 @@ last_unsaved_change: ?i64 = null,
 on_screen_update: ?struct { function: *const fn (userdata: ?*anyopaque, data: [*]const u8) void, userdata: ?*anyopaque } = null,
 on_timer_alarm: ?struct { function: *const fn (userdata: ?*anyopaque, alw0: u8, ald0: u8, alw1: u8, ald1: u8) void, userdata: ?*anyopaque } = null,
 
-pub fn init(allocator: std.mem.Allocator, backing_file_path: []const u8) !@This() {
+pub fn init(io: std.Io, allocator: std.mem.Allocator, backing_file_path: []const u8) !@This() {
     var vmu: @This() = .{
         .backing_file_path = try allocator.dupe(u8, backing_file_path),
         .blocks = try allocator.alloc([BlockSize]u8, 0x100),
     };
-    try vmu.load_or_init();
+    try vmu.load_or_init(io);
     return vmu;
 }
 
-fn load_or_init(self: *@This()) !void {
+fn load_or_init(self: *@This(), io: std.Io) !void {
     if (std.fs.path.dirname(self.backing_file_path)) |dir|
-        try HostPaths.root().createDirPath(Context.io, dir);
+        try std.Io.Dir.cwd().createDirPath(io, dir);
 
     log.info("Loading VMU from file '{s}'.", .{self.backing_file_path});
-    _ = HostPaths.root().readFile(Context.io, self.backing_file_path, @as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize]) catch {
+    _ = std.Io.Dir.cwd().readFile(io, self.backing_file_path, @as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize]) catch {
         log.info("  Not found: Initializing new VMU at '{s}'.", .{self.backing_file_path});
         // FIXME: Something's wrong here. I'm not initiliazing it properly.
         //        Switching to a dumb copy of a freshly formatted VMU by the bios, until I understand it better.
@@ -174,22 +173,22 @@ fn load_or_init(self: *@This()) !void {
             fat_entries[FATBlock] = FATValue.DataEnd;
             fat_entries[SystemBlock] = FATValue.DataEnd; // Marks the system area block.
         }
-        self.last_unsaved_change = std.Io.Clock.awake.now(Context.io).toSeconds();
+        self.last_unsaved_change = std.Io.Clock.awake.now(io).toSeconds();
     };
 }
 
-pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+pub fn deinit(self: *@This(), io: std.Io, allocator: std.mem.Allocator) void {
     if (self.last_unsaved_change != null)
-        self.save();
+        self.save(io);
     allocator.free(self.blocks);
     allocator.free(self.backing_file_path);
 }
 
-pub fn save(self: *@This()) void {
-    self.save_backup();
+pub fn save(self: *@This(), io: std.Io) void {
+    self.save_backup(io);
 
-    HostPaths.root().writeFile(
-        Context.io,
+    std.Io.Dir.cwd().writeFile(
+        io,
         .{
             .sub_path = self.backing_file_path,
             .data = @as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize],
@@ -204,13 +203,13 @@ pub fn save(self: *@This()) void {
     self.last_unsaved_change = null;
 }
 
-pub fn save_backup(self: *const @This()) void {
+pub fn save_backup(self: *const @This(), io: std.Io) void {
     var buf: [256]u8 = @splat(0);
     const backup_file_path = std.fmt.bufPrint(&buf, "{s}.bak", .{self.backing_file_path}) catch |err| {
         log.err("Failed to format backup filename: {t}", .{err});
         return;
     };
-    HostPaths.root().copyFile(self.backing_file_path, HostPaths.root(), backup_file_path, Context.io, .{ .make_path = false, .replace = true }) catch |err| {
+    std.Io.Dir.cwd().copyFile(self.backing_file_path, std.Io.Dir.cwd(), backup_file_path, io, .{ .make_path = false, .replace = true }) catch |err| {
         log.err("Failed to backup VMU file '{s}': {t}", .{ backup_file_path, err });
     };
 }

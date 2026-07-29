@@ -6,7 +6,6 @@ const UpTo = @import("helpers").UpTo;
 const termcolor = @import("termcolor");
 const log = std.log.scoped(.dc);
 
-pub const HostPaths = @import("host_paths.zig");
 pub const Context = struct {
     pub var io: std.Io = std.Io.failing;
 };
@@ -51,8 +50,6 @@ pub const CableType = enum(u16) {
     RGB = 2,
     Composite = 3,
 };
-
-pub const ProductUID = @import("ProductUID.zig");
 
 pub const AICASync = enum { @"1 ARM Cycle", @"4 ARM Cycles", @"8 ARM Cycles", @"16 ARM Cycles", @"32 ARM Cycles", Sample };
 
@@ -137,7 +134,7 @@ pub const Dreamcast = struct {
     cpu: SH4,
     gpu: Holly = undefined,
     aica: AICA = undefined,
-    maple: MapleHost,
+    maple: MapleHost = .init,
     gdrom: GDROM = undefined,
     gdrom_hle: GDROM_HLE = .{}, // NOTE: Currently not serialized in save states. It is now less compatible than the LLE implementation.
 
@@ -170,13 +167,12 @@ pub const Dreamcast = struct {
 
     _dummy: [4]u8 align(32) = @splat(0), // FIXME: Dummy space for non-implemented features
 
-    pub fn create(allocator: std.mem.Allocator, io: std.Io) !*Dreamcast {
+    pub fn create(allocator: std.mem.Allocator, io: std.Io, boot_rom_path: []const u8) !*Dreamcast {
         Context.io = io;
 
         const dc = try allocator.create(Dreamcast);
         dc.* = Dreamcast{
             .cpu = try .init(allocator, dc),
-            .maple = try .init(allocator),
             .flash = try .init(allocator),
             .hardware_registers = try allocator.allocWithOptions(u8, 0x20_0000, .@"4", null), // FIXME: Huge waste of memory.
             ._allocator = allocator,
@@ -203,7 +199,7 @@ pub const Dreamcast = struct {
 
         errdefer dc.destroy();
 
-        dc.load_bios(Context.io, "dc_boot.bin") catch |err| {
+        dc.load_bios(io, boot_rom_path) catch |err| {
             switch (err) {
                 error.FileNotFound => return error.BiosNotFound,
                 else => return err,
@@ -240,7 +236,7 @@ pub const Dreamcast = struct {
         self.scheduled_events.deinit(self._allocator);
         self.sh4_jit.deinit();
         self.gdrom.deinit(Context.io);
-        self.maple.deinit();
+        self.maple.deinit(Context.io, self._allocator);
         self.aica.deinit();
         self.gpu.deinit();
         self.cpu.deinit();
@@ -307,29 +303,15 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_TFREM).* = 8;
     }
 
-    pub fn load_bios(self: *@This(), io: std.Io, boot_path: []const u8) !void {
-        if ((try HostPaths.data().readFile(io, boot_path, self.boot)).len != 0x200000)
+    fn load_bios(self: *@This(), io: std.Io, boot_path: []const u8) !void {
+        if ((try std.Io.Dir.cwd().readFile(io, boot_path, self.boot)).len != 0x200000)
             return error.InvalidBootROMSize;
     }
 
     pub const BiosConfig = struct { language: Language = .English, sound_mode: Flash.SystemConfigPayload.SoundMode = .Stereo, auto_start: Flash.SystemConfigPayload.AutoStart = .On };
 
-    pub fn load_flash(self: *@This(), io: std.Io, region: Region, bios_config: BiosConfig) !void {
-        // FIXME: User flash is sometimes corrupted. Always load default until I understand what's going on.
-        if ((try HostPaths.data().readFile(io, "dc_flash.bin", self.flash.data)).len != 0x20000) return error.InvalidFlashSize;
-
-        // var flash_file = std.fs.cwd().openFile(get_user_flash_path(), .{}) catch |err| f: {
-        //     if (err == error.FileNotFound) {
-        //         dc_log.info("Loading default flash ROM.", .{});
-        //         break :f std.fs.cwd().openFile(default_flash_path, .{}) catch |e| {
-        //             dc_log.err(termcolor.red("Failed to open default flash file at '{s}', error: {t}."), .{ default_flash_path, e });
-        //             return e;
-        //         };
-        //     } else {
-        //         dc_log.err(termcolor.red("Failed to open user flash file at '{s}', error: {t}."), .{ get_user_flash_path(), err });
-        //         return err;
-        //     }
-        // };
+    pub fn load_flash(self: *@This(), io: std.Io, path: []const u8, region: Region, bios_config: BiosConfig) !void {
+        if ((try std.Io.Dir.cwd().readFile(io, path, self.flash.data)).len != 0x20000) return error.InvalidFlashSize;
 
         // Some flash dumps floating around are missing some partition headers (not fully formatted, I guess).
         const PartitionHeader: []const u8 = "KATANA_FLASH____";

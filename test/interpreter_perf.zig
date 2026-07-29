@@ -32,11 +32,10 @@ pub const SaveStateHeader = extern struct {
 };
 
 pub fn load_state(dc: *Dreamcast, io: std.Io, path: []const u8) !void {
-    const file = try HostPaths.root().readFileAllocOptions(io, path, dc._allocator, .limited(32 * 1024 * 1024), .@"8", null);
+    const file = try std.Io.Dir.cwd().readFileAllocOptions(io, path, dc._allocator, .limited(32 * 1024 * 1024), .@"8", null);
     defer dc._allocator.free(file);
 
     const header = std.mem.bytesToValue(SaveStateHeader, file[0..@sizeOf(SaveStateHeader)]);
-    try header.validate();
     try header.validate();
 
     const compressed = file[@sizeOf(SaveStateHeader)..];
@@ -67,8 +66,15 @@ pub fn main(init: std.process.Init) !void {
 
     _ = args.skip();
 
+    const exe_path = try std.process.executableDirPathAlloc(io, allocator);
+    defer allocator.free(exe_path);
+    const boot_rom_path = try std.fs.path.join(allocator, &[_][]const u8{ exe_path, "data/dc_boot.bin" });
+    defer allocator.free(boot_rom_path);
+    const flash_path = try std.fs.path.join(allocator, &[_][]const u8{ exe_path, "data/dc_flash.bin" });
+    defer allocator.free(flash_path);
+
     while (args.next()) |game| {
-        var dc = try Dreamcast.create(allocator, io);
+        var dc = try Dreamcast.create(allocator, io, boot_rom_path);
         defer {
             dc.deinit();
             allocator.destroy(dc);
@@ -77,6 +83,7 @@ pub fn main(init: std.process.Init) !void {
         const save_state_path = args.next().?;
 
         dc.gdrom.disc = try .init(allocator, io, game);
+        try dc.load_flash(io, flash_path, dc.gdrom.disc.?.get_region(), .{});
         try load_state(dc, io, save_state_path);
         const start = std.Io.Timestamp.now(io, .awake);
         var cycles: u64 = 0;

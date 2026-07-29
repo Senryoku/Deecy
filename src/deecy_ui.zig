@@ -15,7 +15,7 @@ const ui_log = std.log.scoped(.ui);
 const nfd = @import("nfd");
 
 const Deecy = @import("deecy.zig");
-const HostPaths = Deecy.HostPaths;
+const host_paths = Deecy.host_paths;
 const DreamcastModule = @import("dreamcast");
 const MapleModule = DreamcastModule.Maple;
 const Disc = DreamcastModule.GDROM.Disc;
@@ -362,11 +362,11 @@ const GameInfoCache = struct {
     }
 
     fn get_path(allocator: std.mem.Allocator) ![]const u8 {
-        return try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_userdata_path(), "game_info_cache" });
+        return try std.fs.path.join(allocator, &[_][]const u8{ host_paths.get_userdata_path(), "game_info_cache" });
     }
 
     pub fn load(self: *@This(), io: std.Io) !void {
-        const data = try HostPaths.root().readFileAlloc(io, self._path, self._arena.allocator(), .unlimited);
+        const data = try host_paths.root().readFileAlloc(io, self._path, self._arena.allocator(), .unlimited);
         defer self._arena.allocator().free(data);
         try self.deserialize(data);
     }
@@ -396,7 +396,7 @@ const GameInfoCache = struct {
     }
 
     pub fn save_to_disk(self: *@This(), io: std.Io) !void {
-        var file = try HostPaths.root().createFile(io, self._path, .{});
+        var file = try host_paths.root().createFile(io, self._path, .{});
         defer file.close(io);
 
         var allocating_writer = std.Io.Writer.Allocating.init(self._arena.allocator());
@@ -508,7 +508,7 @@ pub fn refresh_games(self: *@This()) !void {
             var tmp_disc_files: std.ArrayList(GameFile) = .empty;
             errdefer tmp_disc_files.deinit(self.allocator);
 
-            var dir = HostPaths.root().openDir(self.deecy.io, dir_path, .{ .iterate = true }) catch |err| {
+            var dir = host_paths.root().openDir(self.deecy.io, dir_path, .{ .iterate = true }) catch |err| {
                 ui_log.err(termcolor.red("Failed to open game directory: {t}"), .{err});
                 return;
             };
@@ -622,7 +622,7 @@ pub fn draw(self: *@This()) !void {
                 if (zgui.menuItem("File", .{ .selected = d.config.log_output == .File }))
                     d.config.log_output = .File;
                 if (zgui.isItemHovered(.{ .for_tooltip = true }) and zgui.beginTooltip()) {
-                    const path = try custom_log.get_path(d._allocator);
+                    const path = try custom_log.file.path(d._allocator);
                     defer d._allocator.free(path);
                     zgui.text("Logs will be saved in '{s}'", .{path});
                     zgui.endTooltip();
@@ -845,8 +845,11 @@ pub fn draw(self: *@This()) !void {
                             flash_updated = zgui.comboFromEnum("Sound Mode", &d.config.bios_config.sound_mode) or flash_updated;
                             flash_updated = zgui.comboFromEnum("Auto Start", &d.config.bios_config.auto_start) or flash_updated;
                         }
-                        if (flash_updated)
-                            try d.dc.load_flash(d.io, d.config.region.to_dreamcast(), d.config.bios_config);
+                        if (flash_updated) {
+                            const flash_path = try std.fs.path.join(d._allocator, &[_][]const u8{ host_paths.get_data_path(), "dc_flash.bin" });
+                            defer d._allocator.free(flash_path);
+                            try d.dc.load_flash(d.io, flash_path, d.config.region.to_dreamcast(), d.config.bios_config);
+                        }
                     }
                     {
                         zgui.separatorText("Rewind");

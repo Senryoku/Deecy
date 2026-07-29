@@ -145,9 +145,9 @@ const Peripheral = union(enum) {
     VibrationPack: VibrationPack,
     Microphone: Microphone,
 
-    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *@This(), io: std.Io, allocator: std.mem.Allocator) void {
         switch (self.*) {
-            .VMU => |*v| v.deinit(allocator),
+            .VMU => |*v| v.deinit(io, allocator),
             .Microphone => |*m| m.deinit(),
             inline else => {},
         }
@@ -201,11 +201,11 @@ const EmulatedPort = struct {
     main: Peripheral,
     subperipherals: [5]?Peripheral = @splat(null),
 
-    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-        self.main.deinit(allocator);
+    pub fn deinit(self: *@This(), io: std.Io, allocator: std.mem.Allocator) void {
+        self.main.deinit(io, allocator);
         for (&self.subperipherals) |*sub| {
             if (sub.*) |*p|
-                p.deinit(allocator);
+                p.deinit(io, allocator);
         }
         self.subperipherals = @splat(null);
     }
@@ -363,9 +363,9 @@ pub const MaplePort = union(enum) {
     emulated: EmulatedPort,
     physical: struct { physical_port: u8 },
 
-    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *@This(), io: std.Io, allocator: std.mem.Allocator) void {
         switch (self.*) {
-            .emulated => |*e| e.deinit(allocator),
+            .emulated => |*e| e.deinit(io, allocator),
             else => {},
         }
     }
@@ -385,14 +385,10 @@ pub const MaplePort = union(enum) {
 pub const MapleHost = struct {
     ports: [4]MaplePort = @splat(.none),
 
-    _allocator: std.mem.Allocator,
+    pub const init: @This() = .{};
 
-    pub fn init(allocator: std.mem.Allocator) !MapleHost {
-        return .{ ._allocator = allocator };
-    }
-
-    pub fn deinit(self: *MapleHost) void {
-        for (&self.ports) |*port| port.deinit(self._allocator);
+    pub fn deinit(self: *@This(), io: std.Io, allocator: std.mem.Allocator) void {
+        for (&self.ports) |*port| port.deinit(io, allocator);
     }
 
     pub fn transfer(self: *MapleHost, dc: *Dreamcast, data: [*]u32) void {
@@ -432,8 +428,8 @@ pub const MapleHost = struct {
     // Not writing to disc after every single VMU write is not only wasteful,
     // it also make backups useless (a backup with half an update is useless).
     // VMU will also flush themselves on exit if needed.
-    pub fn flush_vmus(self: *@This()) void {
-        const now = std.Io.Clock.awake.now(Context.io).toSeconds();
+    pub fn flush_vmus(self: *@This(), io: std.Io) void {
+        const now = std.Io.Clock.awake.now(io).toSeconds();
         for (&self.ports) |*port| {
             switch (port.*) {
                 .emulated => |*e| {
@@ -443,7 +439,7 @@ pub const MapleHost = struct {
                                 .VMU => |*vmu| {
                                     if (vmu.last_unsaved_change) |last_unsaved_change| {
                                         if (now - last_unsaved_change > 5)
-                                            vmu.save();
+                                            vmu.save(io);
                                     }
                                 },
                                 else => {},
