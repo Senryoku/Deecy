@@ -1,11 +1,7 @@
 const std = @import("std");
-const termcolor = @import("termcolor");
-
 const log = std.log.scoped(.maple);
 
-const DreamcastModule = @import("dreamcast.zig");
-const Dreamcast = DreamcastModule.Dreamcast;
-const Context = DreamcastModule.Context;
+const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
 // Structure of a transfer:
 //   Instruction
@@ -168,7 +164,7 @@ const Peripheral = union(enum) {
         return switch (self.*) {
             inline .VMU, .VibrationPack => |*v| v.block_read(function, location.partition, location.block_num, location.phase, dest),
             else => s: {
-                log.err(termcolor.red("Unimplemented BlockRead for target: {t}"), .{self.tag()});
+                log.err("Unimplemented BlockRead for target: {t}", .{self.tag()});
                 break :s 0;
             },
         };
@@ -177,7 +173,7 @@ const Peripheral = union(enum) {
     pub fn block_write(self: *@This(), function: u32, location: BlockLocation, data: []const u32) u8 {
         switch (self.*) {
             inline .VMU, .VibrationPack => |*v| return v.block_write(function, location.partition, location.block_num, location.phase, data),
-            else => log.warn(termcolor.yellow("BlockWrite Unimplemented for target: {t}"), .{self.tag()}),
+            else => log.warn("BlockWrite Unimplemented for target: {t}", .{self.tag()}),
         }
         return 0;
     }
@@ -415,7 +411,7 @@ pub const MapleHost = struct {
                     idx += instr.transfer_length + 2;
                 },
                 .NOP, .RESET => {},
-                else => log.warn(termcolor.yellow("[Maple] Unimplemented pattern: {}. Ignoring it, hopefully the payload is empty :D"), .{instr.pattern}),
+                else => log.warn("Unimplemented pattern: {}. Ignoring it, hopefully the payload is empty :D", .{instr.pattern}),
             }
 
             if (instr.end_flag == 1)

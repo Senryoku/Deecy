@@ -173,7 +173,7 @@ fn load_or_init(self: *@This(), io: std.Io) !void {
             fat_entries[FATBlock] = FATValue.DataEnd;
             fat_entries[SystemBlock] = FATValue.DataEnd; // Marks the system area block.
         }
-        self.last_unsaved_change = std.Io.Clock.awake.now(io).toSeconds();
+        self.last_unsaved_change = std.Io.Clock.awake.now(Context.io).toSeconds(); // NOTE: Using Context.io here for consistency.
     };
 }
 
