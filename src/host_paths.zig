@@ -18,10 +18,8 @@ pub fn init(io: std.Io, allocator: std.mem.Allocator, environ: std.process.Envir
         };
         defer allocator.free(app_data_dir);
 
-        const deecy_folder = try std.fs.path.join(allocator, &[_][]const u8{ app_data_dir, "Deecy" });
-        defer allocator.free(deecy_folder);
-
-        break :dir deecy_folder;
+        var fixed_allocator = std.heap.FixedBufferAllocator.init(&path_buffer);
+        break :dir try std.fs.path.join(fixed_allocator.allocator(), &[_][]const u8{ app_data_dir, "Deecy" });
     } else dir: {
         const path_len = try std.process.executableDirPath(io, &path_buffer);
         break :dir path_buffer[0..path_len];
