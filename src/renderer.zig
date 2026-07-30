@@ -1808,7 +1808,9 @@ pub const Renderer = struct {
             // TODO: Same thing for line double?
             // FIXME: Because scaling isn't implemented (scaling up/down after rendering), output_resolution must be scaled as well.
             self.output_resolution.width *= scale_x;
-            self.output_resolution.height *= scale_y;
+            // Ignore "Flicker-free Interlacing" type B (e.g. Mr Driller)
+            if (!(self.write_back_parameters.scaler_ctl.interlace and self.write_back_parameters.scaler_ctl.vertical_scale_factor == 0x0800))
+                self.output_resolution.height *= scale_y;
             // FIXME: Hack for games rendering at 1280px wide before horizontal scaling.
             //        I don't think it's worth the effort to support this rendering mode when we have proper upscaling anyway,
             //        and because very few games use it afaik (Wacky Races is one of them).
