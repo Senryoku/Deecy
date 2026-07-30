@@ -474,7 +474,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             const was_running = d.running;
             if (was_running)
                 d.pause();
-            var file = try std.Io.Dir.cwd().createFile(d.io, "logs/dc_dump.bin", .{});
+            var file = try Deecy.host_paths.root().createFile(d.io, "logs/dc_dump.bin", .{});
             defer file.close(d.io);
             const buff = try self._allocator.alloc(u8, 8192);
             var file_writer = file.writer(d.io, buff);

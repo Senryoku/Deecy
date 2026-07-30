@@ -54,16 +54,23 @@ pub fn load_state(dc: *Dreamcast, io: std.Io, path: []const u8) !void {
 
 // Expects pairs of game path and save state path as arguments
 pub fn main(init: std.process.Init) !void {
-    var cycles_target: u64 = 10 * 200_000_000;
-    var total_time: i64 = 0;
-
     var allocator = init.gpa;
     const io = init.io;
+
+    var cycles_target: u64 = 10 * 200_000_000;
+    var total_time: i64 = 0;
 
     var args = try init.minimal.args.iterateAllocator(allocator);
     defer args.deinit();
 
     _ = args.skip();
+
+    const exe_path = try std.process.executableDirPathAlloc(io, allocator);
+    defer allocator.free(exe_path);
+    const boot_rom_path = try std.fs.path.join(allocator, &[_][]const u8{ exe_path, "data/dc_boot.bin" });
+    defer allocator.free(boot_rom_path);
+    const flash_path = try std.fs.path.join(allocator, &[_][]const u8{ exe_path, "data/dc_flash.bin" });
+    defer allocator.free(flash_path);
 
     while (args.next()) |game| {
         if (std.mem.startsWith(u8, game, "-")) {
@@ -77,7 +84,8 @@ pub fn main(init: std.process.Init) !void {
             continue;
         }
 
-        var dc = try Dreamcast.create(allocator, io);
+        var dc = try Dreamcast.create(allocator, io, boot_rom_path);
+
         defer {
             dc.deinit();
             allocator.destroy(dc);
@@ -86,6 +94,7 @@ pub fn main(init: std.process.Init) !void {
         const save_state_path = args.next().?;
 
         dc.gdrom.disc = try .init(allocator, io, game);
+        try dc.load_flash(io, flash_path, dc.gdrom.disc.?.get_region(), .{});
         try load_state(dc, io, save_state_path);
         const start = std.Io.Timestamp.now(io, .awake);
         var cycles: u64 = 0;

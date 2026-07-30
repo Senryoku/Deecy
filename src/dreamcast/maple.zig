@@ -1,11 +1,7 @@
 const std = @import("std");
-const termcolor = @import("termcolor");
-
 const log = std.log.scoped(.maple);
 
-const DreamcastModule = @import("dreamcast.zig");
-const Dreamcast = DreamcastModule.Dreamcast;
-const Context = DreamcastModule.Context;
+const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
 // Structure of a transfer:
 //   Instruction
@@ -145,9 +141,9 @@ const Peripheral = union(enum) {
     VibrationPack: VibrationPack,
     Microphone: Microphone,
 
-    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *@This(), io: std.Io, allocator: std.mem.Allocator) void {
         switch (self.*) {
-            .VMU => |*v| v.deinit(allocator),
+            .VMU => |*v| v.deinit(io, allocator),
             .Microphone => |*m| m.deinit(),
             inline else => {},
         }
@@ -168,7 +164,7 @@ const Peripheral = union(enum) {
         return switch (self.*) {
             inline .VMU, .VibrationPack => |*v| v.block_read(function, location.partition, location.block_num, location.phase, dest),
             else => s: {
-                log.err(termcolor.red("Unimplemented BlockRead for target: {t}"), .{self.tag()});
+                log.err("Unimplemented BlockRead for target: {t}", .{self.tag()});
                 break :s 0;
             },
         };
@@ -177,7 +173,7 @@ const Peripheral = union(enum) {
     pub fn block_write(self: *@This(), function: u32, location: BlockLocation, data: []const u32) u8 {
         switch (self.*) {
             inline .VMU, .VibrationPack => |*v| return v.block_write(function, location.partition, location.block_num, location.phase, data),
-            else => log.warn(termcolor.yellow("BlockWrite Unimplemented for target: {t}"), .{self.tag()}),
+            else => log.warn("BlockWrite Unimplemented for target: {t}", .{self.tag()}),
         }
         return 0;
     }
@@ -201,11 +197,11 @@ const EmulatedPort = struct {
     main: Peripheral,
     subperipherals: [5]?Peripheral = @splat(null),
 
-    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-        self.main.deinit(allocator);
+    pub fn deinit(self: *@This(), io: std.Io, allocator: std.mem.Allocator) void {
+        self.main.deinit(io, allocator);
         for (&self.subperipherals) |*sub| {
             if (sub.*) |*p|
-                p.deinit(allocator);
+                p.deinit(io, allocator);
         }
         self.subperipherals = @splat(null);
     }
@@ -363,9 +359,9 @@ pub const MaplePort = union(enum) {
     emulated: EmulatedPort,
     physical: struct { physical_port: u8 },
 
-    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *@This(), io: std.Io, allocator: std.mem.Allocator) void {
         switch (self.*) {
-            .emulated => |*e| e.deinit(allocator),
+            .emulated => |*e| e.deinit(io, allocator),
             else => {},
         }
     }
@@ -385,14 +381,10 @@ pub const MaplePort = union(enum) {
 pub const MapleHost = struct {
     ports: [4]MaplePort = @splat(.none),
 
-    _allocator: std.mem.Allocator,
+    pub const init: @This() = .{};
 
-    pub fn init(allocator: std.mem.Allocator) !MapleHost {
-        return .{ ._allocator = allocator };
-    }
-
-    pub fn deinit(self: *MapleHost) void {
-        for (&self.ports) |*port| port.deinit(self._allocator);
+    pub fn deinit(self: *@This(), io: std.Io, allocator: std.mem.Allocator) void {
+        for (&self.ports) |*port| port.deinit(io, allocator);
     }
 
     pub fn transfer(self: *MapleHost, dc: *Dreamcast, data: [*]u32) void {
@@ -419,7 +411,7 @@ pub const MapleHost = struct {
                     idx += instr.transfer_length + 2;
                 },
                 .NOP, .RESET => {},
-                else => log.warn(termcolor.yellow("[Maple] Unimplemented pattern: {}. Ignoring it, hopefully the payload is empty :D"), .{instr.pattern}),
+                else => log.warn("Unimplemented pattern: {}. Ignoring it, hopefully the payload is empty :D", .{instr.pattern}),
             }
 
             if (instr.end_flag == 1)
@@ -432,8 +424,8 @@ pub const MapleHost = struct {
     // Not writing to disc after every single VMU write is not only wasteful,
     // it also make backups useless (a backup with half an update is useless).
     // VMU will also flush themselves on exit if needed.
-    pub fn flush_vmus(self: *@This()) void {
-        const now = std.Io.Clock.awake.now(Context.io).toSeconds();
+    pub fn flush_vmus(self: *@This(), io: std.Io) void {
+        const now = std.Io.Clock.awake.now(io).toSeconds();
         for (&self.ports) |*port| {
             switch (port.*) {
                 .emulated => |*e| {
@@ -443,7 +435,7 @@ pub const MapleHost = struct {
                                 .VMU => |*vmu| {
                                     if (vmu.last_unsaved_change) |last_unsaved_change| {
                                         if (now - last_unsaved_change > 5)
-                                            vmu.save();
+                                            vmu.save(io);
                                     }
                                 },
                                 else => {},

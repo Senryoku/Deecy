@@ -3,7 +3,7 @@ const zglfw = @import("zglfw");
 
 const termcolor = @import("termcolor");
 const Deecy = @import("../deecy.zig");
-const HostPaths = @import("dreamcast").HostPaths;
+const host_paths = Deecy.host_paths;
 
 const log = std.log.scoped(.deecy);
 
@@ -228,7 +228,7 @@ fn serialize(self: @This(), allocator: std.mem.Allocator, io: std.Io) !void {
     const config_path = try get_config_path(allocator);
     defer allocator.free(config_path);
 
-    var config_file = try std.Io.Dir.cwd().createFile(io, config_path, .{});
+    var config_file = try host_paths.root().createFile(io, config_path, .{});
     defer config_file.close(io);
 
     const buffer = try allocator.alloc(u8, 8192);
@@ -242,7 +242,7 @@ fn deserialize(self: *@This(), allocator: std.mem.Allocator, io: std.Io) !void {
     const config_path = try get_config_path(allocator);
     defer allocator.free(config_path);
 
-    const data = try std.Io.Dir.cwd().readFileAllocOptions(io, config_path, allocator, .limited(32 * 1024 * 1024), .@"8", 0);
+    const data = try host_paths.root().readFileAllocOptions(io, config_path, allocator, .limited(32 * 1024 * 1024), .@"8", 0);
     defer allocator.free(data);
 
     var diagnostics: std.zon.parse.Diagnostics = .{};
@@ -260,7 +260,7 @@ fn deserialize(self: *@This(), allocator: std.mem.Allocator, io: std.Io) !void {
 }
 
 fn get_config_path(allocator: std.mem.Allocator) ![]const u8 {
-    return try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_userdata_path(), "shortcuts.zon" });
+    return try std.fs.path.join(allocator, &[_][]const u8{ host_paths.get_userdata_path(), "shortcuts.zon" });
 }
 
 fn get_action(name: Action.Name) Action {

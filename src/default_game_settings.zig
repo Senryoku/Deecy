@@ -41,5 +41,4 @@ const builtin = @import("builtin");
 const cheats = @import("cheats.zig");
 const GameSettings = @import("GameSettings.zig");
 const Partial = @import("helpers").Partial;
-const HostPaths = @import("dreamcast").HostPaths;
-pub const ProductUID = @import("dreamcast").ProductUID;
+pub const ProductUID = @import("ProductUID.zig");

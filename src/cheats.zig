@@ -1,10 +1,3 @@
-const std = @import("std");
-const log = std.log.scoped(.cheats);
-
-const HostPaths = @import("dreamcast").HostPaths;
-const Default = @import("default_game_settings.zig");
-const codebreaker = @import("codebreaker.zig");
-
 pub const Condition = enum {
     @"=",
     @"!=",
@@ -52,20 +45,11 @@ pub const Cheat = struct {
     }
 };
 
-/// Caller owns the returned memory
-pub fn path(allocator: std.mem.Allocator, uid: Default.ProductUID) ![]const u8 {
-    const game_dir = try HostPaths.userdata_game_directory(allocator, uid);
-    defer allocator.free(game_dir);
-    return try std.fs.path.join(allocator, &[_][]const u8{ game_dir, "cheats.zon" });
-}
-
 pub fn save(allocator: std.mem.Allocator, io: std.Io, product_uid: Default.ProductUID, cheats: []const Cheat) !void {
-    const cheat_path = try path(allocator, product_uid);
-    defer allocator.free(cheat_path);
+    const dir = try host_paths.game_directory(io, allocator, product_uid);
+    defer dir.close(io);
 
-    if (std.fs.path.dirname(cheat_path)) |dir| try std.Io.Dir.cwd().createDirPath(io, dir);
-
-    const file = try std.Io.Dir.cwd().createFile(io, cheat_path, .{});
+    const file = try dir.createFile(io, CheatsFileName, .{});
     defer file.close(io);
     const buffer = try allocator.alloc(u8, 8192);
     defer allocator.free(buffer);
@@ -76,10 +60,10 @@ pub fn save(allocator: std.mem.Allocator, io: std.Io, product_uid: Default.Produ
 
 /// Caller owns the returned memory
 pub fn load(allocator: std.mem.Allocator, io: std.Io, uid: Default.ProductUID) !?[]Cheat {
-    const cheat_path = try path(allocator, uid);
-    defer allocator.free(cheat_path);
+    const dir = try host_paths.game_directory(io, allocator, uid);
+    defer dir.close(io);
 
-    const cheats_str = std.Io.Dir.cwd().readFileAllocOptions(io, cheat_path, allocator, .limited(8 * 1024 * 1024), .@"8", 0) catch |err| {
+    const cheats_str = dir.readFileAllocOptions(io, CheatsFileName, allocator, .limited(8 * 1024 * 1024), .@"8", 0) catch |err| {
         switch (err) {
             error.FileNotFound => {
                 // Load default cheats.
@@ -105,8 +89,17 @@ pub fn load(allocator: std.mem.Allocator, io: std.Io, uid: Default.ProductUID) !
     defer allocator.free(cheats_str);
 
     const zon = std.zon.parse.fromSliceAlloc([]Cheat, allocator, cheats_str, null, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
-        log.err("Failed to parse cheats file '{s}': {t}.", .{ cheat_path, err });
+        log.err("Failed to parse cheats file for {f}: {t}.", .{ uid, err });
         return &.{};
     };
     return zon;
 }
+
+const CheatsFileName = "cheats.zon";
+
+const std = @import("std");
+const log = std.log.scoped(.cheats);
+
+const host_paths = @import("host_paths.zig");
+const Default = @import("default_game_settings.zig");
+const codebreaker = @import("codebreaker.zig");

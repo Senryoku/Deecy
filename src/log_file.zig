@@ -1,5 +1,5 @@
 const std = @import("std");
-const HostPaths = @import("dreamcast").HostPaths;
+const host_paths = @import("host_paths.zig");
 
 pub var writer: *std.Io.Writer = undefined;
 
@@ -12,15 +12,13 @@ var _opened: bool = false;
 var _io: std.Io = undefined;
 
 /// Noop if already open
-pub fn open(allocator: std.mem.Allocator, io: std.Io) !void {
+pub fn open(io: std.Io) !void {
     if (!opened()) {
         _io = io;
 
         mutex.lockUncancelable(io);
         defer mutex.unlock(io);
-        const path = try get_path(allocator);
-        defer allocator.free(path);
-        file = try std.Io.Dir.cwd().createFile(io, path, .{});
+        file = try host_paths.userdata().createFile(io, "deecy.log", .{});
         file_writer = file.writer(io, &buffer);
         writer = &file_writer.interface;
         _opened = true;
@@ -52,6 +50,7 @@ pub fn unlock() void {
     if (opened()) mutex.unlock(_io);
 }
 
-pub fn get_path(allocator: std.mem.Allocator) ![]const u8 {
-    return std.fs.path.join(allocator, &.{ HostPaths.get_userdata_path(), "deecy.log" });
+/// Caller owns the returned memory.
+pub fn path(allocator: std.mem.Allocator) ![]const u8 {
+    return std.fs.path.join(allocator, &.{ host_paths.get_userdata_path(), "deecy.log" });
 }

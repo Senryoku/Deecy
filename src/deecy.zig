@@ -29,8 +29,6 @@ const DreamcastModule = @import("dreamcast");
 const Dreamcast = DreamcastModule.Dreamcast;
 const AICA = DreamcastModule.AICAModule.AICA;
 const Disc = DreamcastModule.GDROM.Disc;
-pub const HostPaths = DreamcastModule.HostPaths;
-const ProductUID = DreamcastModule.ProductUID;
 const PreciseSleep = @import("precise_sleep.zig");
 
 pub const RendererModule = @import("./renderer.zig");
@@ -43,6 +41,8 @@ const DebugUI = @import("./debug_ui.zig");
 const Shortcuts = @import("./ui/shortcuts.zig");
 const ELF = @import("elf.zig");
 
+pub const host_paths = @import("host_paths.zig");
+const ProductUID = @import("ProductUID.zig");
 const Cheats = @import("./cheats.zig");
 const GameSettings = @import("./GameSettings.zig");
 
@@ -162,7 +162,7 @@ const DefaultFont = @embedFile(assets_dir ++ "fonts/Hack-Regular.ttf");
 const IconFont = @embedFile(assets_dir ++ "fonts/Font Awesome 7 Free-Solid-900.otf");
 
 fn file_exists(io: std.Io, path: []const u8) !bool {
-    std.Io.Dir.cwd().access(io, path, .{}) catch |err| switch (err) {
+    host_paths.root().access(io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return false,
         else => return err,
     };
@@ -468,16 +468,11 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
     const start_time = std.Io.Clock.awake.now(io);
     defer deecy_log.info("Deecy initialized in {f}", .{start_time.durationTo(std.Io.Clock.awake.now(io))});
 
-    std.Io.Dir.cwd().createDirPath(io, HostPaths.get_userdata_path()) catch |err| switch (err) {
-        error.PathAlreadyExists => {},
-        else => return err,
-    };
-
     // Load user config
     const config: Configuration = config: {
-        const config_path = try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_userdata_path(), ConfigFile });
+        const config_path = try std.fs.path.join(allocator, &[_][]const u8{ host_paths.get_userdata_path(), ConfigFile });
         defer allocator.free(config_path);
-        if (std.Io.Dir.cwd().readFileAllocOptions(io, config_path, allocator, .limited(1024 * 1024), .@"8", 0)) |conf_str| {
+        if (host_paths.root().readFileAllocOptions(io, config_path, allocator, .limited(1024 * 1024), .@"8", 0)) |conf_str| {
             defer allocator.free(conf_str);
             @setEvalBranchQuota(2000);
             const zon = std.zon.parse.fromSliceAlloc(helpers.Partial(Configuration), allocator, conf_str, null, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
@@ -631,28 +626,34 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
     {
         const dc_init_time = std.Io.Clock.awake.now(self.io);
         defer deecy_log.info("Dreamcast initialized in {f}", .{dc_init_time.durationTo(std.Io.Clock.awake.now(self.io))});
+
+        const boot_rom_path = try std.fs.path.join(self._allocator, &[_][]const u8{ host_paths.get_data_path(), "dc_boot.bin" });
+        defer self._allocator.free(boot_rom_path);
+        const flash_path = try std.fs.path.join(self._allocator, &[_][]const u8{ host_paths.get_data_path(), "dc_flash.bin" });
+        defer self._allocator.free(flash_path);
+
         self.dc = while (true) {
-            if (Dreamcast.create(allocator, self.io)) |dc| break dc else |err| {
+            if (Dreamcast.create(allocator, self.io, boot_rom_path)) |dc| break dc else |err| {
                 switch (err) {
                     error.BiosNotFound => if (try self.display_missing_file_error("dc_boot.bin", 2 * 1024 * 1024,
                         \\Missing BIOS.
                         \\Please copy your bios file as 'dc_boot.bin' to '{s}'.
                         \\
                         \\(Error: {t})
-                    , .{ HostPaths.get_data_path(), err }) == .retry) continue,
+                    , .{ host_paths.get_data_path(), err }) == .retry) continue,
                     else => self.display_unrecoverable_error("Error initializing Dreamcast: {t}", .{err}),
                 }
                 return err;
             }
         };
         while (true) {
-            self.dc.load_flash(self.io, config.region.to_dreamcast(), config.bios_config) catch |err| {
+            self.dc.load_flash(self.io, flash_path, config.region.to_dreamcast(), config.bios_config) catch |err| {
                 if (try self.display_missing_file_error("dc_flash.bin", 128 * 1024,
                     \\Missing Flash.
                     \\Please copy your flash file as 'dc_flash.bin' to '{s}'.
                     \\ 
                     \\(Error: {t})
-                , .{ HostPaths.get_data_path(), err }) == .retry) continue;
+                , .{ host_paths.get_data_path(), err }) == .retry) continue;
                 return err;
             };
             break;
@@ -903,7 +904,7 @@ pub fn deinit_peripheral(self: *@This(), controller_idx: u8, slot: u8) void {
             if (e.subperipherals[slot]) |*peripheral| {
                 if (slot == 0 and peripheral.* == .VMU)
                     self.ui.vmu_displays[controller_idx].valid = false;
-                peripheral.deinit(self._allocator);
+                peripheral.deinit(self.io, self._allocator);
             }
             e.subperipherals[slot] = null;
         },
@@ -962,7 +963,7 @@ pub fn init_peripheral(self: *@This(), port: u8, slot: u8) !void {
     switch (self.config.controllers[port].subperipherals[slot]) {
         .None => {},
         .VMU => |vmu| {
-            const vmu_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), vmu.filename });
+            const vmu_path = try std.fs.path.join(self._allocator, &[_][]const u8{ host_paths.get_userdata_path(), vmu.filename });
             defer self._allocator.free(vmu_path);
             try self.load_vmu(port, slot, vmu_path);
         },
@@ -987,7 +988,7 @@ pub fn init_peripheral(self: *@This(), port: u8, slot: u8) !void {
 
 pub fn load_per_game_vmu(self: *@This()) !void {
     if (self.dc.gdrom.disc != null) {
-        const game_dir = try self.userdata_game_directory();
+        const game_dir = try self.game_directory_path();
         defer self._allocator.free(game_dir);
         const vmu_path = try std.fs.path.join(self._allocator, &[_][]const u8{ game_dir, "vmu_0.bin" });
         defer self._allocator.free(vmu_path);
@@ -1005,7 +1006,7 @@ pub fn load_vmu(self: *@This(), port: u8, slot: u8, vmu_path: []const u8) !void 
 
     switch (self.dc.maple.ports[port]) {
         .emulated => |*e| {
-            e.subperipherals[slot] = .{ .VMU = try .init(self._allocator, vmu_path) };
+            e.subperipherals[slot] = .{ .VMU = try .init(self.io, self._allocator, vmu_path) };
             if (slot == 0) {
                 e.subperipherals[slot].?.VMU.on_screen_update = .{ .function = @ptrCast(&switch (port) {
                     inline 0, 1, 2, 3 => |pidx| UI.vmu_screen_callback(pidx).callback,
@@ -1062,7 +1063,7 @@ pub fn enable_port(self: *@This(), port: u8, value: bool) !void {
         }
     } else {
         self.ui.vmu_displays[port].valid = false;
-        self.dc.maple.ports[port].deinit(self._allocator);
+        self.dc.maple.ports[port].deinit(self.io, self._allocator);
         self.dc.maple.ports[port] = .none;
     }
     config.enabled = value;
@@ -1097,7 +1098,7 @@ pub fn stop(self: *@This()) !void {
 pub fn update(self: *@This(), delta_time: f32) void {
     self.update_rumble(delta_time);
     self.poll_controllers();
-    self.dc.maple.flush_vmus();
+    self.dc.maple.flush_vmus(self.io);
     if (self._stop_request) {
         self.pause();
         self._stop_request = false;
@@ -1377,7 +1378,9 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
 
     deecy_log.info("Using settings: Region={t}, Video Cable={t}, Bios Emulation={t}", .{ region, video_cable, bios_emulation });
 
-    self.dc.load_flash(self.io, region, self.config.bios_config) catch |err| {
+    const flash_path = try std.fs.path.join(self._allocator, &[_][]const u8{ host_paths.get_data_path(), "dc_flash.bin" });
+    defer self._allocator.free(flash_path);
+    self.dc.load_flash(self.io, flash_path, region, self.config.bios_config) catch |err| {
         switch (err) {
             error.FileNotFound => return error.MissingFlash,
             else => return err,
@@ -1528,13 +1531,13 @@ pub fn product_uid(self: *const @This()) ProductUID {
 
 /// Game specific sub directory name (for VMUs, save states...)
 /// Caller owns the returned string.
-fn userdata_game_directory(self: *const @This()) ![]const u8 {
-    return HostPaths.userdata_game_directory(self._allocator, self.product_uid());
+fn game_directory_path(self: *const @This()) ![]const u8 {
+    return host_paths.game_directory_path(self._allocator, self.product_uid());
 }
 
 /// Caller owns the returned string
 fn save_state_path(self: *const @This(), index: usize) ![]const u8 {
-    const game_dir = try self.userdata_game_directory();
+    const game_dir = try self.game_directory_path();
     defer self._allocator.free(game_dir);
     var buf: [32]u8 = undefined;
     const file_name = try std.fmt.bufPrint(&buf, "save_{d}.sav", .{index});
@@ -1663,7 +1666,7 @@ pub fn pause(self: *@This()) void {
             self._dc_thread = null;
         }
         if (self.audio_input) |ai| ai.device.stop() catch |err| deecy_log.err(termcolor.red("Failed to stop audio device: {}"), .{err});
-        self.dc.maple.flush_vmus();
+        self.dc.maple.flush_vmus(self.io);
 
         if (self.config.rewind.enabled) {
             if (self.renderer.render_request) |*rr|
@@ -1923,8 +1926,6 @@ fn display_missing_file_error(self: *@This(), filename: []const u8, expected_siz
             }
             zgui.sameLine(.{});
             if (zgui.button(UI.Icons.Folder ++ " Open folder", .{})) {
-                const absolute_path = try std.Io.Dir.cwd().realPathFileAlloc(self.io, HostPaths.get_data_path(), self._allocator);
-                defer self._allocator.free(absolute_path);
                 var file_explorer = try std.process.spawn(
                     self.io,
                     .{
@@ -1933,7 +1934,7 @@ fn display_missing_file_error(self: *@This(), filename: []const u8, expected_siz
                             .linux => "xdg-open",
                             .macos => "open",
                             else => @compileError("Unsupported OS"),
-                        }, absolute_path },
+                        }, host_paths.get_data_path() },
                     },
                 );
                 _ = try file_explorer.wait(self.io);
@@ -1964,9 +1965,7 @@ fn copy_file(io: std.Io, filename: []const u8, expected_size: ?usize) !bool {
             const stat = try std.Io.Dir.cwd().statFile(io, path, .{});
             if (es != stat.size) return error.@"Unexpected File Size";
         }
-        const dest_dir = try std.Io.Dir.cwd().openDir(io, HostPaths.get_data_path(), .{});
-        defer dest_dir.close(io);
-        try std.Io.Dir.cwd().copyFile(path, dest_dir, filename, io, .{});
+        try host_paths.root().copyFile(path, host_paths.data(), filename, io, .{});
         return true;
     }
 
@@ -2087,12 +2086,12 @@ fn save_screenshot_impl(self: *const @This()) !void {
         day_seconds.getSecondsIntoMinute(),
     });
     defer self._allocator.free(filepath);
-    HostPaths.safe_path(filepath);
+    host_paths.safe_path(filepath);
 
     // Make sure the directory exists.
     if (std.fs.path.dirname(filepath)) |dir|
-        try std.Io.Dir.cwd().createDirPath(self.io, dir);
-    var file = try std.Io.Dir.cwd().createFile(self.io, filepath, .{});
+        try host_paths.root().createDirPath(self.io, dir);
+    var file = try host_paths.root().createFile(self.io, filepath, .{});
     defer file.close(self.io);
 
     var buffer: [1024]u8 = undefined;
@@ -2193,9 +2192,9 @@ fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array
     defer self._allocator.free(save_slot_path);
 
     if (std.fs.path.dirname(save_slot_path)) |dirname|
-        try std.Io.Dir.cwd().createDirPath(self.io, dirname);
+        try host_paths.root().createDirPath(self.io, dirname);
 
-    var file = try std.Io.Dir.cwd().createFile(self.io, save_slot_path, .{});
+    var file = try host_paths.root().createFile(self.io, save_slot_path, .{});
     defer file.close(self.io);
     var buffer: [1024]u8 = undefined;
     var writer = file.writer(self.io, &buffer);
@@ -2227,7 +2226,7 @@ pub fn load_state(self: *@This(), index: usize) !void {
 
     const start_time = std.Io.Timestamp.now(self.io, .awake);
 
-    const file = try std.Io.Dir.cwd().readFileAllocOptions(self.io, save_slot_path, self._allocator, .limited(32 * 1024 * 1024), .@"8", null);
+    const file = try host_paths.root().readFileAllocOptions(self.io, save_slot_path, self._allocator, .limited(32 * 1024 * 1024), .@"8", null);
     defer self._allocator.free(file);
 
     const header = std.mem.bytesToValue(SaveStateHeader, file[0..@sizeOf(SaveStateHeader)]);
@@ -2254,9 +2253,9 @@ fn deserialize(self: *@This(), serialized: []const u8) !void {
 }
 
 fn save_config(self: *@This()) !void {
-    const config_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), ConfigFile });
+    const config_path = try std.fs.path.join(self._allocator, &[_][]const u8{ host_paths.get_userdata_path(), ConfigFile });
     defer self._allocator.free(config_path);
-    var config_file = try std.Io.Dir.cwd().createFile(self.io, config_path, .{});
+    var config_file = try host_paths.root().createFile(self.io, config_path, .{});
     defer config_file.close(self.io);
     const buffer = try self._allocator.alloc(u8, 8192);
     defer self._allocator.free(buffer);

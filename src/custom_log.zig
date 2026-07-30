@@ -1,6 +1,6 @@
 const std = @import("std");
 const termcolor = @import("termcolor");
-const file = @import("log_file.zig");
+pub const file = @import("log_file.zig");
 
 pub const Output = enum { None, Console, File, Both };
 
@@ -13,11 +13,9 @@ var last_message: struct {
 var count: u32 = 0;
 var buffer: [128]u8 = undefined;
 
-var allocator: std.mem.Allocator = undefined;
 var io: std.Io = undefined;
 
-pub fn init(_io: std.Io, _allocator: std.mem.Allocator) void {
-    allocator = _allocator;
+pub fn init(_io: std.Io) void {
     io = _io;
 }
 
@@ -25,16 +23,14 @@ pub fn deinit() void {
     file.close();
 }
 
-pub const get_path = file.get_path;
-
 pub fn set_output(out: Output) void {
     if (out == output) return;
     file.close();
     output = out;
     if (output == .File or output == .Both) {
-        file.open(allocator, io) catch {
+        file.open(io) catch |err| {
             output = .Console;
-            std.log.err("Failed to open log file. That's akward...", .{});
+            std.log.err("Failed to open log file: {t}", .{err});
         };
     }
 }
