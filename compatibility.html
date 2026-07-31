@@ -30,8 +30,6 @@
       "url": "https://senryoku.github.io/Deecy/compatibility.html"
     }
     </script>
-
-	<script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0"></script>
 	<link href="style.css" rel="stylesheet" />
 	<style>
 		:root {
@@ -385,7 +383,9 @@
 		</div>
 	</div>
 
-	<script>
+	<script type="module">
+		import Fuse from 'https://cdn.jsdelivr.net/npm/fuse.js@7.5.0/dist/fuse.min.mjs';
+
 		let gamesData = [];
 
 		let fuse;
