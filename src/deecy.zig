@@ -461,6 +461,7 @@ rewind: Rewind = .{},
 
 io: std.Io,
 _allocator: std.mem.Allocator,
+_arena: std.heap.ArenaAllocator,
 
 _thread: ?std.Thread = null, // Thread for one-time, fire-and-forget, async jobs
 
@@ -502,6 +503,7 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
         .breakpoints = .empty,
         .shortcuts = try .init(allocator, io),
         ._allocator = allocator,
+        ._arena = .init(allocator),
         .io = io,
     };
 
@@ -720,6 +722,7 @@ pub fn destroy(self: *@This()) void {
     self.window.destroy();
     zglfw.terminate();
 
+    self._arena.deinit();
     self._allocator.destroy(self);
 }
 
@@ -767,6 +770,9 @@ fn audio_init(self: *@This()) !void {
 
 fn ui_init(self: *@This()) !void {
     zgui.init(self._allocator, self.io);
+
+    const ini_path = try std.fs.path.joinZ(self._arena.allocator(), &[_][]const u8{ host_paths.get_userdata_path(), "imgui.ini" });
+    zgui.io.setIniFilename(ini_path);
     zgui.io.setConfigFlags(.{ .dock_enable = true });
 
     _ = zgui.io.addFontFromMemory(DefaultFont, std.math.floor(16.0 * self.scale_factor));

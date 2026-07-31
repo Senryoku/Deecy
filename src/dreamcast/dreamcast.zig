@@ -217,22 +217,6 @@ pub const Dreamcast = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        // Write flash to disc. FIXME: Unused for now.
-        // if (!@import("builtin").is_test) {
-        //     const filename = get_user_flash_path();
-        //     std.fs.cwd().makePath(std.fs.path.dirname(filename) orelse ".") catch |err| {
-        //         dc_log.err("Failed to create user flash directory: {t}", .{err});
-        //     };
-        //     if (std.fs.cwd().createFile(filename, .{})) |file| {
-        //         defer file.close();
-        //         _ = file.writeAll(self.flash.data) catch |err| {
-        //             dc_log.err("Failed to save user flash: {t}", .{err});
-        //         };
-        //     } else |err| {
-        //         dc_log.err("Failed to open user flash '{s}' for writing: {t}", .{ filename, err });
-        //     }
-        // }
-
         self.scheduled_events.deinit(self._allocator);
         self.sh4_jit.deinit();
         self.gdrom.deinit(Context.io);
