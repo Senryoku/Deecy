@@ -404,7 +404,7 @@
 				const gameName = decodeURIComponent(
 					window.location.hash.slice(1),
 				);
-				const game = gamesData.find((g) => g.game === gameName);
+				const game = gamesData.find((g) => g.title === gameName);
 				const listElement = document.getElementById(gameName);
 				if (game && listElement) setDetails(game, listElement);
 			}
