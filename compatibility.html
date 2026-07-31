@@ -152,6 +152,14 @@
 			cursor: pointer;
 			transition: background 0.2s;
 			border-bottom: 1px solid #333;
+
+			.aka {
+				max-width: 0;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+				font-size: 0.9em;
+			}
 		}
 
 		tr.game-row:hover {
@@ -388,7 +396,7 @@
 			);
 			gamesData = await response.json();
 			fuse = new Fuse(gamesData, {
-				keys: ["game", "tags"],
+				keys: ["title", "aka", "tags"],
 				threshold: 0.3,
 			});
 			renderTable(gamesData);
@@ -409,7 +417,7 @@
 		}
 
 		function setDetails(data, element) {
-			const gameHash = encodeURIComponent(data.game);
+			const gameHash = encodeURIComponent(data.title);
 			history.replaceState(null, null, `#${gameHash}`);
 
 			document
@@ -417,16 +425,21 @@
 				.forEach((r) => r.classList.remove("active"));
 			element.classList.add("active");
 
-			const permalink = `${window.location.origin}${window.location.pathname}#${encodeURIComponent(data.game)}`;
+			const permalink = `${window.location.origin}${window.location.pathname}#${encodeURIComponent(data.title)}`;
 
-			const githubIssueURL = `https://github.com/Senryoku/Deecy/issues/new?template=bug_report.yml&assignees=Senryoku&title=${encodeURIComponent(data.game)}`;
+			const githubIssueURL = `https://github.com/Senryoku/Deecy/issues/new?template=bug_report.yml&assignees=Senryoku&title=${encodeURIComponent(data.title)}`;
 
 			let html = `<div class="game-title-area">
-			                    <h2 style="display: inline-block">${data.game}</h2>
+			                    <h2 style="display: inline-block">${data.title}</h2>
 								<button class="copy-link-btn" onclick="navigator.clipboard.writeText('${permalink}', this)" title="Copy Permalink">
 									<span class="icon">🔗</span>
-								</button>
-			                    <div>${data.tags.map((t) => `<span class="tag">${t}</span>`).join("")}</div>
+								</button>`;
+
+			if (data.aka?.length > 0) {
+				html += `<div class="aka">(${data.aka.join(", ")})</div>`
+			}
+
+			html += `<div>${data.tags.map((t) => `<span class="tag">${t}</span>`).join("")}</div>
 			                </div>
 							<div class="game-info">
 								<div>
@@ -499,10 +512,10 @@
 					item.status_reports?.[0]?.status ?? "Unknown";
 
 				const row = document.createElement("tr");
-				row.id = item.game;
+				row.id = item.title;
 				row.className = "game-row";
 				row.innerHTML = `
-						<td><strong>${item.game}</strong></td>
+						<td><strong>${item.title}</strong>${(item.aka?.length > 0) ? ' <span class="aka">(' + item.aka.join(", ") + ')</span>' : ''}</td>
 						<td><div style="overflow: hidden; text-overflow: ellipsis;">${item.tags.map((t) => `<span class="tag">${t}</span>`).join("")}</div></td>
 						<td><span class="status-${statusClass(status)} status-text">${status}</span></td>
 					`;
@@ -526,11 +539,11 @@
 				total > 0 ? ((count / total) * 100).toFixed(1) : 0;
 
 			let html = `
-			     <div class="stats-total">
-			         <span><strong>${total}</strong> Games Tracked</span>
-			     </div>
+				<div class="stats-total">
+					<span><strong>${total}</strong> Games Tracked</span>
+			    </div>
 
-			     <div class="stats-bar">`;
+			    <div class="stats-bar">`;
 
 			for (const key in counts) {
 				html += `<div class="stat-segment status-${statusClass(key)} status-background" style="width: ${percent(counts[key])}%"></div>`;
