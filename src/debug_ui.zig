@@ -369,7 +369,7 @@ fn display_tsp_instruction(tsp_instruction: Holly.TSPInstructionWord) void {
 
 fn display_packed_color(comptime label: [:0]const u8, packed_color: Colors.PackedColor) void {
     var fcolor = Colors.fRGBA.from_packed(packed_color, true);
-    _ = zgui.colorEdit4(label, .{ .col = @as([*]f32, @ptrCast(&fcolor))[0..4] });
+    _ = zgui.colorEdit4(label, .{ .col = @as([*]f32, @ptrCast(&fcolor))[0..4], .flags = .{ .alpha_preview_half = true } });
 }
 
 fn display_non_zero(comptime label: [:0]const u8, value: anytype) void {
@@ -1832,11 +1832,11 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
     }
     if (strip.global_parameters.polygon.base_color()) |base_color| {
         var local = base_color;
-        _ = zgui.colorEdit4("Base Color", .{ .col = &local, .flags = .{ .float = true } });
+        _ = zgui.colorEdit4("Base Color", .{ .col = &local, .flags = .{ .float = true, .alpha_preview_half = true } });
     }
     if (strip.global_parameters.polygon.offset_color()) |offset_color| {
         var local = offset_color;
-        _ = zgui.colorEdit4("Offset Color", .{ .col = &local, .flags = .{ .float = true } });
+        _ = zgui.colorEdit4("Offset Color", .{ .col = &local, .flags = .{ .float = true, .alpha_preview_half = true } });
     }
 }
 
@@ -1926,10 +1926,10 @@ fn display_vertex_data(self: *@This(), vertex: *const Holly.VertexParameter) voi
     if (node_open) {
         _ = zgui.inputFloat3("pos", .{ .v = &position, .flags = .{ .read_only = true } });
         if (base_color) |*color| {
-            _ = zgui.colorEdit4("Base Color", .{ .col = @ptrCast(color), .flags = .{ .float = true } });
+            _ = zgui.colorEdit4("Base Color", .{ .col = @ptrCast(color), .flags = .{ .float = true, .alpha_preview_half = true } });
         }
         if (offset_color) |*color| {
-            _ = zgui.colorEdit4("Offset Color", .{ .col = @ptrCast(color), .flags = .{ .float = true } });
+            _ = zgui.colorEdit4("Offset Color", .{ .col = @ptrCast(color), .flags = .{ .float = true, .alpha_preview_half = true } });
         }
         if (base_intensity) |*intensity| {
             _ = zgui.inputFloat("Base Intensity", .{ .v = intensity, .flags = .{ .read_only = true } });

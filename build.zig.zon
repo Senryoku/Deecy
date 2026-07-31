@@ -10,8 +10,8 @@
             .hash = "zgpu-0.15.0-dev-nqFT5NYmzAWJMswBiXrNHEYicJRO-p-PArE3WO1L2E17",
         },
         .zgui = .{
-            .url = "git+https://github.com/Senryoku/zgui.git#f41450b0b57571cc86a34a049a121c23cd4bd382",
-            .hash = "zgui-0.6.0-dev--L6sZHlTbQBi5fMeMzwiejv7Lh7OvEWKZnGyizJ_EGu1",
+            .url = "git+https://github.com/Senryoku/zgui.git#795205e003302b36470ce9761764f44ea3ae614a",
+            .hash = "zgui-0.6.0-dev--L6sZHxTbQDGc2j71aKT0S3e0Pyw8GLt_TDAK-Kv7gM7",
         },
         .zaudio = .{
             .url = "git+https://github.com/Senryoku/zaudio.git#170f2188a7a7893f87bcd4811e911cffe2b3d30f",
