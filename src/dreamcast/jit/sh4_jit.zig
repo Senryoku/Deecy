@@ -158,7 +158,9 @@ const BlockCache = struct {
     }
 
     pub fn align_next_block(self: *@This()) void {
-        self.cursor = std.mem.alignForward(usize, self.cursor, 0x10);
+        const next = std.mem.alignForward(usize, self.cursor, 0x10);
+        Architecture.convert_to_nops(self.buffer[self.cursor..next]);
+        self.cursor = next;
     }
 };
 
