@@ -443,7 +443,7 @@ _dc: *Dreamcast,
 
 pub fn init(allocator: std.mem.Allocator, dc: *Dreamcast) !@This() {
     return .{
-        .dsp_ram = try allocator.allocWithOptions(u8, 0x1000, 4, null),
+        .dsp_ram = try allocator.allocWithOptions(u8, 0x1000, .@"4", null),
         ._dc = dc,
     };
 }
@@ -624,7 +624,7 @@ fn write_register(self: *@This(), addr: u32, value: u8) void {
                 if (self.registers.memw) {
                     log.debug("Write to DSP RAM: {X} = {X}", .{ self.memory_address(), self.memory_access_data() });
                     if (self.memory_address() & 1 == 0) {
-                        @as(*u16, @alignCast(@ptrCast(&self.dsp_ram[self.memory_address()]))).* = self.memory_access_data();
+                        @as(*u16, @ptrCast(@alignCast(&self.dsp_ram[self.memory_address()]))).* = self.memory_access_data();
                     } else {
                         self.dsp_ram[self.memory_address()] = @truncate(self.memory_access_data());
                         self.dsp_ram[self.memory_address() + 1] = @truncate(self.memory_access_data() >> 8);
@@ -694,7 +694,9 @@ pub fn write(self: *@This(), comptime T: type, addr: u32, value: T) void {
 fn assert_irq(self: *@This()) void {
     self._dc.raise_external_interrupt(.{ .Modem = 1 });
 }
-fn clear_irq(_: *@This()) void {}
+fn clear_irq(self: *@This()) void {
+    self._dc.clear_external_interrupt(.{ .Modem = 1 });
+}
 
 pub fn serialize(self: @This(), writer: anytype) !usize {
     // TODO

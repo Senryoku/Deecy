@@ -139,7 +139,7 @@ pub const Dreamcast = struct {
     maple: MapleHost = .init,
     gdrom: GDROM = undefined,
     gdrom_hle: GDROM_HLE = .{}, // NOTE: Currently not serialized in save states. It is now less compatible than the LLE implementation.
-    modem: Modem = undefined, // TODO: Serialize
+    modem: Modem, // TODO: Serialize
 
     sh4_jit: SH4JIT = undefined,
 
@@ -177,7 +177,7 @@ pub const Dreamcast = struct {
         dc.* = Dreamcast{
             .cpu = try .init(allocator, dc),
             .flash = try .init(allocator),
-            .modem = try .init(allocator),
+            .modem = try .init(allocator, dc),
             .hardware_registers = try allocator.allocWithOptions(u8, 0x20_0000, .@"4", null), // FIXME: Huge waste of memory.
             ._allocator = allocator,
         };
@@ -199,7 +199,6 @@ pub const Dreamcast = struct {
         dc.gpu = try .init(allocator, dc);
         dc.aica = try .init(allocator, dc.aram);
         dc.gdrom = try .init(allocator, dc);
-        dc.modem = try .init(allocator, dc);
         dc.aica.setup_arm();
 
         errdefer dc.destroy();
@@ -749,7 +748,7 @@ pub const Dreamcast = struct {
                     0x005F8000...0x005F9FFF => {
                         return self.gpu.read_register(T, @enumFromInt(addr));
                     },
-                    0x00600000...0x006007FF => return self.modem.read(T, addr),
+                    0x00600000...0x006007FF => return @constCast(self).modem.read(T, addr),
                     // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF
                     0x00700000...0x00707FE0, 0x02700000...0x02707FE0 => {
                         check_type(&[_]type{ u8, u32 }, T, "Invalid Read({any}) to 0x{X:0>8}\n", .{ T, addr });
