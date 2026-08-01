@@ -689,19 +689,59 @@ pub const SH4JIT = struct {
         if (FastMem) {
             var b = &self._working_block;
             for ([_]struct { offset: *u64, function: u64 }{
-                .{ .offset = &VirtualAddressSpace.VAS.read_8_offset, .function = @intFromPtr(&_out_of_line_read8) },
-                .{ .offset = &VirtualAddressSpace.VAS.read_16_offset, .function = @intFromPtr(&_out_of_line_read16) },
-                .{ .offset = &VirtualAddressSpace.VAS.read_32_offset, .function = @intFromPtr(&_out_of_line_read32) },
-                .{ .offset = &VirtualAddressSpace.VAS.read_64_offset, .function = @intFromPtr(&_out_of_line_read64) },
-                .{ .offset = &VirtualAddressSpace.VAS.write_8_offset, .function = @intFromPtr(&_out_of_line_write8) },
-                .{ .offset = &VirtualAddressSpace.VAS.write_16_offset, .function = @intFromPtr(&_out_of_line_write16) },
-                .{ .offset = &VirtualAddressSpace.VAS.write_32_offset, .function = @intFromPtr(&_out_of_line_write32) },
-                .{ .offset = &VirtualAddressSpace.VAS.write_64_offset, .function = @intFromPtr(&_out_of_line_write64) },
+                .{ .offset = &VirtualAddressSpace.VAS.read_8_ptr, .function = @intFromPtr(&_out_of_line_read8) },
+                .{ .offset = &VirtualAddressSpace.VAS.read_16_ptr, .function = @intFromPtr(&_out_of_line_read16) },
+                .{ .offset = &VirtualAddressSpace.VAS.read_32_ptr, .function = @intFromPtr(&_out_of_line_read32) },
+                .{ .offset = &VirtualAddressSpace.VAS.read_64_ptr, .function = @intFromPtr(&_out_of_line_read64) },
+                .{ .offset = &VirtualAddressSpace.VAS.write_8_ptr, .function = @intFromPtr(&_out_of_line_write8) },
+                .{ .offset = &VirtualAddressSpace.VAS.write_16_ptr, .function = @intFromPtr(&_out_of_line_write16) },
+                .{ .offset = &VirtualAddressSpace.VAS.write_32_ptr, .function = @intFromPtr(&_out_of_line_write32) },
+                .{ .offset = &VirtualAddressSpace.VAS.write_64_ptr, .function = @intFromPtr(&_out_of_line_write64) },
             }) |s| {
                 s.offset.* = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
                 b.clearRetainingCapacity();
 
                 try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = s.function } } });
+
+                const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+
+                self.block_cache.cursor += block_size;
+                self.block_cache.align_next_block();
+            }
+            // Store queue inline writes.
+            const addr = ArgRegisters[1];
+            const value = ArgRegisters[2];
+            {
+                VirtualAddressSpace.VAS.write_32_sq_ptr = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
+                b.clearRetainingCapacity();
+
+                // This is very sad, but it is necessary to double check here and fallback if this isn't in fact a write to the Store Queues (Soulcalibur)
+                try b.mov(.{ .reg64 = ArgRegisters[3] }, .{ .reg64 = addr });
+                try b.shr(.{ .reg64 = ArgRegisters[3] }, 26);
+                try b.cmp(.{ .reg64 = ArgRegisters[3] }, .{ .imm32 = 0b111000 });
+                try b.append(.{ .Jmp = .{ .condition = .NotEqual, .dst = .{ .abs = VirtualAddressSpace.VAS.write_32_ptr } } });
+
+                try b.@"and"(.{ .reg64 = addr }, .{ .imm32 = 0x3C });
+                try b.mov(.{ .mem = .{ .base = SH4PtrRegister, .index = addr, .displacement = @offsetOf(sh4.SH4, "store_queues"), .scale = ._1, .size = 32 } }, .{ .reg = value });
+                try b.append(.Ret);
+
+                const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+
+                self.block_cache.cursor += block_size;
+                self.block_cache.align_next_block();
+            }
+            {
+                VirtualAddressSpace.VAS.write_64_sq_ptr = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
+                b.clearRetainingCapacity();
+
+                try b.mov(.{ .reg64 = ArgRegisters[3] }, .{ .reg64 = addr });
+                try b.shr(.{ .reg64 = ArgRegisters[3] }, 26);
+                try b.cmp(.{ .reg64 = ArgRegisters[3] }, .{ .imm32 = 0b111000 });
+                try b.append(.{ .Jmp = .{ .condition = .NotEqual, .dst = .{ .abs = VirtualAddressSpace.VAS.write_64_ptr } } });
+
+                try b.@"and"(.{ .reg64 = addr }, .{ .imm32 = 0x3C });
+                try b.mov(.{ .mem = .{ .base = SH4PtrRegister, .index = addr, .displacement = @offsetOf(sh4.SH4, "store_queues"), .scale = ._1, .size = 64 } }, .{ .reg64 = value });
+                try b.append(.Ret);
 
                 const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
 

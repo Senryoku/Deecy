@@ -4,14 +4,16 @@ const Architecture = @import("x86_64.zig");
 
 const log = std.log.scoped(.sh4_jit);
 
-pub var read_8_offset: u64 = 0;
-pub var read_16_offset: u64 = 0;
-pub var read_32_offset: u64 = 0;
-pub var read_64_offset: u64 = 0;
-pub var write_8_offset: u64 = 0;
-pub var write_16_offset: u64 = 0;
-pub var write_32_offset: u64 = 0;
-pub var write_64_offset: u64 = 0;
+pub var read_8_ptr: u64 = 0;
+pub var read_16_ptr: u64 = 0;
+pub var read_32_ptr: u64 = 0;
+pub var read_64_ptr: u64 = 0;
+pub var write_8_ptr: u64 = 0;
+pub var write_16_ptr: u64 = 0;
+pub var write_32_ptr: u64 = 0;
+pub var write_64_ptr: u64 = 0;
+pub var write_32_sq_ptr: u64 = 0;
+pub var write_64_sq_ptr: u64 = 0;
 
 pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *u64) !void {
     if (fault_address >= space_base and fault_address < space_base + space_size) {
@@ -102,23 +104,32 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
 
         instructions[0] = 0xE8; // call rel32
         const offset_patch = @as(*align(1) i32, @ptrFromInt(start_patch + 1));
-        const dest: i64 = @intCast(switch (direction) {
-            .Read => switch (size) {
-                ._8 => read_8_offset,
-                ._16 => read_16_offset,
-                ._32 => read_32_offset,
-                ._64 => read_64_offset,
-                .Unknown => return error.InvalidSize,
-            },
-            .Write => switch (size) {
-                ._8 => write_8_offset,
-                ._16 => write_16_offset,
-                ._32 => write_32_offset,
-                ._64 => write_64_offset,
-                .Unknown => return error.InvalidSize,
-            },
-        });
-        offset_patch.* = @intCast(dest - @as(i64, @intCast(start_patch + call_size)));
+        if (direction == .Write and dc_addr >= 0xE0000000 and dc_addr <= 0xE3FFFFFF) {
+            const dest: i64 = @intCast(switch (size) {
+                ._32 => write_32_sq_ptr,
+                ._64 => write_64_sq_ptr,
+                else => return error.InvalidSQWriteSize,
+            });
+            offset_patch.* = @intCast(dest - @as(i64, @intCast(start_patch + call_size)));
+        } else {
+            const dest: i64 = @intCast(switch (direction) {
+                .Read => switch (size) {
+                    ._8 => read_8_ptr,
+                    ._16 => read_16_ptr,
+                    ._32 => read_32_ptr,
+                    ._64 => read_64_ptr,
+                    .Unknown => return error.InvalidSize,
+                },
+                .Write => switch (size) {
+                    ._8 => write_8_ptr,
+                    ._16 => write_16_ptr,
+                    ._32 => write_32_ptr,
+                    ._64 => write_64_ptr,
+                    .Unknown => return error.InvalidSize,
+                },
+            });
+            offset_patch.* = @intCast(dest - @as(i64, @intCast(start_patch + call_size)));
+        }
 
         if (patch_size > call_size)
             Architecture.convert_to_nops(instructions[call_size..patch_size]);

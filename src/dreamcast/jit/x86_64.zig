@@ -421,6 +421,7 @@ pub const Instruction = union(enum) {
     Div64_32: struct { dividend_high: Register, dividend_low: Register, divisor: Register, result: Register },
     Lea: struct { dst: Operand, mem: MemOperand },
     Pext: struct { dst: Operand, src: Operand, mask: Operand },
+    Ret: void,
 
     SaveFPRegisters: struct { count: u8 },
     RestoreFPRegisters: struct { count: u8 },
@@ -479,6 +480,7 @@ pub const Instruction = union(enum) {
             .SaveFPRegisters => |instr| writer.print("SaveFPRegisters {d}", .{instr.count}),
             .RestoreFPRegisters => |instr| writer.print("RestoreFPRegisters {d}", .{instr.count}),
             .Pext => |pext| writer.print("pext {f}, {f}, {f}", .{ pext.dst, pext.src, pext.mask }),
+            .Ret => writer.print("ret", .{}),
 
             .Padding => |p| writer.print("Padding {d}", .{p}),
         };
@@ -778,6 +780,7 @@ pub const Emitter = struct {
                 .Div64_32 => |d| try self.div64_32(d.dividend_high, d.dividend_low, d.divisor, d.result),
                 .Lea => |l| try self.lea(l.dst, l.mem),
                 .Pext => |p| try self.emit_vex_instruction(.xF3, .x0F38, 0xF5, p.dst, p.src, p.mask),
+                .Ret => try self.ret(),
 
                 .SaveFPRegisters => |s| try self.save_fp_registers(s.count),
                 .RestoreFPRegisters => |s| try self.restore_fp_registers(s.count),
@@ -1099,7 +1102,7 @@ pub const Emitter = struct {
                         if (src.size() != dst.mem.size) return error.OperandSizeMismatch;
                         try self.mov_reg_mem(.RegToMem, src, dst_m);
                     },
-                    .reg => try self.mov_reg_mem(.RegToMem, src, dst_m),
+                    .reg, .reg64 => try self.mov_reg_mem(.RegToMem, src, dst_m),
                     .imm32 => |imm| {
                         if (dst.mem.size != 32) return error.OperandSizeMismatch;
                         try self.emit_rex_if_needed(.{
