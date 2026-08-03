@@ -583,7 +583,6 @@ pub fn reset(self: *@This()) void {
 
 fn soft_reset(self: *@This()) void {
     log.info("Soft Reset", .{});
-
     self.controller_self_test();
 }
 
@@ -626,8 +625,8 @@ fn controller_self_test_end(self: *@This()) void {
 
     self.set_tdbe(true);
 
-    // When bit 1Eh:3 is reset or 5 ms has expired, the information is cleared and the DSP self-test is performed. If the register 10
-    // is not read by the host, bit 1Eh:3 will not be reset
+    // "When bit 1Eh:3 is reset or 5 ms has expired, the information is cleared and the DSP self-test is performed.
+    //  If the register 10 is not read by the host, bit 1Eh:3 will not be reset"
     // FIXME: KallistiOS reads it twice? Doesn't move to DSP test immediately?
     self.schedule(.DSPTest, 1_000_000);
 }
@@ -651,9 +650,8 @@ fn dsp_self_test(self: *@This()) void {
     self.set_tdbe(true);
     self.registers.newc = false;
     self.state = .DSPSelfTest;
-    // The host should read the test results within 5 ms of bit 1Eh:3 being set.
-    // When bit 1Eh:3 is reset or 5 ms has expired since DSP test completion, the information is cleared and MDP initialization
-    // continues.
+    // "The host should read the test results within 5 ms of bit 1Eh:3 being set.
+    //  When bit 1Eh:3 is reset or 5 ms has expired since DSP test completion, the information is cleared and MDP initialization continues.""
     self.schedule(.DSPTestEnd, 2_000_000); // FIXME: 5ms should be 1_000_000, but seems too short for KallistiOS?
 }
 
@@ -688,12 +686,8 @@ fn read_register(self: *@This(), addr: u32) u8 {
     switch (addr) {
         0x10 => { // TBUFFER
             self.set_tdbe(false);
-            // if (self.state == .ControllerSelfTest) {
-            //     self._dc.schedule_event(.{ .Modem = .DSPTest }, 100_000);
-            // }
-            // if (self.state == .DSPSelfTest) {
-            //     self._dc.schedule_event(.{ .Modem = .DSPTestEnd }, 100_000);
-            // }
+            // if (self.state == .ControllerSelfTest) self._dc.schedule_event(.{ .Modem = .DSPTest }, 100_000);
+            // if (self.state == .DSPSelfTest) self._dc.schedule_event(.{ .Modem = .DSPTestEnd }, 100_000);
         },
         else => {},
     }
