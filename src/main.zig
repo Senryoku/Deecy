@@ -33,6 +33,7 @@ pub const std_options: std.Options = .{
         .{ .scope = .holly, .level = .warn },
         .{ .scope = .gdrom, .level = .warn },
         .{ .scope = .gdrom_hle, .level = .info },
+        .{ .scope = .modem, .level = .info },
         .{ .scope = .cdi, .level = .info },
         .{ .scope = .chd, .level = .info },
         // .{ .scope = .chd_flac, .level = .debug },

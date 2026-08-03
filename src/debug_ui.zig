@@ -1077,6 +1077,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     }
     zgui.end();
 
+    if (zgui.begin("Modem", .{})) {
+        @setEvalBranchQuota(80000);
+        display(dc.modem.registers);
+    }
+    zgui.end();
+
     if (zgui.begin("Holly", .{})) {
         d.gctx_queue_mutex.lockUncancelable(d.io);
         defer d.gctx_queue_mutex.unlock(d.io);

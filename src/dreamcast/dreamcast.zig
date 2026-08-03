@@ -17,6 +17,7 @@ pub const SH4JITModule = @import("jit/sh4_jit.zig");
 pub const HollyModule = @import("holly.zig");
 pub const AICAModule = @import("aica.zig");
 pub const Maple = @import("maple.zig");
+pub const Modem = @import("modem.zig");
 pub const GDROM = @import("gdrom.zig");
 pub const GDROM_HLE = @import("gdrom_hle.zig");
 pub const Flash = @import("flash.zig");
@@ -73,6 +74,7 @@ pub const ScheduledEvent = struct {
         HBlankIn,
         VBlankIn,
         VBlankOut,
+        Modem: Modem.Event,
 
         pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             switch (self) {
@@ -137,6 +139,7 @@ pub const Dreamcast = struct {
     maple: MapleHost = .init,
     gdrom: GDROM = undefined,
     gdrom_hle: GDROM_HLE = .{}, // NOTE: Currently not serialized in save states. It is now less compatible than the LLE implementation.
+    modem: Modem, // TODO: Serialize
 
     sh4_jit: SH4JIT = undefined,
 
@@ -174,6 +177,7 @@ pub const Dreamcast = struct {
         dc.* = Dreamcast{
             .cpu = try .init(allocator, dc),
             .flash = try .init(allocator),
+            .modem = try .init(allocator, dc),
             .hardware_registers = try allocator.allocWithOptions(u8, 0x20_0000, .@"4", null), // FIXME: Huge waste of memory.
             ._allocator = allocator,
         };
@@ -225,6 +229,7 @@ pub const Dreamcast = struct {
         self.gpu.deinit();
         self.cpu.deinit();
         self.flash.deinit();
+        self.modem.deinit(self._allocator);
 
         if (!SH4JITModule.FastMem) {
             self._allocator.free(self.aram);
@@ -245,6 +250,7 @@ pub const Dreamcast = struct {
         self.gdrom.reset();
         self.gdrom_hle.reset();
         self.flash.reset();
+        self.modem.reset();
 
         try self.sh4_jit.reset();
 
@@ -742,6 +748,7 @@ pub const Dreamcast = struct {
                     0x005F8000...0x005F9FFF => {
                         return self.gpu.read_register(T, @enumFromInt(addr));
                     },
+                    0x00600000...0x006007FF => return @constCast(self).modem.read(T, addr),
                     // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF
                     0x00700000...0x00707FE0, 0x02700000...0x02707FE0 => {
                         check_type(&[_]type{ u8, u32 }, T, "Invalid Read({any}) to 0x{X:0>8}\n", .{ T, addr });
@@ -822,6 +829,7 @@ pub const Dreamcast = struct {
                         check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (Holly Registers) = 0x{X}\n", .{ T, addr, value });
                         return self.gpu.write_register(addr, value);
                     },
+                    0x00600000...0x006007FF => return self.modem.write(T, addr, value),
                     // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF
                     0x00700000...0x00707FFF, 0x02700000...0x02707FFF => {
                         check_type(&[_]type{ u8, u32 }, T, "Invalid Write({any}) to 0x{X:0>8} (AICA Registers) = 0x{X}\n", .{ T, addr, value });
@@ -986,6 +994,7 @@ pub const Dreamcast = struct {
                     .HBlankIn => self.gpu.on_hblank_in(),
                     .VBlankIn => self.gpu.on_vblank_in(),
                     .VBlankOut => self.gpu.on_vblank_out(),
+                    .Modem => |e| self.modem.on_event(e),
                 }
                 _ = self.scheduled_events.pop();
             } else break;
