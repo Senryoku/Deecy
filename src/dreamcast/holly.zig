@@ -1385,6 +1385,22 @@ pub const VertexParameter = union(enum) {
             inline else => |*v| v.x *= factor,
         };
     }
+
+    pub fn uv(self: *const @This()) ?[2]f32 {
+        switch (self.*) {
+            inline else => |t| {
+                if (@hasField(@TypeOf(t), "u")) {
+                    return .{ t.u, t.v };
+                } else if (@hasField(@TypeOf(t), "uv")) {
+                    return .{ t.uv.u_as_f32(), t.uv.v_as_f32() };
+                } else if (@hasField(@TypeOf(t), "u0")) {
+                    return .{ t.u0, t.v0 };
+                } else if (@hasField(@TypeOf(t), "uv_0")) {
+                    return .{ t.uv_0.u_as_f32(), t.uv_0.v_as_f32() };
+                } else return null;
+            },
+        }
+    }
 };
 
 fn obj_control_to_vertex_parameter_format(obj_control: ObjControl) std.meta.Tag(VertexParameter) {

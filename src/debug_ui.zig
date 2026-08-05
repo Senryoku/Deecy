@@ -1350,11 +1350,11 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                                 }
                                 if (node_open) {
                                     if (idx < list.vertex_strips.items.len) {
-                                        self.display_strip_info(d.renderer, &list.vertex_strips.items[idx]);
-                                        for (strip.vertex_parameter_index..(strip.vertex_parameter_index + strip.vertex_parameter_count)) |i| {
-                                            if (i < list.vertex_parameters.items.len)
-                                                self.display_vertex_data(&list.vertex_parameters.items[i]);
-                                        }
+                                        const start = @min(strip.vertex_parameter_index, list.vertex_parameters.items.len);
+                                        const end = @min(strip.vertex_parameter_index + strip.vertex_parameter_count, list.vertex_parameters.items.len);
+                                        const vertices = list.vertex_parameters.items[start..end];
+                                        self.display_strip_info(d.renderer, &list.vertex_strips.items[idx], vertices);
+                                        for (vertices) |*v| self.display_vertex_data(v);
                                     }
                                     zgui.treePop();
                                 }
@@ -1763,7 +1763,17 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
     }
 }
 
-fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, strip: *const Holly.VertexStrip) void {
+fn adjust_uv(origin: [2]f32, size: [2]f32, tsp: Holly.TSPInstructionWord, uv: [2]f32) [2]f32 {
+    var u = uv[0];
+    if (tsp.clamp_uv.u) u = std.math.clamp(u, 0.0, 1.0);
+    if (tsp.flip_uv.u) u = 1.0 - u;
+    var v = uv[1];
+    if (tsp.clamp_uv.v) v = std.math.clamp(v, 0.0, 1.0);
+    if (tsp.flip_uv.v) v = 1.0 - v;
+    return .{ origin[0] + size[0] * u, origin[1] + size[1] * v };
+}
+
+fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, strip: *const Holly.VertexStrip, vertices: []const Holly.VertexParameter) void {
     zgui.pushPtrId(strip);
     defer zgui.popId();
 
@@ -1797,13 +1807,48 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
             display_texture_control_word(texture_control_word);
             if (renderer.get_texture_view(texture_control_word, tsp)) |texture| {
                 const view = renderer._gctx.lookupResource(self.renderer_texture_views[texture.size_index][texture.index]).?;
+                const origin = zgui.getCursorScreenPos();
+                const size = [2]f32{ @floatFromInt(tsp.get_u_size()), @floatFromInt(tsp.get_v_size()) };
+                // Adjust UVs from the internal square texture.
+                const uv_scale = [2]f32{ if (size[0] >= size[1]) 1.0 else size[0] / size[1], if (size[1] >= size[0]) 1.0 else size[1] / size[0] };
                 zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(view)) }, .{
-                    .w = @floatFromInt(tsp.get_u_size()),
-                    .h = @floatFromInt(tsp.get_v_size()),
+                    .w = size[0],
+                    .h = size[1],
+                    .uv0 = .{ 0.0, 0.0 },
+                    .uv1 = uv_scale,
                 });
                 if (zgui.isItemClicked(.left)) {
                     self.selected_texture.size = @intCast(texture.size_index);
                     self.selected_texture.index = @intCast(texture.index);
+                }
+                if (zgui.isItemHovered(.{})) zgui.setMouseCursor(.hand);
+                // Vertices/Triangles overlay
+                const draw_list = zgui.getWindowDrawList();
+                switch (vertices[0]) {
+                    .SpriteType1 => for (vertices) |s| {
+                        var points: [3][2]f32 = undefined;
+                        for (s.SpriteType1.uvs(), 0..) |uv, i| {
+                            points[i] = adjust_uv(origin, size, tsp, .{ uv.u_as_f32(), uv.v_as_f32() });
+                            draw_list.addCircleFilled(.{ .p = points[i], .r = 2.0, .col = 0xFF0000FF });
+                        }
+                        draw_list.addTriangle(.{ .col = 0xFFFF0000, .p1 = points[0], .p2 = points[1], .p3 = points[2], .thickness = 1.0 });
+                    },
+                    else => if (vertices.len > 2) {
+                        for (vertices) |v| {
+                            if (v.uv()) |uv|
+                                draw_list.addCircleFilled(.{ .p = adjust_uv(origin, size, tsp, uv), .r = 2.0, .col = 0xFF0000FF });
+                        }
+                        for (0..vertices.len - 2) |i| {
+                            const p = .{ vertices[i + 0].uv() orelse continue, vertices[i + 1].uv() orelse continue, vertices[i + 2].uv() orelse continue };
+                            draw_list.addTriangle(.{
+                                .col = 0xFFFF0000,
+                                .p1 = adjust_uv(origin, size, tsp, p[0]),
+                                .p2 = adjust_uv(origin, size, tsp, p[1]),
+                                .p3 = adjust_uv(origin, size, tsp, p[2]),
+                                .thickness = 1.0,
+                            });
+                        }
+                    },
                 }
             } else {
                 zgui.textColored(.{ 1.0, 0.0, 0.0, 1.0 }, "Texture not found!", .{});
