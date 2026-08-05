@@ -1044,11 +1044,6 @@ pub const Emitter = struct {
     }
 
     pub fn mov_reg_mem(self: *@This(), comptime direction: enum { MemToReg, RegToMem }, reg: Operand, mem: MemOperand) !void {
-        var reg_64 = reg == .reg64 or mem.size == 64;
-
-        if (direction == .MemToReg and mem.size < 32 and reg == .reg)
-            reg_64 = true; // Force 64-bit register to be 100% sure all bits are cleared.
-
         const opcode: []const u8 = switch (direction) {
             .MemToReg => switch (reg) {
                 .reg8 => &[_]u8{0x8A},
@@ -1075,13 +1070,14 @@ pub const Emitter = struct {
             },
         };
 
-        if (mem.size == 16 or reg == .freg32 or reg == .freg64)
+        //   No need for a prefix when emitting movzx
+        if ((mem.size == 16 and direction == .RegToMem) or reg == .freg32 or reg == .freg64)
             try self.emit(u8, 0x66);
 
         try self.emit_rex_if_needed_or_required(
             reg == .reg8 and reg.reg8.require_rex_8bit(),
             .{
-                .w = reg_64,
+                .w = mem.size == 64, // NOTE: "movzx r32, r/m16" and "movzx r64, r/m16" (or r/m8) are equivalent, both will zero extend to 64bit. We'll never emit movzx r64, r/m16.
                 .r = need_rex(reg),
                 .x = if (mem.index) |i| need_rex(i) else false,
                 .b = need_rex(mem.base),
@@ -1261,18 +1257,34 @@ pub const Emitter = struct {
 
     // Helper for 0x81 / 0x83 opcodes (Add, And, Sub...)
     fn mem_dest_imm_src(self: *@This(), reg_opcode: RegOpcode, dst_m: MemOperand, comptime ImmType: type, imm: ImmType) !void {
-        std.debug.assert(dst_m.size == 32);
-        try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
+        std.debug.assert(dst_m.size == 16 or dst_m.size == 32 or dst_m.size == 64);
+
+        if (dst_m.size == 16) {
+            if (@bitSizeOf(ImmType) > 16) return error.InvalidImmediate;
+            try self.emit(u8, 0x66);
+        }
+
+        try self.emit_rex_if_needed(.{
+            .w = dst_m.size == 64,
+            .x = if (dst_m.index) |i| need_rex(i) else false,
+            .b = need_rex(dst_m.base),
+        });
+
+        const use_imm8 = imm < 0x80;
 
         // 0x83: OP r/m32, imm8 - Sign-extended imm8 - Shorter encoding
-        try self.emit(u8, if (imm < 0x80) 0x83 else 0x81);
+        try self.emit(u8, if (use_imm8) 0x83 else 0x81);
 
         try self.emit_mem_addressing(@intFromEnum(reg_opcode), dst_m);
 
-        if (imm < 0x80) {
-            try self.emit(u8, @truncate(imm));
+        if (use_imm8) {
+            try self.emit(u8, @intCast(imm));
         } else {
-            try self.emit(ImmType, imm);
+            if (dst_m.size == 16) {
+                try self.emit(u16, @intCast(imm)); // 16-bit immediate for 0x81 with 0x66 prefix
+            } else {
+                try self.emit(ImmType, imm); // 32-bit immediate for 32/64-bit operands
+            }
         }
     }
 
@@ -1291,6 +1303,25 @@ pub const Emitter = struct {
                         }
                     },
                     else => return error.Unimplemented80,
+                }
+            },
+            .reg16 => |dst_reg| {
+                switch (src) {
+                    .reg16 => return error.Unimplemented80,
+                    .imm16 => |imm16| {
+                        if (dst_reg == .rax) { // OP AX, imm16
+                            try self.emit(u8, 0x66);
+                            try self.emit(u8, rax_dst_opcode);
+                            try self.emit(u16, imm16);
+                        } else {
+                            return error.Unimplemented80;
+                        }
+                    },
+                    .mem => |src_m| {
+                        if (src_m.size != 16) return error.OperandSizeMismatch8183;
+                        try self.binary_reg_mem(&[_]u8{rm_opcode}, .fromInt(16), dst_reg, src_m);
+                    },
+                    else => return error.OperandSizeMismatch8183,
                 }
             },
             .reg, .reg64 => |dst_reg| {
@@ -1355,6 +1386,7 @@ pub const Emitter = struct {
                             },
                         }
                     },
+                    .imm16 => |imm| try self.mem_dest_imm_src(rm_imm_opcode, dst_m, u16, imm),
                     .imm32 => |imm| try self.mem_dest_imm_src(rm_imm_opcode, dst_m, u32, imm),
                     else => return error.InvalidSource,
                 }

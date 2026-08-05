@@ -793,26 +793,29 @@ pub const SH4JIT = struct {
         return hash;
     }
 
-    fn block_hash_function(comptime instruction_size: u32) fn (ram: [*]const u8, start: u32, end: u32) callconv(Architecture.CallingConvention) u64 {
-        return (switch (instruction_size) {
-            inline 1...4 => struct {
-                fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
-                    return @as([*]align(1) const u64, @ptrCast(&ram[start]))[0];
+    fn specialized_block_hash(instruction_size: u32, ram: [*]const u8, start: u32, end: u32) u64 {
+        const as_u16 = @as([*]align(1) const u16, @ptrCast(&ram[start]))[0 .. end - start];
+        const as_u32 = @as([*]align(1) const u32, @ptrCast(&ram[start]))[0 .. end - start];
+        const as_u64 = @as([*]align(1) const u64, @ptrCast(&ram[start]))[0 .. end - start];
+        return switch (instruction_size) {
+            1 => as_u16[0],
+            2 => as_u32[0],
+            3 => as_u64[0] << 16,
+            4 => as_u64[0],
+            5 => as_u64[0] ^ as_u16[4],
+            6 => as_u64[0] ^ as_u32[2],
+            7 => as_u64[0] ^ (as_u64[1] << 16),
+            8 => as_u64[0] ^ as_u64[1],
+            9...32 => {
+                var hash: u64 = as_u64[0];
+                for (as_u64[1..][0 .. (instruction_size - 1) / 4]) |val| {
+                    hash *%= BlockHashPrime;
+                    hash ^= val;
                 }
+                return hash;
             },
-            5...32 => |len| struct {
-                fn block_hash(ram: [*]const u8, start: u32, _: u32) callconv(Architecture.CallingConvention) u64 {
-                    const slice = @as([*]align(1) const u64, @ptrCast(&ram[start]));
-                    var hash: u64 = slice[0];
-                    for (slice[1..][0 .. (len - 1) / 4]) |val| {
-                        hash *%= BlockHashPrime;
-                        hash ^= val;
-                    }
-                    return hash;
-                }
-            },
-            else => return block_hash,
-        }).block_hash;
+            else => unreachable,
+        };
     }
 
     pub fn execute(self: *@This(), cpu: *sh4.SH4, max_cycles: i32) !u32 {
@@ -986,51 +989,99 @@ pub const SH4JIT = struct {
 
         if (ctx.entry_point_physical_address >= 0x0C00_0000) {
             switch (self.block_invalidation) {
-                .Hash => {
+                .Hash => cont: {
                     // Patch end address of the block, and expected hash value.
                     //          This can happen because of some optimisations (inline_backwards_bra). Solution is hackish for now.
+                    const start = ctx.entry_point_physical_address - 0x0C00_0000;
                     const end = (if (ctx.entry_point_physical_address != ctx.start_physical_pc) ctx.entry_point_physical_address + 16 else ctx.current_physical_pc) - 0x0C00_0000;
                     b.instructions.items[hash_invalidation_end_offset].Mov.src.imm32 = end;
 
-                    const instruction_len = (end - (ctx.entry_point_physical_address - 0x0C00_0000)) >> 1;
+                    const patch = b.instructions.items[hash_invalidation_end_offset..][0..16];
+
+                    const instruction_len = (end - start) >> 1;
                     const hash = switch (instruction_len) {
-                        inline 1...32 => |len| h: {
-                            if (len == 1) {
-                                b.instructions.items[hash_invalidation_end_offset] = .Nop;
-                            } else {
-                                b.instructions.items[hash_invalidation_end_offset] = .{
-                                    .Mov = .{
-                                        .dst = .{ .reg64 = ArgRegisters[2] },
-                                        .src = .{ .imm64 = BlockHashPrime },
-                                    },
-                                };
-                            }
-                            // Patch out the function call and inline the 'hash' computation.
-                            b.instructions.items[hash_invalidation_end_offset + 1] = .{
-                                .Mov = .{
-                                    .dst = .{ .reg64 = ReturnRegister },
-                                    .src = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .size = 64 } },
-                                },
-                            };
-                            for (0..7) |i| {
-                                if (len > 4 * (i + 1)) {
-                                    b.instructions.items[hash_invalidation_end_offset + 2 + 2 * i] = .{
-                                        .Mul = .{
-                                            .dst = .{ .reg64 = ReturnRegister },
-                                            .src = .{ .reg64 = ArgRegisters[2] },
-                                        },
-                                    };
-                                    b.instructions.items[hash_invalidation_end_offset + 2 + 2 * i + 1] = .{
-                                        .Xor = .{
-                                            .dst = .{ .reg64 = ReturnRegister },
-                                            .src = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .displacement = @intCast((i + 1) * 8), .size = 64 } },
-                                        },
-                                    };
-                                }
-                            }
-                            break :h block_hash_function(len)(@ptrCast(ctx.cpu._dc.?.ram), ctx.entry_point_physical_address - 0x0C00_0000, end);
+                        inline 1, 2 => |len| {
+                            const hash = specialized_block_hash(len, @ptrCast(ctx.cpu._dc.?.ram), start, end);
+                            // Overwrite everything and compare directly with memory.
+                            patch[0] = .Nop;
+                            patch[1] = .Nop;
+                            b.instructions.items[hash_invalidation_value_offset] = .Nop;
+                            b.instructions.items[hash_invalidation_value_offset + 1] = .{ .Cmp = .{
+                                .lhs = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .size = if (len == 1) 16 else 32 } },
+                                .rhs = if (len == 1) .{ .imm16 = @truncate(hash) } else .{ .imm32 = @truncate(hash) },
+                            } };
+                            break :cont;
                         },
-                        else => block_hash(@ptrCast(ctx.cpu._dc.?.ram), ctx.entry_point_physical_address - 0x0C00_0000, end),
+                        inline 3...32 => |len| h: {
+                            patch[0] = .Nop;
+                            // Patch out the function call and inline the 'hash' computation.
+                            patch[1] = .{ .Mov = .{
+                                .dst = .{ .reg64 = ReturnRegister },
+                                .src = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .size = 64 } },
+                            } };
+                            switch (len) {
+                                3 => {
+                                    patch[2] = .{ .Shl = .{
+                                        .dst = .{ .reg64 = ReturnRegister },
+                                        .amount = .{ .imm8 = 16 },
+                                    } };
+                                },
+                                4 => {},
+                                5, 6 => {
+                                    patch[1] = .{ .Mov = .{
+                                        .dst = .{ .reg64 = ReturnRegister },
+                                        .src = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .displacement = 8, .size = if (len == 5) 16 else 32 } },
+                                    } };
+                                    patch[2] = .{ .Xor = .{
+                                        .dst = .{ .reg64 = ReturnRegister },
+                                        .src = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .size = 64 } },
+                                    } };
+                                },
+                                7 => {
+                                    // Changed my mind, load the second qword first (avoids an extra instruction).
+                                    patch[1] = .{ .Mov = .{
+                                        .dst = .{ .reg64 = ReturnRegister },
+                                        .src = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .displacement = 8, .size = 64 } },
+                                    } };
+                                    patch[2] = .{ .Shl = .{
+                                        .dst = .{ .reg64 = ReturnRegister },
+                                        .amount = .{ .imm8 = 16 },
+                                    } };
+                                    patch[3] = .{ .Xor = .{
+                                        .dst = .{ .reg64 = ReturnRegister },
+                                        .src = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .size = 64 } },
+                                    } };
+                                },
+                                8 => {
+                                    patch[2] = .{ .Xor = .{
+                                        .dst = .{ .reg64 = ReturnRegister },
+                                        .src = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .displacement = 8, .size = 64 } },
+                                    } };
+                                },
+                                else => {
+                                    b.instructions.items[hash_invalidation_end_offset] = .{
+                                        .Mov = .{
+                                            .dst = .{ .reg64 = ArgRegisters[2] },
+                                            .src = .{ .imm64 = BlockHashPrime },
+                                        },
+                                    };
+                                    for (0..7) |i| {
+                                        if (len > 4 * (i + 1)) {
+                                            patch[2 + 2 * i] = .{ .Mul = .{
+                                                .dst = .{ .reg64 = ReturnRegister },
+                                                .src = .{ .reg64 = ArgRegisters[2] },
+                                            } };
+                                            patch[2 + 2 * i + 1] = .{ .Xor = .{
+                                                .dst = .{ .reg64 = ReturnRegister },
+                                                .src = .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .displacement = @intCast((i + 1) * 8), .size = 64 } },
+                                            } };
+                                        }
+                                    }
+                                },
+                            }
+                            break :h specialized_block_hash(len, @ptrCast(ctx.cpu._dc.?.ram), start, end);
+                        },
+                        else => block_hash(@ptrCast(ctx.cpu._dc.?.ram), start, end),
                     };
                     b.instructions.items[hash_invalidation_value_offset].Mov.src.imm64 = hash;
                 },
