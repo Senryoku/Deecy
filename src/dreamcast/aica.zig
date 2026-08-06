@@ -596,33 +596,43 @@ const LFOPhaseInc = t: {
     break :t table;
 };
 
-fn attenuate(sample: i32, attenuation: u8) i32 {
-    if (attenuation >= 0xF) return 0;
-    // Each step reduces the output by 3dB (muliplies the amplitude by 1/sqrt(2))
-    const factors = comptime f: {
-        var table: [16]f32 = @splat(1.0);
-        for (1..table.len) |i|
-            table[i] = table[i - 1] / @sqrt(2.0);
-        break :f table;
-    };
-    // TODO: Move this to integer only?
-    const s: f32 = @floatFromInt(sample);
-    return @round(factors[attenuation] * s);
+const attenuation_shift = 16;
+const attenuation_one = 1 << attenuation_shift;
+// Each step reduces the output by 3dB (muliplies the amplitude by 1/sqrt(2))
+// Table is larger than strictly necessary to keep attenuate() fast (panning can theorically result in attenuation > 0xF for example).
+// attenuation >= 0xF is 0, full attenuation and no output.
+const attenuation_factors = f: {
+    var table: [32]i32 = @splat(0);
+    var current: f64 = attenuation_one;
+    for (0..0xF) |i| {
+        table[i] = @round(current);
+        current /= @sqrt(2.0);
+    }
+    break :f table;
+};
+
+inline fn attenuate(sample: i32, attenuation: u8) i32 {
+    std.debug.assert(attenuation < attenuation_factors.len);
+    const product = @as(i64, sample) * attenuation_factors[attenuation];
+    const rounded = product + (attenuation_one >> 1);
+    return @intCast(rounded >> attenuation_shift);
 }
 
 fn apply_pan_attenuation(sample: i32, level: u4, pan: u5) struct { left: i32, right: i32 } {
     const att = 0xF - level;
-    var left_att: u8 = att;
-    var right_att: u8 = att;
+
+    // 5th bit selects the side to attenuate
     // PAN == 0x00 and 0x10 means center (no attenuation)
     const pan_att = pan & 0xF;
-    // 5th bit selects the side to attenuate
-    if (pan & 0x10 == 0x10) {
-        right_att += pan_att;
-    } else {
-        left_att += pan_att;
-    }
-    return .{ .left = attenuate(sample, left_att), .right = attenuate(sample, right_att) };
+    const is_right = @as(u8, pan) >> 4;
+    const is_left = is_right ^ 1;
+    const left_att = att + (pan_att * is_left);
+    const right_att = att + (pan_att * is_right);
+
+    return .{
+        .left = attenuate(sample, left_att),
+        .right = attenuate(sample, right_att),
+    };
 }
 
 pub const DSPEmulation = enum { Bypass, Interpreter, JIT };
