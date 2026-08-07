@@ -1824,7 +1824,7 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
                 if (zgui.isItemHovered(.{})) zgui.setMouseCursor(.hand);
                 // Vertices/Triangles overlay
                 const draw_list = zgui.getWindowDrawList();
-                switch (vertices[0]) {
+                switch (vertices[0].tag()) {
                     .SpriteType1 => for (vertices) |s| {
                         var points: [3][2]f32 = undefined;
                         for (s.SpriteType1.uvs(), 0..) |uv, i| {
@@ -1897,7 +1897,7 @@ fn display_vertex_data(self: *@This(), vertex: *const Holly.VertexParameter) voi
 
     if (vertex.tag() == .SpriteType0 or vertex.tag() == .SpriteType1) {
         const sprite_positions = vertex.sprite_positions();
-        switch (vertex.*) {
+        switch (vertex.tagged()) {
             .SpriteType0 => {
                 for (0..3) |i| {
                     zgui.text("Pos: {d: >6.2}, {d: >6.2}, {d: >6.2}", .{ sprite_positions[i][0], sprite_positions[i][1], sprite_positions[i][2] });
@@ -1922,7 +1922,7 @@ fn display_vertex_data(self: *@This(), vertex: *const Holly.VertexParameter) voi
     var offset_intensity: ?f32 = null;
     var uv: ?[2]f32 = null;
 
-    switch (vertex.*) {
+    switch (vertex.tagged()) {
         .Type0 => |v| {
             base_color = fRGBA.from_packed(v.base_color, true);
         },
