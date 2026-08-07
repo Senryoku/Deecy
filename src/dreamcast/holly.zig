@@ -1328,7 +1328,105 @@ const VertexParameter_Sprite_1 = packed struct(u512) {
     }
 };
 
-pub const VertexParameter = union(enum) {
+pub const VertexParameterType = enum(u8) {
+    Type0,
+    Type1,
+    Type2,
+    Type3,
+    Type4,
+    Type5,
+    Type6,
+    Type7,
+    Type8,
+    Type9,
+    Type10,
+    Type11,
+    Type12,
+    Type13,
+    Type14,
+    SpriteType0,
+    SpriteType1,
+
+    /// Returns the size in words (4 bytes) of the vertex parameter
+    pub fn size(format: @This()) u32 {
+        return switch (format) {
+            .Type5, .Type6, .Type11, .Type12, .Type13, .Type14, .SpriteType0, .SpriteType1 => 16,
+            else => 8,
+        };
+    }
+};
+
+/// This follows the TA layout, except that some unused bits are re-purposed as a union tag.
+pub const VertexParameter = union {
+    Type0: VertexParameter_0,
+    Type1: VertexParameter_1,
+    Type2: VertexParameter_2,
+    Type3: VertexParameter_3,
+    Type4: VertexParameter_4,
+    Type5: VertexParameter_5,
+    Type6: VertexParameter_6,
+    Type7: VertexParameter_7,
+    Type8: VertexParameter_8,
+    Type9: VertexParameter_9,
+    Type10: VertexParameter_10,
+    Type11: VertexParameter_11,
+    Type12: VertexParameter_12,
+    Type13: VertexParameter_13,
+    Type14: VertexParameter_14,
+    SpriteType0: VertexParameter_Sprite_0,
+    SpriteType1: VertexParameter_Sprite_1,
+
+    comptime {
+        // For some reason in debug mode, the size of this union is 80 bytes (as of zig 0.16.0).
+        // A packed union would be cleaner and a garanteed memory layout, but requires manual padding.
+        if (@import("builtin").mode != .Debug) std.debug.assert(@sizeOf(@This()) == 64);
+    }
+
+    pub inline fn init(cmd: []u32, t: VertexParameterType) @This() {
+        var r: @This() = undefined;
+        r.init_in_place(cmd, t);
+        return r;
+    }
+
+    pub inline fn init_in_place(self: *@This(), cmd: []u32, t: VertexParameterType) void {
+        @memcpy(std.mem.asBytes(self)[0..64], std.mem.sliceAsBytes(cmd));
+        // Re-purpose unused bits in PCW.obj_control as a union tag.
+        std.mem.bytesAsValue(ParameterControlWord, std.mem.asBytes(self)).obj_control._ = @intFromEnum(t);
+        std.debug.assert(self.tag() == t);
+    }
+
+    pub fn tag(self: *const @This()) VertexParameterType {
+        return @enumFromInt(std.mem.bytesAsValue(ParameterControlWord, std.mem.asBytes(self)).obj_control._);
+    }
+
+    pub fn tagged(self: *const @This()) TaggedVertexParameter {
+        switch (self.tag()) {
+            inline else => |f| return @unionInit(TaggedVertexParameter, @tagName(f), @as(*const @FieldType(TaggedVertexParameter, @tagName(f)), @ptrCast(@alignCast(self))).*),
+        }
+    }
+
+    pub fn position(self: *const @This()) [3]f32 {
+        std.debug.assert(self.tag() != .SpriteType0 and self.tag() != .SpriteType1);
+        return @as([*]const f32, @ptrCast(@alignCast(self)))[1..4].*;
+    }
+
+    // NOTE: Z position of the last vertex will be garbage.
+    pub fn sprite_positions(self: *const @This()) [4][3]f32 {
+        std.debug.assert(self.tag() == .SpriteType0 or self.tag() == .SpriteType1);
+        return @bitCast(@as([*]const f32, @ptrCast(@alignCast(self)))[1 .. 1 + 4 * 3].*);
+    }
+
+    pub fn scale_x(self: *@This(), factor: f32) void {
+        return self.tagged().scale_x(factor);
+    }
+
+    pub fn uv(self: *const @This()) ?[2]f32 {
+        return self.tagged().uv();
+    }
+};
+
+/// Convenient tagged wrapper around `VertexParameter`
+pub const TaggedVertexParameter = union(VertexParameterType) {
     Type0: VertexParameter_0,
     Type1: VertexParameter_1,
     Type2: VertexParameter_2,
@@ -1349,23 +1447,6 @@ pub const VertexParameter = union(enum) {
 
     pub fn tag(self: @This()) std.meta.Tag(@This()) {
         return std.meta.activeTag(self);
-    }
-
-    /// Returns the size in words (4 bytes) of the vertex parameter
-    pub fn size(format: std.meta.Tag(@This())) u32 {
-        return switch (format) {
-            inline else => |f| @sizeOf(@FieldType(@This(), @tagName(f))) / 4,
-        };
-    }
-    pub fn position(self: *const @This()) [3]f32 {
-        std.debug.assert(self.tag() != .SpriteType0 and self.tag() != .SpriteType1);
-        return @as([*]const f32, @ptrCast(@alignCast(self)))[1..4].*;
-    }
-
-    // NOTE: Z position of the last vertex will be garbage.
-    pub fn sprite_positions(self: *const @This()) [4][3]f32 {
-        std.debug.assert(self.tag() == .SpriteType0 or self.tag() == .SpriteType1);
-        return @bitCast(@as([*]const f32, @ptrCast(@alignCast(self)))[1 .. 1 + 4 * 3].*);
     }
 
     pub fn scale_x(self: *@This(), factor: f32) void {
@@ -1403,7 +1484,7 @@ pub const VertexParameter = union(enum) {
     }
 };
 
-fn obj_control_to_vertex_parameter_format(obj_control: ObjControl) std.meta.Tag(VertexParameter) {
+fn obj_control_to_vertex_parameter_format(obj_control: ObjControl) std.meta.Tag(TaggedVertexParameter) {
     // Shadow (Ignored) - Volume - ColType (u2) - Texture - Offset (Ignored) - Gouraud (Ignored) - 16bit UV
     const masked = @as(u16, @bitCast(obj_control)) & 0b00000000_0_1_11_1_0_0_1;
     switch (@as(ObjControl, @bitCast(masked))) {
@@ -2292,29 +2373,20 @@ pub const Holly = struct {
                                         holly_log.err(termcolor.red("Failed to grow VertexParameter array: {t}"), .{err});
                                 }
                                 const polygon_obj_control = polygon.control_word().obj_control;
-                                switch (polygon) {
-                                    .Sprite => {
+                                const format: VertexParameterType = switch (polygon) {
+                                    .Sprite => s: {
                                         if (!parameter_control_word.end_of_strip) // Sanity check: For Sprites/Quads, each vertex parameter describes an entire polygon.
-                                            holly_log.warn(termcolor.yellow("Unexpected Sprite without end of strip bit:") ++ "\n  {}", .{parameter_control_word});
+                                            holly_log.warn("Unexpected Sprite without end of strip bit:\n  {}", .{parameter_control_word});
 
-                                        if (polygon_obj_control.texture == 0) {
-                                            if (self._ta_command_buffer_index < VertexParameter.size(.SpriteType0)) return;
-                                            display_list.vertex_parameters.appendAssumeCapacity(.{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* });
-                                        } else {
-                                            if (self._ta_command_buffer_index < VertexParameter.size(.SpriteType1)) return;
-                                            display_list.vertex_parameters.appendAssumeCapacity(.{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* });
-                                        }
+                                        if (polygon_obj_control.texture == 0) break :s .SpriteType0;
+                                        break :s .SpriteType1;
                                     },
-                                    else => {
-                                        const format = obj_control_to_vertex_parameter_format(polygon_obj_control);
-                                        if (self._ta_command_buffer_index < VertexParameter.size(format)) return;
+                                    else => obj_control_to_vertex_parameter_format(polygon_obj_control),
+                                };
+                                // Wait for the complete command.
+                                if (self._ta_command_buffer_index < format.size()) return;
 
-                                        display_list.vertex_parameters.appendAssumeCapacity(switch (format) {
-                                            .SpriteType0, .SpriteType1 => unreachable,
-                                            inline else => |t| @unionInit(VertexParameter, @tagName(t), @as(*@FieldType(VertexParameter, @tagName(t)), @ptrCast(&self._ta_command_buffer)).*),
-                                        });
-                                    },
-                                }
+                                display_list.vertex_parameters.addOneAssumeCapacity().init_in_place(&self._ta_command_buffer, format);
 
                                 if (parameter_control_word.end_of_strip) {
                                     display_list.vertex_strips.append(self._allocator, .{

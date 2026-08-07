@@ -409,7 +409,7 @@ pub const RenderPass = struct {
     }
 };
 
-fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
+fn gen_sprite_vertices(sprite: HollyModule.TaggedVertexParameter) [4]Vertex {
     var r: [4]Vertex = @splat(Vertex.undef);
 
     // B --- C
@@ -2115,7 +2115,7 @@ pub const Renderer = struct {
 
                     const strip_start = self.vertices.items.len;
                     for (display_list.vertex_parameters.items[first_vertex..last_vertex]) |vertex| {
-                        switch (vertex) {
+                        switch (vertex.tagged()) {
                             // Packed Color, Non-Textured
                             .Type0 => |v| {
                                 // Sanity checks.
@@ -2348,7 +2348,7 @@ pub const Renderer = struct {
                                 });
                             },
                             .SpriteType0, .SpriteType1 => {
-                                var vs = gen_sprite_vertices(vertex);
+                                var vs = gen_sprite_vertices(vertex.tagged());
                                 for (&vs) |*v| {
                                     v.primitive_index = primitive_index;
                                     v.base_color = global_parameters.sprite_face_base_color.with_alpha(use_alpha);
