@@ -2287,6 +2287,10 @@ pub const Holly = struct {
                         else => {
                             if (self._ta_current_polygon) |polygon| {
                                 const display_list = self.ta_current_lists().get_list(list_type);
+                                if (display_list.vertex_parameters.unusedCapacitySlice().len == 0) {
+                                    display_list.vertex_parameters.ensureTotalCapacity(self._allocator, @max(1024, display_list.vertex_parameters.items.len * 2)) catch |err|
+                                        holly_log.err(termcolor.red("Failed to grow VertexParameter array: {t}"), .{err});
+                                }
                                 const polygon_obj_control = polygon.control_word().obj_control;
                                 switch (polygon) {
                                     .Sprite => {
@@ -2295,23 +2299,20 @@ pub const Holly = struct {
 
                                         if (polygon_obj_control.texture == 0) {
                                             if (self._ta_command_buffer_index < VertexParameter.size(.SpriteType0)) return;
-                                            display_list.vertex_parameters.append(self._allocator, .{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch |err|
-                                                holly_log.err(termcolor.red("Failed to append VertexParameter: {t}"), .{err});
+                                            display_list.vertex_parameters.appendAssumeCapacity(.{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* });
                                         } else {
                                             if (self._ta_command_buffer_index < VertexParameter.size(.SpriteType1)) return;
-                                            display_list.vertex_parameters.append(self._allocator, .{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* }) catch |err|
-                                                holly_log.err(termcolor.red("Failed to append VertexParameter: {t}"), .{err});
+                                            display_list.vertex_parameters.appendAssumeCapacity(.{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* });
                                         }
                                     },
                                     else => {
                                         const format = obj_control_to_vertex_parameter_format(polygon_obj_control);
                                         if (self._ta_command_buffer_index < VertexParameter.size(format)) return;
 
-                                        display_list.vertex_parameters.append(self._allocator, switch (format) {
+                                        display_list.vertex_parameters.appendAssumeCapacity(switch (format) {
                                             .SpriteType0, .SpriteType1 => unreachable,
                                             inline else => |t| @unionInit(VertexParameter, @tagName(t), @as(*@FieldType(VertexParameter, @tagName(t)), @ptrCast(&self._ta_command_buffer)).*),
-                                        }) catch |err|
-                                            holly_log.err(termcolor.red("Failed to append VertexParameter: {t}"), .{err});
+                                        });
                                     },
                                 }
 
