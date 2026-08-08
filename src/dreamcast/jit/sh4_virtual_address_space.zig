@@ -8,12 +8,14 @@ pub var read_8_ptr: u64 = 0;
 pub var read_16_ptr: u64 = 0;
 pub var read_32_ptr: u64 = 0;
 pub var read_64_ptr: u64 = 0;
+pub var read_32_tcnt_0_ptr: u64 = 0;
 pub var write_8_ptr: u64 = 0;
 pub var write_16_ptr: u64 = 0;
 pub var write_32_ptr: u64 = 0;
 pub var write_64_ptr: u64 = 0;
 pub var write_32_sq_ptr: u64 = 0;
 pub var write_64_sq_ptr: u64 = 0;
+pub var write_32_p4_ptr: u64 = 0;
 
 pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *u64) !void {
     if (fault_address >= space_base and fault_address < space_base + space_size) {
@@ -104,7 +106,29 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
 
         instructions[0] = 0xE8; // call rel32
         const offset_patch = @as(*align(1) i32, @ptrFromInt(start_patch + 1));
-        if (direction == .Write and dc_addr >= 0xE0000000 and dc_addr <= 0xE3FFFFFF) {
+        if (direction == .Read and size == ._32 and dc_addr == 0xFFD8000C) {
+            const dest: i64 = @intCast(switch (size) {
+                ._32 => read_32_tcnt_0_ptr,
+                else => return error.InvalidTimerReadSize,
+            });
+            offset_patch.* = @intCast(dest - @as(i64, @intCast(start_patch + call_size)));
+        } else if (direction == .Read and size == ._32 and dc_addr == 0xA05F688C) {
+            // SB_FFST (Read Only): FIFO status, not emulated, always return 0.
+            patch_size = 5;
+            @memcpy(instructions[0..5], &[_]u8{ 0xb8, 0x00, 0x00, 0x00, 0x00 }); // mov eax,0x0
+            log.debug("  Patched SB_FFST read: [-16] {X}", .{@as([*]u8, @ptrFromInt(start_patch - 16))[0..16]});
+            log.debug("                        [  0] {X}", .{instructions[0..16]});
+            if (patch_size > call_size)
+                Architecture.convert_to_nops(instructions[call_size..patch_size]);
+            return;
+        } else if (direction == .Write and size == ._32 and (dc_addr == 0xFF000038 or dc_addr == 0xFF00003C)) {
+            // std.debug.print("  Inlined P4 write: {X}\n", .{dc_addr});
+            const dest: i64 = @intCast(switch (size) {
+                ._32 => write_32_p4_ptr,
+                else => return error.InvalidP4WriteSize,
+            });
+            offset_patch.* = @intCast(dest - @as(i64, @intCast(start_patch + call_size)));
+        } else if (direction == .Write and dc_addr >= 0xE0000000 and dc_addr <= 0xE3FFFFFF) {
             const dest: i64 = @intCast(switch (size) {
                 ._32 => write_32_sq_ptr,
                 ._64 => write_64_sq_ptr,

@@ -840,14 +840,15 @@ pub const SH4 = struct {
         self.schedule_timer(channel);
     }
 
-    fn update_timer_registers(self: *@This(), channel: u2) void {
+    pub inline fn update_timer_registers(self: *@This(), channel: u2) void {
         if (self._dc) |dc| {
             const TSTR = self.read_p4_register(u32, .TSTR);
             if ((TSTR >> @intCast(channel)) & 0x1 == 1) {
                 const tcr = self.read_p4_register(P4.TCR, TimerRegisters[channel].control);
                 const cycles = dc._global_cycles - self._last_timer_update[channel];
 
-                const pcr: u8 = @intCast(self.read_p4_register(P4.FRQCR, .FRQCR).peripheral_clock_ratio());
+                // const pcr: u8 = @intCast(self.read_p4_register(P4.FRQCR, .FRQCR).peripheral_clock_ratio());
+                const pcr = 4; // NOTE: Constant on the DC, make sure to skip the FRQCR read.
                 const shift = ([_]u5{
                     @ctz(@as(u16, 4) * pcr),
                     @ctz(@as(u16, 16) * pcr),

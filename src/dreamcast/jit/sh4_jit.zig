@@ -750,6 +750,42 @@ pub const SH4JIT = struct {
                 self.block_cache.cursor += block_size;
                 self.block_cache.align_next_block();
             }
+            {
+                VirtualAddressSpace.VAS.write_32_p4_ptr = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
+                b.clearRetainingCapacity();
+
+                // try b.mov(.{ .reg64 = ArgRegisters[3] }, .{ .reg64 = addr });
+                // try b.shr(.{ .reg64 = ArgRegisters[3] }, 24);
+                // try b.cmp(.{ .reg64 = ArgRegisters[3] }, .{ .imm32 = 0xFF });
+                // try b.append(.{ .Jmp = .{ .condition = .NotEqual, .dst = .{ .abs = VirtualAddressSpace.VAS.write_32_ptr } } });
+
+                // Compute real offset into SH4 P4 slice (see SH4 implementation).
+                try b.mov(.{ .reg = ReturnRegister }, .{ .reg = addr });
+                try b.shr(.{ .reg = ReturnRegister }, 12);
+                try b.@"and"(.{ .reg = ReturnRegister }, .{ .imm32 = 0xF80 });
+                try b.@"and"(.{ .reg = addr }, .{ .imm32 = 0x7F });
+                try b.@"or"(.{ .reg = addr }, .{ .reg = ReturnRegister });
+                // Load p4_registers pointer from the slice.
+                try b.mov(.{ .reg64 = ArgRegisters[3] }, .{ .mem = .{ .base = SH4PtrRegister, .index = null, .displacement = @offsetOf(sh4.SH4, "p4_registers"), .scale = ._1, .size = 64 } });
+                try b.mov(.{ .mem = .{ .base = ArgRegisters[3], .index = addr, .scale = ._1, .size = 32 } }, .{ .reg = value });
+                try b.append(.Ret);
+
+                const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+
+                self.block_cache.cursor += block_size;
+                self.block_cache.align_next_block();
+            }
+            {
+                VirtualAddressSpace.VAS.read_32_tcnt_0_ptr = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
+                b.clearRetainingCapacity();
+
+                try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = @intFromPtr(&read_timer(.TCNT0)) } } });
+
+                const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+
+                self.block_cache.cursor += block_size;
+                self.block_cache.align_next_block();
+            }
         }
     }
 
@@ -1686,6 +1722,7 @@ inline fn fast_call_epilogue() void {
 fn _out_of_line_read(comptime T: type) fn (_: *const sh4.SH4, virtual_addr: u32) callconv(Architecture.CallingConvention) T {
     return struct {
         noinline fn func(_: *const sh4.SH4, virtual_addr: u32) callconv(Architecture.CallingConvention) T {
+            // std.debug.print("Read({}) from {X:0>8}\n", .{ T, virtual_addr });
             if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000); // We can't garantee this won't be called with a RAM address in FastMem mode (even if it is highly unlikely)
             fast_call_prologue();
             defer fast_call_epilogue();
@@ -1701,6 +1738,7 @@ pub const _out_of_line_read64 = _out_of_line_read(u64);
 fn _out_of_line_write(comptime T: type) fn (_: *sh4.SH4, virtual_addr: u32, value: T) callconv(Architecture.CallingConvention) void {
     return struct {
         noinline fn func(_: *sh4.SH4, virtual_addr: u32, value: T) callconv(Architecture.CallingConvention) void {
+            // std.debug.print("Write({}) to {X:0>8}\n", .{ T, virtual_addr });
             if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
             fast_call_prologue();
             defer fast_call_epilogue();
@@ -1712,6 +1750,24 @@ pub const _out_of_line_write8 = _out_of_line_write(u8);
 pub const _out_of_line_write16 = _out_of_line_write(u16);
 pub const _out_of_line_write32 = _out_of_line_write(u32);
 pub const _out_of_line_write64 = _out_of_line_write(u64);
+
+fn read_timer(comptime R: sh4.P4Register) fn () callconv(Architecture.CallingConvention) u32 {
+    return struct {
+        fn read() callconv(Architecture.CallingConvention) u32 {
+            // NOTE: Probably unnecessary, there are no FP operations here.
+            //   fast_call_prologue();
+            //   defer fast_call_epilogue();
+            const cpu = get_cpu();
+            cpu.update_timer_registers(switch (R) {
+                .TCNT0 => 0,
+                .TCNT1 => 1,
+                .TCNT2 => 2,
+                else => @compileError("Invalid Timer Register"),
+            });
+            return cpu.p4_register_addr(u32, @intFromEnum(R)).*;
+        }
+    }.read;
+}
 
 const AddressingMode = union(enum) { HostReg: JIT.Register, Reg: u4, Reg_R0: u4, GBR };
 
