@@ -1,7 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const termcolor = @import("termcolor");
-const Dreamcast = @import("../dreamcast.zig").Dreamcast;
+const DreamcastModule = @import("../dreamcast.zig");
+const Dreamcast = DreamcastModule.Dreamcast;
 const Architecture = @import("x86_64.zig");
 pub const VAS = @import("sh4_virtual_address_space.zig");
 
@@ -11,6 +12,7 @@ base: []align(std.heap.page_size_min) u8,
 mirrors: std.ArrayList([]align(std.heap.page_size_min) u8) = .empty,
 boot: std.posix.fd_t,
 ram: std.posix.fd_t,
+ocram: std.posix.fd_t,
 vram: std.posix.fd_t,
 aram: std.posix.fd_t,
 
@@ -23,6 +25,7 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
         .base = try std.posix.mmap(null, 0x1_0000_0000, .{}, .{ .TYPE = .PRIVATE, .ANONYMOUS = true, .NORESERVE = true }, -1, 0),
         .boot = try allocate_backing_memory("boot", Dreamcast.BootSize),
         .ram = try allocate_backing_memory("ram", Dreamcast.RAMSize),
+        .ocram = try allocate_backing_memory("ocram", DreamcastModule.SH4.OCRAMSize),
         .vram = try allocate_backing_memory("vram", Dreamcast.VRAMSize),
         .aram = try allocate_backing_memory("aram", Dreamcast.ARAMSize),
     };
@@ -36,6 +39,12 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
         try vas.mirror(allocator, vas.vram, Dreamcast.VRAMSize, base + 0x0600_0000);
         for (0..(0x1000_0000 - 0x0C00_0000) / Dreamcast.RAMSize) |i|
             try vas.mirror(allocator, vas.ram, Dreamcast.RAMSize, @intCast(base + 0x0C00_0000 + i * Dreamcast.RAMSize));
+    }
+
+    var ocram_mirror: u64 = 0x7C000000;
+    while (ocram_mirror < 0x80000000) {
+        try vas.mirror(allocator, vas.ocram, DreamcastModule.SH4.OCRAMSize, ocram_mirror);
+        ocram_mirror += DreamcastModule.SH4.OCRAMSize;
     }
 
     GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE = vas.base;

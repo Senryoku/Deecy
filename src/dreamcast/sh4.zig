@@ -200,6 +200,7 @@ const OperandCacheState = struct {
 };
 
 pub const SH4 = struct {
+    pub const OCRAMSize = 0x2000;
     pub const EnableTRAPACallback = false;
 
     // General Registers
@@ -279,7 +280,7 @@ pub const SH4 = struct {
         instructions.init_table();
 
         var sh4: SH4 = .{
-            ._operand_cache = try allocator.alloc(u8, 0x2000), // NOTE: Actual Operand cache is 16k, but we're only emulating the RAM accessible part, which is 8k.
+            ._operand_cache = if (dc) |d| d.ocram else try allocator.alloc(u8, OCRAMSize), // NOTE: Actual Operand cache is 16k, but we're only emulating the RAM accessible part, which is 8k.
             .p4_registers = try allocator.alloc(u8, 0x1000),
             .itlb = try allocator.alloc(mmu.TLBEntry, 4),
             .utlb = try allocator.alloc(mmu.TLBEntry, 64),
@@ -299,7 +300,8 @@ pub const SH4 = struct {
         self._allocator.free(self.utlb);
         self._allocator.free(self.itlb);
         self._allocator.free(self.p4_registers);
-        self._allocator.free(self._operand_cache);
+        if (self._dc == null)
+            self._allocator.free(self._operand_cache);
         self._allocator.destroy(self._operand_cache_state);
     }
 

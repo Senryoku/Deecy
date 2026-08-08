@@ -133,7 +133,7 @@ pub const Dreamcast = struct {
     pub const ARAMSize = AICA.RAMSize;
     pub const SH4Clock = 200_000_000;
 
-    cpu: SH4,
+    cpu: SH4 = undefined,
     gpu: Holly = undefined,
     aica: AICA = undefined,
     maple: MapleHost = .init,
@@ -148,6 +148,7 @@ pub const Dreamcast = struct {
     boot: []align(64) u8 = undefined,
     flash: Flash,
     ram: []align(64) u8 = undefined,
+    ocram: []align(64) u8 = undefined,
     vram: []align(64) u8 = undefined,
     aram: []align(64) u8 = undefined,
     hardware_registers: []align(4) u8,
@@ -175,7 +176,6 @@ pub const Dreamcast = struct {
 
         const dc = try allocator.create(Dreamcast);
         dc.* = Dreamcast{
-            .cpu = try .init(allocator, dc),
             .flash = try .init(allocator),
             .modem = try .init(allocator, dc),
             .hardware_registers = try allocator.allocWithOptions(u8, 0x20_0000, .@"4", null), // FIXME: Huge waste of memory.
@@ -186,16 +186,19 @@ pub const Dreamcast = struct {
             dc.sh4_jit = try .init(allocator, null);
             dc.boot = @as([*]align(64) u8, @ptrCast(@alignCast(dc.sh4_jit.virtual_address_space.base_addr())))[0..BootSize];
             dc.ram = @as([*]align(64) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0C00_0000))[0..RAMSize];
+            dc.ocram = @as([*]align(64) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x7C00_0000))[0..SH4.OCRAMSize];
             dc.vram = @as([*]align(64) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0400_0000))[0..Holly.VRAMSize];
             dc.aram = @as([*]align(64) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0080_0000))[0..AICA.RAMSize];
         } else {
             dc.boot = try allocator.allocWithOptions(u8, BootSize, .@"64", null);
             dc.ram = try allocator.allocWithOptions(u8, RAMSize, .@"64", null);
+            dc.ocram = try allocator.allocWithOptions(u8, SH4.OCRAMSize, .@"64", null);
             dc.vram = try allocator.allocWithOptions(u8, Holly.VRAMSize, .@"64", null);
             dc.aram = try allocator.allocWithOptions(u8, AICA.RAMSize, .@"64", null);
             dc.sh4_jit = try .init(allocator, dc.ram.ptr);
         }
 
+        dc.cpu = try .init(allocator, dc);
         dc.gpu = try .init(allocator, dc);
         dc.aica = try .init(allocator, dc.aram);
         dc.gdrom = try .init(allocator, dc);
