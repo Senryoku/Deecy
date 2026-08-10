@@ -8,12 +8,15 @@ pub var read_8_ptr: u64 = 0;
 pub var read_16_ptr: u64 = 0;
 pub var read_32_ptr: u64 = 0;
 pub var read_64_ptr: u64 = 0;
+pub var read_32_tcnt_ptr: u64 = 0;
+pub var read_32_p4_ptr: u64 = 0;
 pub var write_8_ptr: u64 = 0;
 pub var write_16_ptr: u64 = 0;
 pub var write_32_ptr: u64 = 0;
 pub var write_64_ptr: u64 = 0;
 pub var write_32_sq_ptr: u64 = 0;
 pub var write_64_sq_ptr: u64 = 0;
+pub var write_32_p4_ptr: u64 = 0;
 
 pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *u64) !void {
     if (fault_address >= space_base and fault_address < space_base + space_size) {
@@ -104,7 +107,26 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
 
         instructions[0] = 0xE8; // call rel32
         const offset_patch = @as(*align(1) i32, @ptrFromInt(start_patch + 1));
-        if (direction == .Write and dc_addr >= 0xE0000000 and dc_addr <= 0xE3FFFFFF) {
+
+        if (direction == .Read and size == ._32 and is_tnct(dc_addr)) {
+            log.debug("  Inlined TCNT read: {X}", .{dc_addr});
+            const dest: i64 = @intCast(read_32_tcnt_ptr);
+            offset_patch.* = @intCast(dest - @as(i64, @intCast(start_patch + call_size)));
+        } else if (direction == .Read and size == ._32 and safe_p4_read(dc_addr)) {
+            log.debug("  Inlined P4 read: {X}", .{dc_addr});
+            const dest: i64 = @intCast(switch (size) {
+                ._32 => read_32_p4_ptr,
+                else => return error.InvalidP4ReadSize,
+            });
+            offset_patch.* = @intCast(dest - @as(i64, @intCast(start_patch + call_size)));
+        } else if (direction == .Write and size == ._32 and safe_p4_write(dc_addr)) {
+            log.debug("  Inlined P4 write: {X}", .{dc_addr});
+            const dest: i64 = @intCast(switch (size) {
+                ._32 => write_32_p4_ptr,
+                else => return error.InvalidP4WriteSize,
+            });
+            offset_patch.* = @intCast(dest - @as(i64, @intCast(start_patch + call_size)));
+        } else if (direction == .Write and dc_addr >= 0xE0000000 and dc_addr <= 0xE3FFFFFF) {
             const dest: i64 = @intCast(switch (size) {
                 ._32 => write_32_sq_ptr,
                 ._64 => write_64_sq_ptr,
@@ -137,4 +159,29 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
         log.debug("  Patched: [-16] {X}", .{@as([*]u8, @ptrFromInt(start_patch - 16))[0..16]});
         log.debug("           [  0] {X}", .{instructions[0..16]});
     } else return error.InvalidAddress;
+}
+
+fn is_tnct(addr: u32) bool {
+    return switch (addr) {
+        0xFFD8000C, 0xFFD80018, 0xFFD80024, 0x1FD8000C, 0x1FD80018, 0x1FD80024 => true,
+        else => false,
+    };
+}
+
+fn safe_p4_read(addr: u32) bool {
+    return switch (addr) {
+        0xFF000024, // EXPEVT
+        0xFF000028, // INTEVT
+        => true,
+        else => false,
+    };
+}
+
+fn safe_p4_write(addr: u32) bool {
+    return switch (addr) {
+        0xFF000038, // QACR0
+        0xFF00003C, // QACR1
+        => true,
+        else => false,
+    };
 }

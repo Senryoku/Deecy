@@ -610,16 +610,12 @@ pub const SH4JIT = struct {
             try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .imm64 = @intFromPtr(self) });
             try b.call(compile_and_run);
             try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
-            const block_size = try b.emit_naked(self.block_cache.buffer[0..]);
-            self.block_cache.cursor += block_size;
-            self.block_cache.align_next_block();
+            try emit_inlined_handler(b, &self.block_cache);
         }
         {
             // JIT entry point. Arguments:
             //   - Pointer to the SH4 structure.
             //   - Handler address of the first block to execute.
-            self._working_block.clearRetainingCapacity();
-
             const e = &self._working_block._emitter;
             e.set_buffer(self.block_cache.buffer[self.block_cache.cursor..]);
 
@@ -664,7 +660,6 @@ pub const SH4JIT = struct {
             // Exception handler. Expects the current cycles spent in this block in ReturnRegister
             self.exception_handler_offset = self.block_cache.cursor;
             var b = &self._working_block;
-            b.clearRetainingCapacity();
 
             try b.sub(sh4_mem("_pending_cycles"), .{ .reg = ReturnRegister });
             const exit_ptr = @intFromPtr(self.block_cache.buffer.ptr) + self.return_offset;
@@ -683,74 +678,92 @@ pub const SH4JIT = struct {
                 try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
             }
 
-            const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
-            self.block_cache.cursor += block_size;
-            self.block_cache.align_next_block();
+            try emit_inlined_handler(b, &self.block_cache);
         }
 
         if (FastMem) {
             var b = &self._working_block;
-            for ([_]struct { offset: *u64, function: u64 }{
-                .{ .offset = &VirtualAddressSpace.VAS.read_8_ptr, .function = @intFromPtr(&_out_of_line_read8) },
-                .{ .offset = &VirtualAddressSpace.VAS.read_16_ptr, .function = @intFromPtr(&_out_of_line_read16) },
-                .{ .offset = &VirtualAddressSpace.VAS.read_32_ptr, .function = @intFromPtr(&_out_of_line_read32) },
-                .{ .offset = &VirtualAddressSpace.VAS.read_64_ptr, .function = @intFromPtr(&_out_of_line_read64) },
-                .{ .offset = &VirtualAddressSpace.VAS.write_8_ptr, .function = @intFromPtr(&_out_of_line_write8) },
-                .{ .offset = &VirtualAddressSpace.VAS.write_16_ptr, .function = @intFromPtr(&_out_of_line_write16) },
-                .{ .offset = &VirtualAddressSpace.VAS.write_32_ptr, .function = @intFromPtr(&_out_of_line_write32) },
-                .{ .offset = &VirtualAddressSpace.VAS.write_64_ptr, .function = @intFromPtr(&_out_of_line_write64) },
+            inline for (.{
+                .{ .ptr = &VirtualAddressSpace.VAS.read_8_ptr, .function = _out_of_line_read(u8) },
+                .{ .ptr = &VirtualAddressSpace.VAS.read_16_ptr, .function = _out_of_line_read(u16) },
+                .{ .ptr = &VirtualAddressSpace.VAS.read_32_ptr, .function = _out_of_line_read(u32) },
+                .{ .ptr = &VirtualAddressSpace.VAS.read_64_ptr, .function = _out_of_line_read(u64) },
+                .{ .ptr = &VirtualAddressSpace.VAS.write_8_ptr, .function = _out_of_line_write(u8) },
+                .{ .ptr = &VirtualAddressSpace.VAS.write_16_ptr, .function = _out_of_line_write(u16) },
+                .{ .ptr = &VirtualAddressSpace.VAS.write_32_ptr, .function = _out_of_line_write(u32) },
+                .{ .ptr = &VirtualAddressSpace.VAS.write_64_ptr, .function = _out_of_line_write(u64) },
             }) |s| {
-                s.offset.* = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
-                b.clearRetainingCapacity();
-
-                try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = s.function } } });
-
-                const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
-
-                self.block_cache.cursor += block_size;
-                self.block_cache.align_next_block();
+                s.ptr.* = try emit_trampoline(b, &self.block_cache, s.function);
             }
-            // Store queue inline writes.
+            // Some fast paths for common access patterns.
             const addr = ArgRegisters[1];
             const value = ArgRegisters[2];
-            {
-                VirtualAddressSpace.VAS.write_32_sq_ptr = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
-                b.clearRetainingCapacity();
+            // Store queue inline writes.
+            inline for (.{
+                .{ .ptr = &VirtualAddressSpace.VAS.write_32_sq_ptr, .size = 32, .fallback = VirtualAddressSpace.VAS.write_32_ptr },
+                .{ .ptr = &VirtualAddressSpace.VAS.write_64_sq_ptr, .size = 64, .fallback = VirtualAddressSpace.VAS.write_64_ptr },
+            }) |s| {
+                s.ptr.* = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
 
                 // This is very sad, but it is necessary to double check here and fallback if this isn't in fact a write to the Store Queues (Soulcalibur)
                 try b.mov(.{ .reg64 = ArgRegisters[3] }, .{ .reg64 = addr });
                 try b.shr(.{ .reg64 = ArgRegisters[3] }, 26);
                 try b.cmp(.{ .reg64 = ArgRegisters[3] }, .{ .imm32 = 0b111000 });
-                try b.append(.{ .Jmp = .{ .condition = .NotEqual, .dst = .{ .abs = VirtualAddressSpace.VAS.write_32_ptr } } });
+                try b.append(.{ .Jmp = .{ .condition = .NotEqual, .dst = .{ .abs = s.fallback } } });
 
                 try b.@"and"(.{ .reg64 = addr }, .{ .imm32 = 0x3C });
-                try b.mov(.{ .mem = .{ .base = SH4PtrRegister, .index = addr, .displacement = @offsetOf(sh4.SH4, "store_queues"), .scale = ._1, .size = 32 } }, .{ .reg = value });
+                try b.mov(
+                    .{ .mem = .{ .base = SH4PtrRegister, .index = addr, .displacement = @offsetOf(sh4.SH4, "store_queues"), .scale = ._1, .size = s.size } },
+                    if (s.size == 64) .{ .reg64 = value } else .{ .reg = value },
+                );
                 try b.append(.Ret);
 
-                const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
-
-                self.block_cache.cursor += block_size;
-                self.block_cache.align_next_block();
+                try emit_inlined_handler(b, &self.block_cache);
             }
-            {
-                VirtualAddressSpace.VAS.write_64_sq_ptr = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
-                b.clearRetainingCapacity();
+            // 32bit P4 accesses.
+            inline for (.{
+                .{ .read = true, .ptr = &VirtualAddressSpace.VAS.read_32_p4_ptr, .fallback_address = VirtualAddressSpace.VAS.read_32_ptr },
+                .{ .read = false, .ptr = &VirtualAddressSpace.VAS.write_32_p4_ptr, .fallback_address = VirtualAddressSpace.VAS.write_32_ptr },
+            }) |s| {
+                s.ptr.* = @intFromPtr(self.block_cache.buffer[self.block_cache.cursor..].ptr);
 
-                try b.mov(.{ .reg64 = ArgRegisters[3] }, .{ .reg64 = addr });
-                try b.shr(.{ .reg64 = ArgRegisters[3] }, 26);
-                try b.cmp(.{ .reg64 = ArgRegisters[3] }, .{ .imm32 = 0b111000 });
-                try b.append(.{ .Jmp = .{ .condition = .NotEqual, .dst = .{ .abs = VirtualAddressSpace.VAS.write_64_ptr } } });
+                try b.cmp(.{ .reg = addr }, .{ .imm32 = 0xFF000000 });
+                try b.append(.{ .Jmp = .{ .condition = .Below, .dst = .{ .abs = s.fallback_address } } });
 
-                try b.@"and"(.{ .reg64 = addr }, .{ .imm32 = 0x3C });
-                try b.mov(.{ .mem = .{ .base = SH4PtrRegister, .index = addr, .displacement = @offsetOf(sh4.SH4, "store_queues"), .scale = ._1, .size = 64 } }, .{ .reg64 = value });
+                // Compute real offset into SH4 P4 slice (see SH4 implementation).
+                try b.mov(.{ .reg = ReturnRegister }, .{ .reg = addr });
+                try b.shr(.{ .reg = ReturnRegister }, 12);
+                try b.@"and"(.{ .reg = ReturnRegister }, .{ .imm32 = 0xF80 });
+                try b.@"and"(.{ .reg = addr }, .{ .imm32 = 0x7F });
+                try b.@"or"(.{ .reg = addr }, .{ .reg = ReturnRegister });
+                // Load p4_registers pointer from the slice.
+                try b.mov(.{ .reg64 = ArgRegisters[3] }, .{ .mem = .{ .base = SH4PtrRegister, .index = null, .displacement = @offsetOf(sh4.SH4, "p4_registers"), .scale = ._1, .size = 64 } });
+                if (s.read) {
+                    try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = ArgRegisters[3], .index = addr, .scale = ._1, .size = 32 } });
+                } else {
+                    try b.mov(.{ .mem = .{ .base = ArgRegisters[3], .index = addr, .scale = ._1, .size = 32 } }, .{ .reg = value });
+                }
                 try b.append(.Ret);
 
-                const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
-
-                self.block_cache.cursor += block_size;
-                self.block_cache.align_next_block();
+                try emit_inlined_handler(b, &self.block_cache);
             }
+            // Timer counter reads
+            VirtualAddressSpace.VAS.read_32_tcnt_ptr = try emit_trampoline(b, &self.block_cache, read_timer);
         }
+    }
+
+    fn emit_inlined_handler(b: *IRBlock, block_cache: *BlockCache) !void {
+        const block_size = try b.emit_naked(block_cache.buffer[block_cache.cursor..]);
+        block_cache.cursor += block_size;
+        block_cache.align_next_block();
+        b.clearRetainingCapacity();
+    }
+
+    fn emit_trampoline(b: *IRBlock, block_cache: *BlockCache, function: anytype) !u64 {
+        const start_address: u64 = @intFromPtr(block_cache.buffer[block_cache.cursor..].ptr);
+        try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs = @intFromPtr(&function) } } });
+        try emit_inlined_handler(b, block_cache);
+        return start_address;
     }
 
     pub fn reset_mmu_cache(self: *@This()) void {
@@ -1693,10 +1706,6 @@ fn _out_of_line_read(comptime T: type) fn (_: *const sh4.SH4, virtual_addr: u32)
         }
     }.func;
 }
-pub const _out_of_line_read8 = _out_of_line_read(u8);
-pub const _out_of_line_read16 = _out_of_line_read(u16);
-pub const _out_of_line_read32 = _out_of_line_read(u32);
-pub const _out_of_line_read64 = _out_of_line_read(u64);
 
 fn _out_of_line_write(comptime T: type) fn (_: *sh4.SH4, virtual_addr: u32, value: T) callconv(Architecture.CallingConvention) void {
     return struct {
@@ -1708,10 +1717,23 @@ fn _out_of_line_write(comptime T: type) fn (_: *sh4.SH4, virtual_addr: u32, valu
         }
     }.func;
 }
-pub const _out_of_line_write8 = _out_of_line_write(u8);
-pub const _out_of_line_write16 = _out_of_line_write(u16);
-pub const _out_of_line_write32 = _out_of_line_write(u32);
-pub const _out_of_line_write64 = _out_of_line_write(u64);
+
+fn read_timer(_: *sh4.SH4, virtual_addr: u32) callconv(Architecture.CallingConvention) u32 {
+    const cpu = get_cpu();
+    switch (virtual_addr) {
+        inline 0xFFD8000C, 0x1FD8000C, 0xFFD80018, 0x1FD80018, 0xFFD80024, 0x1FD80024 => |tcnt| {
+            // NOTE: We can ignore `fast_call_prologue` here, there are no FP operations in this handler.
+            cpu.update_timer_registers(switch (tcnt) {
+                0xFFD8000C, 0x1FD8000C => 0,
+                0xFFD80018, 0x1FD80018 => 1,
+                0xFFD80024, 0x1FD80024 => 2,
+                else => unreachable,
+            });
+            return cpu.p4_register_addr(u32, tcnt).*;
+        },
+        else => return _out_of_line_read(u32)(cpu, virtual_addr),
+    }
+}
 
 const AddressingMode = union(enum) { HostReg: JIT.Register, Reg: u4, Reg_R0: u4, GBR };
 
@@ -1777,10 +1799,10 @@ fn load_mem(block: *IRBlock, ctx: *JITContext, addressing: AddressingMode, displ
 
         // Address is already loaded into ArgRegisters[1]
         switch (size) {
-            8 => try call(block, ctx, _out_of_line_read8),
-            16 => try call(block, ctx, _out_of_line_read16),
-            32 => try call(block, ctx, _out_of_line_read32),
-            64 => try call(block, ctx, _out_of_line_read64),
+            8 => try call(block, ctx, _out_of_line_read(u8)),
+            16 => try call(block, ctx, _out_of_line_read(u16)),
+            32 => try call(block, ctx, _out_of_line_read(u32)),
+            64 => try call(block, ctx, _out_of_line_read(u64)),
             else => @compileError("load_mem: Unsupported size."),
         }
 
@@ -1827,10 +1849,10 @@ fn store_mem(block: *IRBlock, ctx: *JITContext, addressing: AddressingMode, disp
         if (value.tag() != .reg or value.reg != ArgRegisters[2])
             try block.mov(.{ .reg = ArgRegisters[2] }, value);
         switch (size) {
-            8 => try call(block, ctx, _out_of_line_write8),
-            16 => try call(block, ctx, _out_of_line_write16),
-            32 => try call(block, ctx, _out_of_line_write32),
-            64 => try call(block, ctx, _out_of_line_write64),
+            8 => try call(block, ctx, _out_of_line_write(u8)),
+            16 => try call(block, ctx, _out_of_line_write(u16)),
+            32 => try call(block, ctx, _out_of_line_write(u32)),
+            64 => try call(block, ctx, _out_of_line_write(u64)),
             else => @compileError("store_mem: Unsupported size."),
         }
         to_end.patch();
