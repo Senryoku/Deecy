@@ -204,7 +204,15 @@ pub const SPG_STATUS = packed struct(u32) {
 pub const SPG_HBLANK_INT = packed struct(u32) {
     line_comp_val: u10 = 0,
     _r0: u2 = 0,
-    hblank_int_mode: u2 = 0,
+    hblank_int_mode: enum(u2) {
+        /// Output when the display line is the value indicated by line_comp_val.
+        at_line_comp_val = 0x0,
+        /// Output every line_comp_val lines.
+        every_line_comp_val = 0x1,
+        /// Output every line.
+        every_line = 0x2,
+        reserved = 0x3,
+    } = .at_line_comp_val,
     _r1: u2 = 0,
     hblank_in_interrupt: u10 = 0x31D,
     _r2: u6 = 0,
@@ -1784,24 +1792,22 @@ pub const Holly = struct {
     }
 
     pub fn schedule_hblank_in(self: *@This()) void {
+        const spg_control = self.read_register(SPG_CONTROL, .SPG_CONTROL);
         const spg_load = self.read_register(SPG_LOAD, .SPG_LOAD);
         const spg_status = self.read_register(SPG_STATUS, .SPG_STATUS);
         const spg_hblank_int = self.read_register(SPG_HBLANK_INT, .SPG_HBLANK_INT);
         const max_scanline: u32 = spg_load.vcount + 1;
         const target_scanline: u32 = (switch (spg_hblank_int.hblank_int_mode) {
-            // Output when the display line is the value indicated by line_comp_val.
-            0 => @as(u32, spg_hblank_int.line_comp_val),
-            // Output every line_comp_val lines.
-            1 => @as(u32, spg_status.scanline) + spg_hblank_int.line_comp_val, // FIXME: Really?
-            // Output every line.
-            2 => @as(u32, spg_status.scanline) + 1,
-            else => std.debug.panic("Invalid hblank_int_mode: {d}", .{spg_hblank_int.hblank_int_mode}),
+            .at_line_comp_val => spg_hblank_int.line_comp_val,
+            .every_line_comp_val => @as(u32, spg_status.scanline) + spg_hblank_int.line_comp_val,
+            .every_line => @as(u32, spg_status.scanline) + 1,
+            .reserved => std.debug.panic("Invalid hblank_int_mode: {t}", .{spg_hblank_int.hblank_int_mode}),
         }) % max_scanline;
-        // NOTE: Interlace does not matter here.
         var line_diff: i64 = if (spg_status.scanline < target_scanline)
             target_scanline - spg_status.scanline
         else
             (if (max_scanline >= spg_status.scanline) max_scanline - spg_status.scanline else 0) + target_scanline;
+        if (spg_control.interlace) line_diff = @max(@divFloor(line_diff + 1, 2), 1);
         const pixel_diff: i64 = @as(i64, @intCast(spg_hblank_int.hblank_in_interrupt)) - @as(i64, @intCast(self._pixel));
         const hcount: i64 = spg_load.hcount;
         if (line_diff == 0 and pixel_diff <= 0) line_diff = max_scanline;
