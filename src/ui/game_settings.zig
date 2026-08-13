@@ -63,6 +63,9 @@ pub fn draw(self: *@This(), io: std.Io, allocator: std.mem.Allocator) !void {
                 _ = zgui.comboFromEnum("Video Cable", &self.settings.video_cable);
                 zgui.setNextItemWidth(dropdown_size);
                 _ = zgui.comboFromEnum("BIOS Emulation", &self.settings.bios_emulation);
+                // Not exposed for now.
+                // zgui.setNextItemWidth(dropdown_size);
+                // _ = zgui.comboFromEnum("Block Invalidation", &self.settings.block_invalidation_strategy);
                 zgui.separatorText("Rendering");
                 _ = draw_renderer_game_settings(&self.settings.rendering);
             }

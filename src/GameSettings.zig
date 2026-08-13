@@ -2,6 +2,7 @@
 region: ?Deecy.Configuration.Region = null,
 video_cable: ?Deecy.Configuration.VideoCable = null,
 bios_emulation: ?Deecy.Configuration.BiosEmulation = null,
+block_invalidation_strategy: ?@import("dreamcast").SH4JITModule.SH4JIT.BlockInvalidationStrategy = null,
 rendering: @import("renderer.zig").GameSettings = .{},
 
 pub fn save(self: @This(), io: std.Io, allocator: std.mem.Allocator, product_uid: Default.ProductUID) !void {

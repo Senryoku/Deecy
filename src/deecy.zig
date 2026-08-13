@@ -1381,8 +1381,10 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
     };
     const video_cable = game_settings.video_cable orelse self.config.video_cable;
     const bios_emulation = game_settings.bios_emulation orelse self.config.bios_emulation;
-
     deecy_log.info("Using settings: Region={t}, Video Cable={t}, Bios Emulation={t}", .{ region, video_cable, bios_emulation });
+
+    self.dc.sh4_jit.block_invalidation = game_settings.block_invalidation_strategy orelse .None;
+    deecy_log.info("Using block invalidation strategy: {t}", .{self.dc.sh4_jit.block_invalidation});
 
     const flash_path = try std.fs.path.join(self._allocator, &[_][]const u8{ host_paths.get_data_path(), "dc_flash.bin" });
     defer self._allocator.free(flash_path);

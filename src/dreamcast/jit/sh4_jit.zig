@@ -556,10 +556,12 @@ pub const JITContext = struct {
 };
 
 pub const SH4JIT = struct {
+    pub const BlockInvalidationStrategy = enum { None, @"First Instruction", Hash, Always };
+
     idle_skip_enabled: bool = true,
     idle_skip_cycles: u32 = MaxCyclesPerExecution,
     /// Additional checks to perform before executing a block and cause a recompilation if a change is detected. Should not be needed in most cases.
-    block_invalidation: enum { None, @"First Instruction", Hash, Always } = .None,
+    block_invalidation: BlockInvalidationStrategy = .None,
 
     block_cache: BlockCache,
 

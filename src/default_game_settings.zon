@@ -143,6 +143,15 @@
     },
     .{
         .game = .{
+            .name = "Shikigami no Shiro II",
+            .versions = .{.{ .name = "SHIKIGAMI NO SHI", .id = "T47702M   V1.002" }},
+        },
+        .settings = .{
+            .block_invalidation_strategy = .Hash,
+        },
+    },
+    .{
+        .game = .{
             .name = "SoulCalibur (US)",
             .versions = .{.{ .name = "SOULCALIBUR", .id = "T1401N    V1.000" }},
         },
