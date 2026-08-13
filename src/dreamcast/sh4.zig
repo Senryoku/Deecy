@@ -7,6 +7,7 @@ const builtin = @import("builtin");
 const termcolor = @import("termcolor");
 const host_memory = @import("host/host_memory.zig");
 const Once = @import("helpers").Once;
+const UpTo = @import("helpers").UpTo;
 
 pub const sh4_log = std.log.scoped(.sh4);
 pub const mmu_log = std.log.scoped(.mmu);
@@ -1596,9 +1597,9 @@ pub const SH4 = struct {
                         @intFromEnum(P4Register.PMCR1), @intFromEnum(P4Register.PMCR2) => {
                             const pmcr: P4.PMCR = @bitCast(@as(u16, @intCast(value)));
                             if (pmcr.pmen) {
-                                if (Once(@src())) sh4_log.warn("Write to non implemented P4 register {t}: {X:0>4}, {}.", .{ @as(P4Register, @enumFromInt(virtual_addr)), value, pmcr });
+                                if (Once(@src())) sh4_log.warn("Write({}) to non implemented P4 register {t}: {X:0>4}, {}.", .{ T, @as(P4Register, @enumFromInt(virtual_addr)), value, pmcr });
                             } else {
-                                if (Once(@src())) sh4_log.warn("Write to non implemented P4 register {t}: {X:0>4}, {}.", .{ @as(P4Register, @enumFromInt(virtual_addr)), value, pmcr });
+                                if (Once(@src())) sh4_log.warn("Write({}) to non implemented P4 register {t}: {X:0>4}, {}.", .{ T, @as(P4Register, @enumFromInt(virtual_addr)), value, pmcr });
                             }
                             return;
                         },
@@ -1653,8 +1654,28 @@ pub const SH4 = struct {
                             }
                             return;
                         },
-                        @intFromEnum(P4Register.WTCNT), @intFromEnum(P4Register.WTCSR) => {
-                            sh4_log.warn(termcolor.yellow("Write to non implemented-P4 register {t}: {X:0>4}."), .{ @as(P4Register, @enumFromInt(virtual_addr)), value });
+                        @intFromEnum(P4Register.WTCNT), @intFromEnum(P4Register.WTCSR) => |va| {
+                            const p4_reg: P4Register = @enumFromInt(va);
+                            if (T != u16)
+                                return sh4_log.warn("Invalid Write({}) to P4 register {t}: {X:0>4}.", .{ T, p4_reg, value });
+
+                            if (value & 0xFF00 == 0x5A) {
+                                const data: u8 = @truncate(value);
+                                switch (p4_reg) {
+                                    .WTCNT => {
+                                        if (Once(@src())) sh4_log.warn("Write({}) to unimplemented P4 register {t}: {X:0>4}.", .{ T, p4_reg, data });
+                                        self.p4_register(u8, .WTCNT).* = data;
+                                    },
+                                    .WTCSR => {
+                                        const wtcsr: P4.WTCSR = @bitCast(data);
+                                        if (wtcsr.tme)
+                                            sh4_log.warn("Write({}) to unimplemented P4 register {t}: {X:0>4}, {any}.", .{ T, p4_reg, data, wtcsr });
+                                        self.p4_register(u8, .WTCSR).* = data;
+                                    },
+                                    else => unreachable,
+                                }
+                            }
+                            return;
                         },
                         @intFromEnum(P4Register.IPRA), @intFromEnum(P4Register.IPRB), @intFromEnum(P4Register.IPRC) => {
                             self.p4_register_addr(T, virtual_addr).* = value;

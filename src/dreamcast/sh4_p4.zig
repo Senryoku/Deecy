@@ -552,3 +552,25 @@ pub const PMCR = packed struct(u16) {
     /// Performance Measurement Enable
     pmen: bool,
 };
+
+/// Watchdog Timer Control/Status Register
+pub const WTCSR = packed struct(u8) {
+    /// Clock Select 2 to 0 (CKS2–CKS0):
+    /// These bits select the clock used for the WTCNT count from eight clocks obtained by dividing the frequency divider 2 input clock.
+    /// The overflow periods shown in the following table are for use of a 33 MHz input clock, with frequency divider 1  off, and PLL circuit 1 on.
+    cks: u3,
+    /// Interval Timer Overflow Flag (IOVF):
+    /// Indicates that WTCNT has overflowed in interval timer mode. This flag is not set in watchdog timer mode.
+    iovf: u1,
+    /// Watchdog Timer Overflow Flag (WOVF):
+    /// Indicates that WTCNT has overflowed in watchdog timer mode. This flag is not set in interval timer mode.
+    wovf: bool,
+    /// Reset Select (RSTS):
+    /// Specifies the kind of reset to be performed when WTCNT overflows in watchdog timer mode. This setting is ignored in interval timer mode.
+    rsts: enum(u1) { @"Power-on reset" = 0, @"Manual reset" = 1 } = .@"Power-on reset",
+    /// Timer Mode Select (WT/,7): Specifies whether the WDT is used as a watchdog timer or interval timer.
+    wt: enum(u1) { Interval = 0, Watchdog = 1 } = .Interval,
+    /// Timer Enable (TME)
+    /// Specifies starting and stopping of timer operation. Clear this bit to 0 when using the WDT in standby mode or to change a clock frequency.
+    tme: bool = false,
+};
