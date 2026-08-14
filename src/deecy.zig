@@ -425,27 +425,39 @@ controllers: [4]?struct {
         active: bool = false,
         power: f32 = 0,
         change: f32 = 0,
+        duration: f32 = 0,
     } = .{},
     last_state: zglfw.Gamepad.State = .{},
     // FIXME: Move to config?
     deadzone: f32 = 0.1,
 
-    pub fn set_rumble(self: *@This(), power: f32, change: f32) bool {
+    pub fn set_rumble(self: *@This(), power: f32, change: f32, duration: f32) bool {
         self.rumble = .{
             .active = power != 0 or change != 0,
             .power = std.math.clamp(power, 0.0, 1.0),
             .change = change,
+            .duration = duration,
         };
         return self.id.setRumble(self.rumble.power, self.rumble.power);
     }
 
+    pub fn reset_rumble(self: *@This()) void {
+        self.rumble = .{};
+        _ = self.id.setRumble(self.rumble.power, self.rumble.power);
+    }
+
     pub fn update(self: *@This(), dt: f32) void {
         if (self.rumble.active) {
-            self.rumble.power += self.rumble.change * dt;
-            if (self.rumble.power <= 0)
+            self.rumble.duration -= dt;
+            if (self.rumble.duration <= 0) {
                 self.rumble = .{};
-            if (self.rumble.change >= 0 and self.rumble.power > 1)
-                self.rumble = .{};
+            } else {
+                self.rumble.power += self.rumble.change * dt;
+                if (self.rumble.power <= 0)
+                    self.rumble = .{};
+                if (self.rumble.change >= 0 and self.rumble.power > 1)
+                    self.rumble = .{};
+            }
             _ = self.id.setRumble(self.rumble.power, self.rumble.power);
         }
     }
@@ -918,13 +930,13 @@ pub fn deinit_peripheral(self: *@This(), controller_idx: u8, slot: u8) void {
     }
 }
 
-fn VibrationCallback(comptime port: u8) *const fn (*Self, f32, f32) void {
+fn VibrationCallback(comptime port: u8) *const fn (*Self, f32, f32, f32) void {
     return struct {
-        fn handler(self: *Self, power: f32, change: f32) void {
+        fn handler(self: *Self, power: f32, change: f32, duration: f32) void {
             deecy_log.debug("VibrationCallback({d}) Power={d}, Change={d}", .{ port, power, change });
             if (self.controllers[port]) |*j| {
                 if (j.id.isPresent()) {
-                    if (!j.set_rumble(power, change))
+                    if (!j.set_rumble(power, change, duration))
                         deecy_log.err("Failed to set gamepad rumble", .{});
                 }
             }
@@ -1144,9 +1156,7 @@ fn update_rumble(self: *@This(), dt: f32) void {
 
 pub fn stop_rumble(self: *@This()) void {
     for (&self.controllers) |*maybe| {
-        if (maybe.*) |*controller| {
-            _ = controller.set_rumble(0, 0);
-        }
+        if (maybe.*) |*controller| controller.reset_rumble();
     }
 }
 

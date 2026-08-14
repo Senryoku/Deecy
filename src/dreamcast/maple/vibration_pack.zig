@@ -113,12 +113,12 @@ const VibrationConfiguration = packed struct(u32) {
 };
 
 pub const Callback = struct {
-    function: ?*const fn (*anyopaque, f32, f32) void,
+    function: ?*const fn (*anyopaque, f32, f32, f32) void,
     context: *anyopaque,
 
-    pub fn call(self: @This(), power: f32, change: f32) void {
+    pub fn call(self: @This(), power: f32, change: f32, duration: f32) void {
         if (self.function != null)
-            self.function.?(self.context, power, change);
+            self.function.?(self.context, power, change, duration);
     }
 };
 
@@ -135,11 +135,23 @@ const Settings = VibrationSourceSettings{
     .fm1 = 0x3B,
 };
 
+const AutoStopTimer = enum(u8) {
+    _,
+    pub fn to_seconds(self: @This()) f32 {
+        return @as(f32, @floatFromInt(@intFromEnum(self))) * 0.25 + 0.25;
+    }
+    pub fn from_seconds(seconds: f32) @This() {
+        return @enumFromInt(std.math.clamp(@as(u8, @intFromFloat((seconds - 0.25) / 0.25)), 0, 0xFF));
+    }
+};
+
 callback: ?Callback = null,
 vibration_source: VibrationConfiguration = .{},
 
 positive_peak: f32 = 0.0,
 negative_peak: f32 = 0.0,
+
+auto_stop_timer: AutoStopTimer = .from_seconds(5.0), // NOTE: Actually one per vibration source.
 
 pub fn init(callback: Callback) @This() {
     return .{ .callback = callback };
@@ -184,8 +196,6 @@ pub fn block_read(self: *const @This(), function: u32, vn: u8, block_num: u16, p
 
 /// Returns payload size in 32-bit words
 pub fn block_write(self: *@This(), function: u32, vn: u8, block_num: u16, phase: u8, data: []const u32) u8 {
-    _ = self;
-    _ = data; // Arbitrary waveform data
     _ = block_num;
     _ = phase;
     // In response to the vibration function, this command records (writes) data in
@@ -196,7 +206,19 @@ pub fn block_write(self: *@This(), function: u32, vn: u8, block_num: u16, phase:
     // Source -15, respectively.
     log.warn("VibrationPack.block_write for function: {f}, source: {d}", .{ FunctionCodesMask.from_u32(function), vn });
     switch (function) {
-        FunctionCodesMask.Vibration.as_u32() => {},
+        FunctionCodesMask.Vibration.as_u32() => {
+            if (vn == 0) {
+                // Vibration auto-stop time revision bit
+                const asr: u16 = @truncate(data[0]);
+                // One AST per vibration source: We only support one.
+                if (asr & 1 == 1) {
+                    const ast0: u8 = @truncate(data[0] >> 16);
+                    self.auto_stop_timer = @enumFromInt(ast0);
+                }
+            } else {
+                // Arbitrary waveform data
+            }
+        },
         else => log.err("Unimplemented VibrationPack.block_write for function: {f}", .{FunctionCodesMask.from_u32(function)}),
     }
     return 0;
@@ -239,13 +261,19 @@ pub fn set_condition(self: *@This(), function: u32, data: []const u32) void {
                 else => 0.0,
             };
 
+            const duration: f32 = if (!value.cnt and frequency > 0) // If continuous vibration is not configured, the vibration is stopped after 1 cycle (1 arbitrary waveform).
+                1.0 / value.frequency()
+            else // If continuous vibration is configured, the vibration auto-stop function comes into operation.
+                self.auto_stop_timer.to_seconds();
+
             const power = (self.positive_peak + self.negative_peak) / 14.0;
-            if (self.callback) |c| c.call(power, value.intensity_change(frequency));
+            if (self.callback) |c| c.call(power, value.intensity_change(frequency), duration);
         },
         else => log.err("Unimplemented VibrationPack.set_condition for function: {f}", .{FunctionCodesMask.from_u32(function)}),
     }
 }
 
 pub fn serialize(_: @This(), _: anytype) !usize {
+    // FIXME: At least `auto_stop` should be serialized.
     return 0;
 }
