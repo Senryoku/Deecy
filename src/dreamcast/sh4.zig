@@ -1470,29 +1470,48 @@ pub const SH4 = struct {
                     const val: mmu.UTLBAddressData = @bitCast(value);
                     sh4_log.info("  Entry {X:0>3} (A:{X:0>1}): {} (VPN: {X:0>6})", .{ entry, association_bit, val, val.vpn });
 
-                    std.debug.assert(association_bit == 0); // 1: Not implemented
-                    // When a write is performed with the A bit in the address field set to 1, comparison of all the
-                    // UTLB entries is carried out using the VPN specified in the data field and PTEH.ASID. The
-                    // usual address comparison rules are followed, but if a UTLB miss occurs, the result is no
-                    // operation, and an exception is not generated. If the comparison identifies a UTLB entry
-                    // corresponding to the VPN specified in the data field, D and V specified in the data field are
-                    // written to that entry. If there is more than one matching entry, a data TLB multiple hit
-                    // exception results. This associative operation is simultaneously carried out on the ITLB, and
-                    // if a matching entry is found in the ITLB, V is written to that entry. Even if the UTLB
-                    // comparison results in no operation, a write to the ITLB side only is performed as long as
-                    // there is an ITLB match. If there is a match in both the UTLB and ITLB, the UTLB
-                    // information is also written to the ITLB.
+                    if (association_bit == 0) {
+                        const before = self.utlb[entry];
 
-                    const before = self.utlb[entry];
+                        self.utlb[entry].asid = val.asid;
+                        self.utlb[entry].v = val.v;
+                        self.utlb[entry].d = val.d;
+                        self.utlb[entry].vpn = val.vpn;
 
-                    self.utlb[entry].asid = val.asid;
-                    self.utlb[entry].v = val.v;
-                    self.utlb[entry].d = val.d;
-                    self.utlb[entry].vpn = val.vpn;
-
-                    if (!std.meta.eql(before, self.utlb[entry])) {
-                        self.on_utlb_eviction(before);
-                        self.on_utlb_load(entry);
+                        if (!std.meta.eql(before, self.utlb[entry])) {
+                            self.on_utlb_eviction(before);
+                            self.on_utlb_load(entry);
+                            self.check_mmu_state();
+                        }
+                    } else {
+                        // When a write is performed with the A bit in the address field set to 1, comparison of all the
+                        // UTLB entries is carried out using the VPN specified in the data field and PTEH.ASID. The
+                        // usual address comparison rules are followed, but if a UTLB miss occurs, the result is no
+                        // operation, and an exception is not generated. If the comparison identifies a UTLB entry
+                        // corresponding to the VPN specified in the data field, D and V specified in the data field are
+                        // written to that entry. If there is more than one matching entry, a data TLB multiple hit
+                        // exception results. This associative operation is simultaneously carried out on the ITLB, and
+                        // if a matching entry is found in the ITLB, V is written to that entry. Even if the UTLB
+                        // comparison results in no operation, a write to the ITLB side only is performed as long as
+                        // there is an ITLB match. If there is a match in both the UTLB and ITLB, the UTLB
+                        // information is also written to the ITLB.
+                        const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
+                        for (self.utlb, 0..) |*e, idx| {
+                            if (e.asid == asid and e.vpn == val.vpn) {
+                                const before = e.*;
+                                e.d = val.d;
+                                e.v = val.v;
+                                self.on_utlb_eviction(before);
+                                self.on_utlb_load(@intCast(idx));
+                                break; // NOTE: UTLB multiple hit exception isn't emulated here.
+                            }
+                        }
+                        for (self.itlb) |*e| {
+                            if (e.asid == val.asid and e.vpn == val.vpn) {
+                                e.v = val.v;
+                                break;
+                            }
+                        }
                         self.check_mmu_state();
                     }
                 }
