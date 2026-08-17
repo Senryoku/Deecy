@@ -3841,10 +3841,13 @@ pub const Renderer = struct {
             }
         };
 
+        const width = if (self.output_resolution.width == 320) self.resolution.width / 2 else self.resolution.width;
+        const height = if (self.output_resolution.height == 240) self.resolution.height / 2 else self.resolution.height;
+
         // Allocates a temporary buffer to copy the framebuffer to.
         const tmp_buffer_handle = self._gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .map_read = true },
-            .size = 4 * self.resolution.width * self.resolution.height,
+            .size = 4 * width * height,
         });
         defer self._gctx.releaseResource(tmp_buffer_handle);
         const tmp_buffer = self._gctx.lookupResource(tmp_buffer_handle).?;
@@ -3862,14 +3865,14 @@ pub const Renderer = struct {
                 .{
                     .layout = .{
                         .offset = 0,
-                        .bytes_per_row = 4 * self.resolution.width,
-                        .rows_per_image = self.resolution.height,
+                        .bytes_per_row = 4 * width,
+                        .rows_per_image = height,
                     },
                     .buffer = tmp_buffer,
                 },
                 .{
-                    .width = self.resolution.width,
-                    .height = self.resolution.height,
+                    .width = width,
+                    .height = height,
                     .depth_or_array_layers = 1,
                 },
             );
@@ -3878,16 +3881,16 @@ pub const Renderer = struct {
         defer commands.release();
         self._gctx.submit(&.{commands});
 
-        const future = tmp_buffer.mapAsync(.{ .read = true }, 0, 4 * self.resolution.width * self.resolution.height, .{ .callback = &static.signal_mapped, .mode = .wait_any_only });
+        const future = tmp_buffer.mapAsync(.{ .read = true }, 0, 4 * width * height, .{ .callback = &static.signal_mapped, .mode = .wait_any_only });
         var wait_info = [_]zgpu.wgpu.FutureWaitInfo{.{ .future = future }};
         if (self._gctx.instance.waitAny(&wait_info, std.math.maxInt(u64)) == .success) {
             if (static.result == .success) {
                 defer tmp_buffer.unmap();
-                const mapped_pixels = tmp_buffer.getConstMappedRange(u8, 0, 4 * self.resolution.width * self.resolution.height);
+                const mapped_pixels = tmp_buffer.getConstMappedRange(u8, 0, 4 * width * height);
                 if (mapped_pixels) |pixels| {
                     return .{
-                        .width = self.resolution.width,
-                        .height = self.resolution.height,
+                        .width = width,
+                        .height = height,
                         .bgra = try allocator.dupe(u8, pixels),
                     };
                 } else return error.MapFailed;
