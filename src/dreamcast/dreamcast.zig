@@ -237,6 +237,7 @@ pub const Dreamcast = struct {
         if (!SH4JITModule.FastMem) {
             self._allocator.free(self.aram);
             self._allocator.free(self.vram);
+            self._allocator.free(self.ocram);
             self._allocator.free(self.ram);
             self._allocator.free(self.boot);
         }

@@ -12,14 +12,14 @@ const Session = @import("session.zig");
 tracks: std.ArrayList(Track) = .empty,
 sessions: std.ArrayList(Session) = .empty,
 
-version: u32 = undefined,
-compressors: [4]Compression = undefined,
-logical_bytes: u64 = undefined,
-map_offset: u64 = undefined,
-meta_offset: u64 = undefined,
-hunk_bytes: u32 = undefined,
-unit_bytes: u32 = undefined,
-map: []MapEntry = undefined,
+version: u32 = 0,
+compressors: [4]Compression = @splat(.None),
+logical_bytes: u64 = 0,
+map_offset: u64 = 0,
+meta_offset: u64 = 0,
+hunk_bytes: u32 = 0,
+unit_bytes: u32 = 0,
+map: []MapEntry = &.{},
 
 track_offsets: std.ArrayList(u32) = .empty,
 track_data: std.ArrayList([]u8) = .empty,
@@ -238,7 +238,8 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
 }
 
 pub fn deinit(self: *@This(), _: std.mem.Allocator, io: std.Io) void {
-    self._allocator.free(self.map);
+    if (self.map.len > 0)
+        self._allocator.free(self.map);
 
     self.sessions.deinit(self._allocator);
     self.track_offsets.deinit(self._allocator);
