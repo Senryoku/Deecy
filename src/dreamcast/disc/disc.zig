@@ -192,9 +192,9 @@ pub const Disc = union(enum) {
 
         for (self.get_tracks().items[tracks[0] .. tracks[1] + 1]) |track| {
             dest[4 * (track.num - 1) + 0] = track.adr_ctrl_byte();
-            dest[4 * (track.num - 1) + 1] = (@truncate(track.fad >> 16));
-            dest[4 * (track.num - 1) + 2] = (@truncate(track.fad >> 8));
-            dest[4 * (track.num - 1) + 3] = (@truncate(track.fad >> 0));
+            dest[4 * (track.num - 1) + 1] = @truncate(track.fad >> 16);
+            dest[4 * (track.num - 1) + 2] = @truncate(track.fad >> 8);
+            dest[4 * (track.num - 1) + 3] = @truncate(track.fad >> 0);
         }
 
         const first_track = self.get_tracks().items[tracks[0]];
