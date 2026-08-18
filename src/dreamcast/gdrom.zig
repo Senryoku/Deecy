@@ -1195,13 +1195,13 @@ fn get_subcode(self: *@This()) !void {
                 control_adr, // Control | ADR
                 track_number, // TNO (Subcode Q track number)
                 0x01, // X (Subcode Q index number) - 00: Pause area?
-                @truncate(fad_within_track >> 0), // Elapsed FAD within track
-                @truncate(fad_within_track >> 8), // Elapsed FAD within track
                 @truncate(fad_within_track >> 16), // Elapsed FAD within track
+                @truncate(fad_within_track >> 8), // Elapsed FAD within track
+                @truncate(fad_within_track >> 0), // Elapsed FAD within track
                 0,
-                @truncate(fad >> 0), // FAD
-                @truncate(fad >> 8), // FAD
                 @truncate(fad >> 16), // FAD
+                @truncate(fad >> 8), // FAD
+                @truncate(fad >> 0), // FAD
             });
         },
         0, // All subcode information is transferred as raw data
