@@ -685,7 +685,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         {
             var clear_cache: bool = false;
             zgui.alignTextToFramePadding();
-            zgui.text("Cache Size: {d}KiB", .{dc.sh4_jit.block_cache.cursor / 1024});
+            zgui.text("Cache Size: {f}", .{@import("MemSize.zig").fromBytes(dc.sh4_jit.block_cache.cursor)});
             zgui.sameLine(.{});
             if (zgui.button("Clear", .{})) clear_cache = true;
             if (zgui.comboFromEnum("Block Invalidation", &dc.sh4_jit.block_invalidation)) clear_cache = true;

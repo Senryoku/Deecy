@@ -575,6 +575,17 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
         {
             const gctx_start_time = std.Io.Clock.awake.now(self.io);
             defer deecy_log.info("Graphics context initialized in {f}", .{gctx_start_time.durationTo(std.Io.Clock.awake.now(self.io))});
+
+            // Request increase limits for buffer sizes to accomodate OIT Fragment Buffer (UI will only allow valid values for this config).
+            const u32_undefined: u32 = 0xFFFFFFFF;
+            var max_storage_buffer_binding_size = u32_undefined; // Default is 128MiB
+            if (config.renderer.oit_fragment_buffer_size > 128)
+                max_storage_buffer_binding_size = config.renderer.oit_fragment_buffer_size * 1024 * 1024;
+            var max_buffer_size = u32_undefined; // Default is 256MiB
+            if (max_storage_buffer_binding_size > 256 * 1024 * 1024)
+                max_buffer_size = max_storage_buffer_binding_size;
+            deecy_log.info("Requested WGPU Limits max_buffer_size={d}, max_storage_buffer_binding_size={d}.", .{ max_buffer_size, max_storage_buffer_binding_size });
+
             self.gctx = try zgpu.GraphicsContext.create(allocator, .{
                 .window = self.window,
                 .fn_getTime = @ptrCast(&zglfw.getTime),
@@ -591,7 +602,11 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
                 // Increasing max_texture_array_layers is required: The renderer uses a single texture array for each size.
                 // 2048 is a big jump from the WebGPU default of 256, but it seems to be widely supported, especially on desktop.
                 // (support for Vulkan: https://vulkan.gpuinfo.org/displaydevicelimit.php?name=maxImageArrayLayers)
-                .required_limits = &.{ .max_texture_array_layers = 2048 },
+                .required_limits = &.{
+                    .max_texture_array_layers = 2048,
+                    .max_buffer_size = max_buffer_size,
+                    .max_storage_buffer_binding_size = max_storage_buffer_binding_size,
+                },
                 .cache_descriptor = if (self.config.enable_dawn_pipeline_cache) .{
                     .isolation_key = .init("Deecy-" ++ comptime_config.version),
                     .load_data_function = @import("./pipeline_cache.zig").load_pipeline_cache,

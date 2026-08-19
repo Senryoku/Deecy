@@ -5,6 +5,7 @@ const termcolor = @import("termcolor");
 const custom_log = @import("custom_log.zig");
 const helpers = @import("helpers");
 const Once = helpers.Once;
+const MemSize = @import("MemSize.zig");
 
 const zglfw = @import("zglfw");
 const zgui = @import("zgui");
@@ -905,10 +906,21 @@ pub fn draw(self: *@This()) !void {
                     zgui.separator();
 
                     {
+                        const FragmentBufferSizeOptions = comptime blk: {
+                            var table: [5]struct { value: MemSize, label: [:0]const u8 } = undefined;
+                            var buffer_size: @import("MemSize.zig") = .fromMiB(128);
+                            for (0..table.len) |i| {
+                                table[i].value = buffer_size;
+                                table[i].label = std.fmt.comptimePrint("{f}", .{buffer_size});
+                                buffer_size.bytes *= 2;
+                            }
+                            break :blk table;
+                        };
                         const static = struct {
                             var available_modes_buffer: [@typeInfo(zgpu.wgpu.PresentMode).@"enum".fields.len]zgpu.wgpu.PresentMode = @splat(.undefined);
                             var available_modes_count: u32 = 0;
                             var present_modes: []const zgpu.wgpu.PresentMode = &.{};
+                            var fragment_buffer_size_options_count: usize = 1;
                             pub fn init(deecy: *Deecy) !void {
                                 const capabilities = try deecy.gctx.surface.getCapabilities(deecy.gctx.adapter);
                                 defer capabilities.deinit();
@@ -916,6 +928,12 @@ pub fn draw(self: *@This()) !void {
                                 for (capabilities.getPresentModes(), 0..) |present_mode, idx|
                                     available_modes_buffer[idx] = present_mode;
                                 present_modes = available_modes_buffer[0..available_modes_count];
+
+                                var adapter_limits: zgpu.wgpu.Limits = .{};
+                                if (deecy.gctx.adapter.getLimits(&adapter_limits)) {
+                                    const max = @min(adapter_limits.max_buffer_size, adapter_limits.max_storage_buffer_binding_size);
+                                    fragment_buffer_size_options_count = @min(1 + std.math.log2_int(u64, max / 128 * 1024 * 1024), FragmentBufferSizeOptions.len);
+                                } else ui_log.err("Failed to get adapter limits.", .{});
                             }
                         };
                         if (Once(@src())) try static.init(d);
@@ -941,16 +959,29 @@ pub fn draw(self: *@This()) !void {
                             }
                             zgui.endCombo();
                         }
-                    }
-                    zgui.setNextItemWidth(dropdown_size);
-                    _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
 
-                    _ = zgui.checkbox("Use Pipeline Cache", .{ .v = &d.config.enable_dawn_pipeline_cache });
-                    zgui.setItemTooltip("Restart Required.\nReduces 'pop-in' due to pipeline creation delay (shader compilation).", .{});
-                    if (builtin.mode == .Debug) {
-                        zgui.sameLine(.{});
-                        if (zgui.button("Reset", .{}))
-                            try @import("pipeline_cache.zig").clear(d._allocator);
+                        zgui.setNextItemWidth(dropdown_size);
+                        _ = zgui.comboFromEnum("Frame Limiter", &d.config.frame_limiter);
+
+                        zgui.setNextItemWidth(dropdown_size);
+                        if (zgui.beginCombo("OIT Fragment Buffer Size", .{ .preview_value = FragmentBufferSizeOptions[@ctz(d.config.renderer.oit_fragment_buffer_size / 128)].label })) {
+                            for (0..static.fragment_buffer_size_options_count) |i| {
+                                if (zgui.selectable(FragmentBufferSizeOptions[i].label, .{})) {
+                                    d.config.renderer.oit_fragment_buffer_size = @intCast(FragmentBufferSizeOptions[i].value.asMiB());
+                                }
+                            }
+
+                            zgui.endCombo();
+                        }
+                        zgui.setItemTooltip(Icons.TriangleExclamation ++ " Restart Required.\nMay prevent artifacts with translucent geometry, especially at higher resolution.", .{});
+
+                        _ = zgui.checkbox("Use Pipeline Cache", .{ .v = &d.config.enable_dawn_pipeline_cache });
+                        zgui.setItemTooltip(Icons.TriangleExclamation ++ " Restart Required.\nReduces 'pop-in' due to pipeline creation delay (shader compilation).", .{});
+                        if (builtin.mode == .Debug) {
+                            zgui.sameLine(.{});
+                            if (zgui.button("Reset", .{}))
+                                try @import("pipeline_cache.zig").clear(d._allocator);
+                        }
                     }
 
                     if (resolution_update) canceled: {

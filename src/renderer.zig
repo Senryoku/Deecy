@@ -629,6 +629,8 @@ pub const Renderer = struct {
         internal_resolution_factor: u32 = 2,
         display_mode: DisplayMode = .Center,
         texture_filter: TextureFilter = .@"Application Driven",
+        /// MiB
+        oit_fragment_buffer_size: u32 = 128,
 
         msaa: enum { Off, x4 } = .Off,
     };
@@ -4808,7 +4810,7 @@ pub const Renderer = struct {
     }
 
     fn get_fragments_list_size(self: *const @This()) u64 {
-        return self.get_max_storage_buffer_binding_size();
+        return @min(self.config.oit_fragment_buffer_size * 1024 * 1024, self.get_max_storage_buffer_binding_size());
     }
 
     inline fn translucent_modvol_dimensions(self: *const @This()) struct { square_size: u64, square_count: u64, pixels_per_slice: u64, fragment_counts_buffer_size: u64, fragment_list_buffer_size: u64, volumes_buffer_size: u64 } {
