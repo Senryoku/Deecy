@@ -34,6 +34,15 @@
     // Retail Games
     .{
         .game = .{
+            .name = "Caesars Palace 2000 - Millennium Gold Edition",
+            .versions = .{.{ .name = "CAESARS PALACE 2", .id = "12502D-50 V1.000" }},
+        },
+        .settings = .{
+            .video_cable = .Composite,
+        },
+    },
+    .{
+        .game = .{
             .name = "Crazy Taxi (EU)",
             .versions = .{.{ .name = "CRAZY TAXI", .id = "MK-51035  V1.000" }},
         },
