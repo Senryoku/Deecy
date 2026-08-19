@@ -1,7 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const comptime_config = @import("config");
-const termcolor = @import("termcolor");
 const custom_log = @import("custom_log.zig");
 const helpers = @import("helpers");
 const Once = helpers.Once;
@@ -26,6 +25,7 @@ const Notifications = @import("./ui/notifications.zig");
 pub const common = @import("./ui/common.zig");
 pub const Icons = common.Icons;
 const wait_for = @import("./ui/wait_for_input.zig");
+const GameInfoCache = @import("ui/GameInfoCache.zig");
 
 const Self = @This();
 
@@ -57,17 +57,7 @@ pub const GameFile = struct {
 
 last_error: []const u8 = "",
 
-vmu_displays: [4]struct {
-    texture: zgpu.TextureHandle = .nil,
-    view: zgpu.TextureViewHandle = .nil,
-    /// Is in use?
-    valid: bool = false,
-    /// Should be displayed?
-    display: bool = true,
-    /// GPU texture is outdated?
-    dirty: bool = false,
-    data: [48 * 32 / 8]u8 = @splat(0),
-} = @splat(.{}),
+vmu_displays: [4]@import("./ui/vmu.zig") = @splat(.{}),
 
 binary_loaded: bool = false, // Indicates if we're running a raw binary loaded directly in RAM (not from a disc) (FIXME: Used to avoid drawing the game library when pausing without a disc. Clunky.)
 disc_files: std.ArrayList(GameFile) = .empty,
@@ -87,8 +77,8 @@ pub fn create(allocator: std.mem.Allocator, d: *Deecy) !*@This() {
         .deecy = d,
         .allocator = allocator,
     };
-    for (0..4) |p|
-        r.create_vmu_texture(@intCast(p));
+    for (&r.vmu_displays, 0..) |*vmu, port|
+        vmu.init(d.gctx, port);
     return r;
 }
 
@@ -96,10 +86,7 @@ pub fn destroy(self: *@This()) void {
     for (self.disc_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
     self.disc_files.deinit(self.allocator);
 
-    for (self.vmu_displays) |texture| {
-        self.deecy.gctx.releaseResource(texture.texture);
-        self.deecy.gctx.releaseResource(texture.view);
-    }
+    for (&self.vmu_displays) |*vmu| vmu.deinit(self.deecy.gctx);
 
     self.game_settings.deinit(self.allocator);
 
@@ -108,70 +95,14 @@ pub fn destroy(self: *@This()) void {
     self.allocator.destroy(self);
 }
 
-fn create_vmu_texture(self: *@This(), port: u8) void {
-    const tex = self.deecy.gctx.createTexture(.{
-        .usage = .{ .texture_binding = true, .copy_dst = true },
-        .size = .{
-            .width = 48,
-            .height = 32,
-            .depth_or_array_layers = 1,
-        },
-        .format = .bgra8_unorm,
-        .mip_level_count = 1,
-    });
-    const view = self.deecy.gctx.createTextureView(tex, .{});
-    self.vmu_displays[port] = .{ .texture = tex, .view = view, .data = VMUScreenDefault[port] };
-    self.upload_vmu_texture(port);
-}
-
-pub fn update_vmu_screen(self: *@This(), data: [*]const u8, port: u8) void {
-    @memcpy(&self.vmu_displays[port].data, data[0 .. 48 * 32 / 8]);
-    self.vmu_displays[port].dirty = true;
-}
-
 pub fn vmu_screen_callback(comptime port_idx: u8) type {
     std.debug.assert(port_idx < 4);
     return struct {
         pub fn callback(self: *Self, data: [*]const u8) void {
-            self.update_vmu_screen(data, port_idx);
+            @memcpy(&self.vmu_displays[port_idx].data, data[0 .. 48 * 32 / 8]);
+            self.vmu_displays[port_idx].dirty = true;
         }
     };
-}
-
-/// Locks gctx_queue_mutex
-pub fn upload_vmu_texture(self: *@This(), port: u8) void {
-    const colors = [2][3]u8{ // bgr
-        .{ 152, 135, 92 }, // "white"
-        .{ 104, 43, 40 }, // "black"
-    };
-
-    const tex = &self.vmu_displays[port];
-    var pixels: [4 * 48 * 32]u8 = undefined;
-    for (0..32) |r| {
-        const row = tex.data[6 * (31 - r) .. 6 * ((31 - r) + 1)];
-        for (0..6) |c| {
-            var byte = row[5 - c];
-            for (0..8) |b| {
-                const color: [3]u8 = colors[byte & 0x1];
-                const idx = 4 * (48 * r + (8 * c + b));
-                pixels[idx + 0] = color[0];
-                pixels[idx + 1] = color[1];
-                pixels[idx + 2] = color[2];
-                pixels[idx + 3] = 255;
-                byte >>= 1;
-            }
-        }
-    }
-    self.deecy.gctx_queue_mutex.lockUncancelable(self.deecy.io);
-    defer self.deecy.gctx_queue_mutex.unlock(self.deecy.io);
-    self.deecy.gctx.queue.writeTexture(
-        .{ .texture = self.deecy.gctx.lookupResource(tex.texture).? },
-        .{ .bytes_per_row = 4 * 48, .rows_per_image = 32 },
-        .{ .width = 48, .height = 32 },
-        u8,
-        &pixels,
-    );
-    tex.dirty = false;
 }
 
 pub fn draw_vmu_screens(self: *@This(), editable: bool) void {
@@ -216,13 +147,13 @@ pub fn draw_vmu_screens(self: *@This(), editable: bool) void {
         }
 
         var valid_count: u8 = 0;
-        inline for (&self.vmu_displays, 0..) |*tex, idx| {
-            if (tex.valid) {
+        inline for (&self.vmu_displays) |*vmu| {
+            if (vmu.valid) {
                 valid_count += 1;
-                if (tex.display) {
-                    if (tex.dirty)
-                        self.upload_vmu_texture(@intCast(idx));
-                    zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr((self.deecy.gctx.lookupResource(tex.view).?))) }, .{ .w = win_width, .h = win_width * 32.0 / 48.0 });
+                if (vmu.display) {
+                    if (vmu.dirty)
+                        vmu.upload_vmu_texture(self.deecy);
+                    zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr((self.deecy.gctx.lookupResource(vmu.view).?))) }, .{ .w = win_width, .h = win_width * 32.0 / 48.0 });
                     zgui.dummy(.{ .w = 0, .h = 12.0 });
                 }
             }
@@ -234,7 +165,7 @@ pub fn draw_vmu_screens(self: *@This(), editable: bool) void {
 }
 
 fn update_game_info(self: *@This(), path: []const u8, product_name: []const u8, product_id: []const u8) void {
-    self.disc_files_mutex.lockUncancelable(self.deecy.io);
+    self.disc_files_mutex.lock(self.deecy.io) catch return;
     defer self.disc_files_mutex.unlock(self.deecy.io);
     for (self.disc_files.items) |*entry| {
         if (std.mem.eql(u8, entry.path, path)) {
@@ -247,7 +178,7 @@ fn update_game_info(self: *@This(), path: []const u8, product_name: []const u8, 
 
 // Locks gctx_queue_mutex.
 fn update_game_texture(self: *@This(), path: []const u8, image_width: u32, image_height: u32, image: []const u8) void {
-    self.deecy.gctx_queue_mutex.lockUncancelable(self.deecy.io);
+    self.deecy.gctx_queue_mutex.lock(self.deecy.io) catch return;
     const texture = self.deecy.gctx.createTexture(.{
         .usage = .{ .texture_binding = true, .copy_dst = true },
         .size = .{
@@ -268,8 +199,8 @@ fn update_game_texture(self: *@This(), path: []const u8, image_width: u32, image
     );
     self.deecy.gctx_queue_mutex.unlock(self.deecy.io);
 
-    {
-        self.disc_files_mutex.lockUncancelable(self.deecy.io);
+    blk: {
+        self.disc_files_mutex.lock(self.deecy.io) catch break :blk;
         defer self.disc_files_mutex.unlock(self.deecy.io);
         for (self.disc_files.items) |*entry| {
             if (std.mem.eql(u8, entry.path, path)) {
@@ -288,7 +219,7 @@ fn update_game_texture(self: *@This(), path: []const u8, image_width: u32, image
 }
 
 fn get_game_image(self: *@This(), path: []const u8, cache: ?*GameInfoCache) void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(self.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
@@ -315,7 +246,7 @@ fn get_game_image(self: *@This(), path: []const u8, cache: ?*GameInfoCache) void
             self.update_game_texture(path, result.width, result.height, result.bgra);
             if (cache) |c| c.add(self.deecy.io, path, product_name, product_id, .{ .width = result.width, .height = result.height }, result.bgra) catch {};
         } else |err| {
-            ui_log.err(termcolor.red("Failed to decode 0GDTEX.PVR for '{s}': {t}"), .{ path, err });
+            ui_log.err("Failed to decode 0GDTEX.PVR for '{s}': {t}", .{ path, err });
             if (cache) |c| c.add(self.deecy.io, path, product_name, product_id, .{ .width = 0, .height = 0 }, null) catch {};
         }
     } else |err| {
@@ -323,176 +254,6 @@ fn get_game_image(self: *@This(), path: []const u8, cache: ?*GameInfoCache) void
         if (cache) |c| c.add(self.deecy.io, path, product_name, product_id, .{ .width = 0, .height = 0 }, null) catch {};
     }
 }
-
-const lz4 = @import("lz4");
-
-const GameInfoCache = struct {
-    const Signature: u32 = 0x43444247;
-    const Version: u32 = 3;
-
-    const Entry = struct {
-        path: []const u8,
-        name: []const u8,
-        product_name: []const u8,
-        product_id: []const u8,
-        image_size: struct { width: u32, height: u32 },
-        image: ?[]const u8,
-    };
-
-    map: std.StringHashMap(Entry),
-
-    _path: []const u8,
-    _mutex: std.Io.Mutex = .init,
-    _arena: std.heap.ArenaAllocator,
-
-    pub fn create(allocator: std.mem.Allocator) !*@This() {
-        var r = try allocator.create(@This());
-        r.* = .{
-            .map = undefined,
-            ._path = undefined,
-            ._arena = std.heap.ArenaAllocator.init(allocator),
-        };
-        r.map = std.StringHashMap(Entry).init(r._arena.allocator());
-        r._path = try get_path(r._arena.allocator());
-        return r;
-    }
-
-    pub fn destroy(self: *@This(), allocator: std.mem.Allocator) void {
-        self._arena.deinit();
-        allocator.destroy(self);
-    }
-
-    fn get_path(allocator: std.mem.Allocator) ![]const u8 {
-        return try std.fs.path.join(allocator, &[_][]const u8{ host_paths.get_userdata_path(), "game_info_cache" });
-    }
-
-    pub fn load(self: *@This(), io: std.Io) !void {
-        const data = try host_paths.root().readFileAlloc(io, self._path, self._arena.allocator(), .unlimited);
-        defer self._arena.allocator().free(data);
-        try self.deserialize(data);
-    }
-
-    /// Thread safe
-    pub fn get(self: *@This(), io: std.Io, path: []const u8) ?Entry {
-        self._mutex.lockUncancelable(io);
-        defer self._mutex.unlock(io);
-        return self.map.get(path);
-    }
-
-    /// Thread safe
-    /// Copies all inputs (including image) to owned memory.
-    pub fn add(self: *@This(), io: std.Io, path: []const u8, product_name: []const u8, product_id: []const u8, image_size: struct { width: u32, height: u32 }, image: ?[]const u8) !void {
-        self._mutex.lockUncancelable(io);
-        defer self._mutex.unlock(io);
-        const arena_alloc = self._arena.allocator();
-        const duped_path = try arena_alloc.dupe(u8, path);
-        try self.map.put(duped_path, .{
-            .path = duped_path,
-            .name = try arena_alloc.dupe(u8, std.fs.path.basename(path)),
-            .product_name = try arena_alloc.dupe(u8, product_name),
-            .product_id = try arena_alloc.dupe(u8, product_id),
-            .image_size = .{ .width = image_size.width, .height = image_size.height },
-            .image = if (image) |i| try arena_alloc.dupe(u8, i) else null,
-        });
-    }
-
-    pub fn save_to_disk(self: *@This(), io: std.Io) !void {
-        var file = try host_paths.root().createFile(io, self._path, .{});
-        defer file.close(io);
-
-        var allocating_writer = std.Io.Writer.Allocating.init(self._arena.allocator());
-        defer allocating_writer.deinit();
-        var uncompressed_writer = &allocating_writer.writer;
-
-        try uncompressed_writer.writeInt(u32, self.map.count(), .little);
-        var it = self.map.iterator();
-        while (it.next()) |entry| {
-            const value = entry.value_ptr.*;
-            try write_string(uncompressed_writer, value.path);
-            try write_string(uncompressed_writer, value.name);
-            try write_string(uncompressed_writer, value.product_name);
-            try write_string(uncompressed_writer, value.product_id);
-            try uncompressed_writer.writeInt(u32, value.image_size.width, .little);
-            try uncompressed_writer.writeInt(u32, value.image_size.height, .little);
-            if (value.image) |image| try uncompressed_writer.writeAll(image);
-        }
-        try uncompressed_writer.flush();
-
-        var uncompressed = allocating_writer.toArrayList();
-        defer uncompressed.deinit(self._arena.allocator());
-
-        const compressed = try lz4.Standard.compress(self._arena.allocator(), uncompressed.items);
-        defer self._arena.allocator().free(compressed);
-
-        const buffer = try self._arena.allocator().alloc(u8, 4 * 1024);
-        defer self._arena.allocator().free(buffer);
-        var file_writer = file.writer(io, buffer);
-        var writer = &file_writer.interface;
-
-        try writer.writeInt(u32, Signature, .little);
-        try writer.writeInt(u32, Version, .little);
-        try writer.writeInt(u32, @intCast(uncompressed.items.len), .little);
-        try writer.writeAll(compressed);
-
-        try writer.flush();
-    }
-
-    fn deserialize(self: *@This(), data: []const u8) !void {
-        var header_reader = std.Io.Reader.fixed(data);
-
-        const signature = try header_reader.takeInt(u32, .little);
-        if (signature != Signature) return error.InvalidSignature;
-        const version = try header_reader.takeInt(u32, .little);
-        if (version != Version) return error.IncompatibleVersion;
-
-        const uncompressed_size = try header_reader.takeInt(u32, .little);
-
-        const decompressed = try lz4.Standard.decompress(self._arena.allocator(), data[header_reader.seek..], uncompressed_size);
-        errdefer self._arena.allocator().free(decompressed); // Kept alive in success path: Entries will refer to it.
-
-        if (decompressed.len != uncompressed_size) return error.UnexpectedDecompressedSize;
-
-        var reader = std.Io.Reader.fixed(decompressed);
-
-        const count = try reader.takeInt(u32, .little);
-        try self.map.ensureTotalCapacity(count);
-
-        for (0..count) |_| {
-            const path = try read_string(&reader);
-            const name = try read_string(&reader);
-            const product_name = try read_string(&reader);
-            const product_id = try read_string(&reader);
-            const image_size_width = try reader.takeInt(u32, .little);
-            const image_size_height = try reader.takeInt(u32, .little);
-            const image_byte_size = image_size_width * image_size_height * 4;
-            if (reader.buffer[reader.seek..].len < image_byte_size) return error.EndOfStream;
-            const image = if (image_size_width > 0 and image_size_height > 0) reader.buffer[reader.seek..][0..image_byte_size] else null;
-            reader.toss(image_byte_size);
-            self.map.putAssumeCapacity(path, .{
-                .path = path,
-                .name = name,
-                .product_name = product_name,
-                .product_id = product_id,
-
-                .image_size = .{ .width = image_size_width, .height = image_size_height },
-                .image = image,
-            });
-        }
-    }
-
-    fn read_string(reader: *std.Io.Reader) ![]const u8 {
-        const size = try reader.takeInt(u32, .little);
-        if (reader.buffer[reader.seek..].len < size) return error.EndOfStream;
-        const string = reader.buffer[reader.seek..][0..size];
-        reader.toss(size);
-        return string;
-    }
-
-    fn write_string(writer: *std.Io.Writer, string: []const u8) !void {
-        try writer.writeInt(u32, @intCast(string.len), .little);
-        try writer.writeAll(string);
-    }
-};
 
 /// Locks gctx_queue_mutex.
 pub fn refresh_games(self: *@This()) !void {
@@ -502,17 +263,15 @@ pub fn refresh_games(self: *@This()) !void {
 
         var cache = try GameInfoCache.create(self.allocator);
         defer cache.destroy(self.allocator);
-        cache.load(self.deecy.io) catch |err|
-            ui_log.err(termcolor.red("Failed to load game info cache: {t}"), .{err});
+        cache.load(self.deecy.io) catch |err| ui_log.err("Failed to load game info cache: {t}", .{err});
 
         {
             var tmp_disc_files: std.ArrayList(GameFile) = .empty;
             errdefer tmp_disc_files.deinit(self.allocator);
 
-            var dir = host_paths.root().openDir(self.deecy.io, dir_path, .{ .iterate = true }) catch |err| {
-                ui_log.err(termcolor.red("Failed to open game directory: {t}"), .{err});
-                return;
-            };
+            var dir = host_paths.root().openDir(self.deecy.io, dir_path, .{ .iterate = true }) catch |err|
+                return ui_log.err("Failed to open game directory: {t}", .{err});
+
             defer dir.close(self.deecy.io);
             var walker = try dir.walk(self.allocator);
             defer walker.deinit();
@@ -564,24 +323,6 @@ pub fn refresh_games(self: *@This()) !void {
     }
 }
 
-fn menu_from_enum(comptime name: [:0]const u8, value: anytype, options: struct { enabled: bool = true }) bool {
-    if (@typeInfo(@TypeOf(value)) != .pointer or @typeInfo(@TypeOf(value.*)) != .@"enum")
-        @compileError("menu_from_enum: value must be a pointer to an enum, got: " ++ @typeName(@TypeOf(value)));
-    const T = @TypeOf(value.*);
-    var changed = false;
-    if (zgui.beginMenu(name, options.enabled)) {
-        inline for (@typeInfo(T).@"enum".fields) |field| {
-            const v: T = @enumFromInt(field.value);
-            if (zgui.menuItem(field.name, .{ .selected = value.* == v })) {
-                value.* = v;
-                changed = true;
-            }
-        }
-        zgui.endMenu();
-    }
-    return changed;
-}
-
 pub fn draw(self: *@This()) !void {
     const d = self.deecy;
     var error_popup_to_open: [:0]const u8 = "";
@@ -623,8 +364,8 @@ pub fn draw(self: *@This()) !void {
                 if (zgui.menuItem("File", .{ .selected = d.config.log_output == .File }))
                     d.config.log_output = .File;
                 if (zgui.isItemHovered(.{ .for_tooltip = true }) and zgui.beginTooltip()) {
-                    const path = try custom_log.file.path(d._allocator);
-                    defer d._allocator.free(path);
+                    const path = try custom_log.file.path(self.allocator);
+                    defer self.allocator.free(path);
                     zgui.text("Logs will be saved in '{s}'", .{path});
                     zgui.endTooltip();
                 }
@@ -755,7 +496,7 @@ pub fn draw(self: *@This()) !void {
             zgui.endMenu();
         }
         if (zgui.beginMenu("Windows", true)) {
-            _ = menu_from_enum(Icons.ChartLine ++ " Performance Overlay", &d.config.performance_overlay, .{});
+            _ = common.menu_from_enum(Icons.ChartLine ++ " Performance Overlay", &d.config.performance_overlay, .{});
             if (zgui.menuItem(Icons.MobileScreen ++ " VMU screens", .{ .selected = d.config.display_vmus })) {
                 d.config.display_vmus = !d.config.display_vmus;
             }
@@ -803,7 +544,7 @@ pub fn draw(self: *@This()) !void {
                 error.MissingFlash => error_popup_to_open = "Error: Missing Flash",
                 else => {
                     error_popup_to_open = "Unknown error";
-                    ui_log.err(termcolor.red("Error: {t}"), .{err});
+                    ui_log.err("Error: {t}", .{err});
                 },
             }
         };
@@ -847,8 +588,8 @@ pub fn draw(self: *@This()) !void {
                             flash_updated = zgui.comboFromEnum("Auto Start", &d.config.bios_config.auto_start) or flash_updated;
                         }
                         if (flash_updated) {
-                            const flash_path = try std.fs.path.join(d._allocator, &[_][]const u8{ host_paths.get_data_path(), "dc_flash.bin" });
-                            defer d._allocator.free(flash_path);
+                            const flash_path = try std.fs.path.join(self.allocator, &[_][]const u8{ host_paths.get_data_path(), "dc_flash.bin" });
+                            defer self.allocator.free(flash_path);
                             try d.dc.load_flash(d.io, flash_path, d.config.region.to_dreamcast(), d.config.bios_config);
                         }
                     }
@@ -1302,8 +1043,8 @@ pub fn draw(self: *@This()) !void {
                             }
                         };
                         SortedShortcut.sort_spec = zgui.tableGetSortSpecs();
-                        var sorted_list = try std.ArrayList(SortedShortcut).initCapacity(d._allocator, d.shortcuts.shortcuts.count());
-                        defer sorted_list.deinit(d._allocator);
+                        var sorted_list = try std.ArrayList(SortedShortcut).initCapacity(self.allocator, d.shortcuts.shortcuts.count());
+                        defer sorted_list.deinit(self.allocator);
 
                         var it = d.shortcuts.shortcuts.iterator();
                         while (it.next()) |entry| {
@@ -1555,7 +1296,8 @@ pub fn draw_game_library(self: *@This()) !void {
                                 _ = zgui.tableNextColumn();
                                 if (entry.view) |view| {
                                     const uv = 0.25 * RowHeight / ImageWidth;
-                                    zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(self.deecy.gctx.lookupResource(view).?)) }, .{ .w = ImageWidth, .h = RowHeight, .uv0 = .{ 0.5, 0.5 - uv }, .uv1 = .{ 1.0, 0.5 + uv } });
+                                    if (self.deecy.gctx.lookupResource(view)) |v|
+                                        zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(v)) }, .{ .w = ImageWidth, .h = RowHeight, .uv0 = .{ 0.5, 0.5 - uv }, .uv1 = .{ 1.0, 0.5 + uv } });
                                 }
                                 _ = zgui.tableNextColumn();
                                 zgui.alignTextToFramePadding();
@@ -1611,7 +1353,8 @@ pub fn draw_game_library(self: *@This()) !void {
                                     @memcpy(truncated_name[0..@min(entry.name.len, truncated_name.len - 1)], entry.name[0..@min(entry.name.len, truncated_name.len - 1)]);
                                     zgui.text("{s}", .{truncated_name});
                                     zgui.setCursorScreenPos(.{ cursor_pos[0], cursor_pos[1] + text_padding[1] + title_height });
-                                    zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(((self.deecy.gctx.lookupResource(view).?)))) }, .{ .w = 256, .h = 256 });
+                                    if (self.deecy.gctx.lookupResource(view)) |v|
+                                        zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(v)) }, .{ .w = 256, .h = 256 });
                                 } else {
                                     const p = .{ cursor_pos[0] + 128.0, cursor_pos[1] + text_padding[1] + title_height + 128.0 };
                                     draw_list.addCircleFilled(.{ .p = p, .r = 96.0, .col = 0x80FFFFFF, .num_segments = 0 });
@@ -1678,10 +1421,10 @@ pub fn draw_game_library(self: *@This()) !void {
             } else {
                 zgui.dummy(.{ .w = 0, .h = 64 });
                 zgui.pushFont(null, 80);
-                centered_text("∅");
+                common.centered_text("∅");
                 zgui.popFont();
                 zgui.pushFont(null, 28);
-                centered_text("No games found in your library.");
+                common.centered_text("No games found in your library.");
                 zgui.popFont();
             }
         } else {
@@ -1690,10 +1433,10 @@ pub fn draw_game_library(self: *@This()) !void {
                 defer zgui.endGroup();
                 zgui.dummy(.{ .w = 0, .h = 64 });
                 zgui.pushFont(null, 80);
-                centered_text(Icons.FolderPlus);
+                common.centered_text(Icons.FolderPlus);
                 zgui.popFont();
                 zgui.pushFont(null, 28);
-                centered_text("Select Library Directory");
+                common.centered_text("Select Library Directory");
                 zgui.popFont();
             }
             zgui.setCursorPos(.{ 0, 0 });
@@ -1702,14 +1445,6 @@ pub fn draw_game_library(self: *@This()) !void {
             if (zgui.isItemHovered(.{})) zgui.setMouseCursor(.hand);
         }
     }
-}
-
-fn centered_text(comptime text: []const u8) void {
-    const width = zgui.getContentRegionAvail()[0];
-    const size = zgui.calcTextSize(text, .{});
-    const offset = @max(0, (width - size[0]) / 2);
-    zgui.setCursorPosX(offset);
-    zgui.textWrapped(text, .{});
 }
 
 fn select_game_directory(self: *@This()) !void {
@@ -1726,142 +1461,3 @@ fn select_game_directory(self: *@This()) !void {
         try self.deecy.launch_async(refresh_games, .{self});
     }
 }
-
-const VMUScreenDefault: [4][48 * 32 / 8]u8 = .{
-    .{
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00110000, 0b11000000, 0b00001111, 0b00001100, 0b00110000, 0b01100000,
-        0b00110000, 0b11000000, 0b00011001, 0b10001100, 0b00110000, 0b01100000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110000, 0b11110000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110000, 0b11110000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00111111, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001101, 0b10110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001101, 0b10110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001111, 0b11110011, 0b00001100,
-        0b00111111, 0b11000000, 0b00110000, 0b11001110, 0b01110011, 0b00001100,
-        0b00011111, 0b10000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-    },
-    .{
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00011111, 0b11000000, 0b00001111, 0b00001100, 0b00110000, 0b01100000,
-        0b00110000, 0b11000000, 0b00011001, 0b10001100, 0b00110000, 0b01100000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110000, 0b11110000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110000, 0b11110000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00001111, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001101, 0b10110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001101, 0b10110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001111, 0b11110011, 0b00001100,
-        0b00111111, 0b11000000, 0b00110000, 0b11001110, 0b01110011, 0b00001100,
-        0b00011111, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-    },
-    .{
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00111111, 0b10000000, 0b00001111, 0b00001100, 0b00110000, 0b01100000,
-        0b00000000, 0b11000000, 0b00011001, 0b10001100, 0b00110000, 0b01100000,
-        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110000, 0b11110000,
-        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110000, 0b11110000,
-        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
-        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
-        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
-        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
-        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00000000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00000000, 0b11000000, 0b00110000, 0b11001101, 0b10110011, 0b00001100,
-        0b00000000, 0b11000000, 0b00110000, 0b11001101, 0b10110011, 0b00001100,
-        0b00000000, 0b11000000, 0b00110000, 0b11001111, 0b11110011, 0b00001100,
-        0b00111111, 0b11000000, 0b00110000, 0b11001110, 0b01110011, 0b00001100,
-        0b00111111, 0b10000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-    },
-    .{
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000011, 0b11000000, 0b00001111, 0b00001100, 0b00110000, 0b01100000,
-        0b00001100, 0b11000000, 0b00011001, 0b10001100, 0b00110000, 0b01100000,
-        0b00011000, 0b11000000, 0b00110000, 0b11001100, 0b00110000, 0b11110000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110000, 0b11110000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110001, 0b10011000,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001101, 0b10110011, 0b00001100,
-        0b00110000, 0b11000000, 0b00110000, 0b11001101, 0b10110011, 0b00001100,
-        0b00011000, 0b11000000, 0b00110000, 0b11001111, 0b11110011, 0b00001100,
-        0b00001100, 0b11000000, 0b00110000, 0b11001110, 0b01110011, 0b00001100,
-        0b00000011, 0b11000000, 0b00110000, 0b11001100, 0b00110011, 0b00001100,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
-    },
-};

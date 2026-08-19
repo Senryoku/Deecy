@@ -63,3 +63,29 @@ pub fn optional_bool(label: []const u8, value: *?bool) bool {
     defer zgui.popItemFlag();
     zgui.checkbox(label, .{ .v = value });
 }
+
+pub fn menu_from_enum(comptime name: [:0]const u8, value: anytype, options: struct { enabled: bool = true }) bool {
+    if (@typeInfo(@TypeOf(value)) != .pointer or @typeInfo(@TypeOf(value.*)) != .@"enum")
+        @compileError("menu_from_enum: value must be a pointer to an enum, got: " ++ @typeName(@TypeOf(value)));
+    const T = @TypeOf(value.*);
+    var changed = false;
+    if (zgui.beginMenu(name, options.enabled)) {
+        inline for (@typeInfo(T).@"enum".fields) |field| {
+            const v: T = @enumFromInt(field.value);
+            if (zgui.menuItem(field.name, .{ .selected = value.* == v })) {
+                value.* = v;
+                changed = true;
+            }
+        }
+        zgui.endMenu();
+    }
+    return changed;
+}
+
+pub fn centered_text(comptime text: []const u8) void {
+    const width = zgui.getContentRegionAvail()[0];
+    const size = zgui.calcTextSize(text, .{});
+    const offset = @max(0, (width - size[0]) / 2);
+    zgui.setCursorPosX(offset);
+    zgui.textWrapped(text, .{});
+}
