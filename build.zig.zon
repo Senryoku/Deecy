@@ -18,8 +18,8 @@
             .hash = "zaudio-0.11.0-dev-_M-91uVnPwAMzQAqxamwkJSzBdaqsV1LylxcivFV8__Y",
         },
         .system_sdk = .{
-            .url = "git+https://github.com/zig-gamedev/system_sdk#c0dbf11cdc17da5904ea8a17eadc54dee26567ec",
-            .hash = "system_sdk-0.3.0-dev-alwUNnYaaAJAtIdE2fg4NQfDqEKs7QCXy_qYukAOBfmF",
+            .url = "git+https://github.com/zig-gamedev/system_sdk#777e76828f05d5d223df47a4c0de95ae4efde884",
+            .hash = "system_sdk-0.3.0-dev-alwUNqAaaALJ5VoZImZo3n6prezBnQnrpziun3ZeZwcp",
         },
         .arm7 = .{
             .url = "git+https://github.com/Senryoku/arm7.git#e77a037da71fe03df25fe4a3fbfe5266a234c4f2",
