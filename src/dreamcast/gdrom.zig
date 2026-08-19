@@ -437,17 +437,22 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
                 var consecutive_busy_reads: u64 = 0;
                 var last_dma_data_queue_count: u64 = 0;
                 var last_remaining_sectors: u64 = 0;
+
+                var start_cycles: u64 = 0;
             };
             if (self.status_register.bsy == 1 and
                 (self.dma_data_queue.count > 0 or self.cd_read_state.remaining_sectors > 0) and
                 self.dma_data_queue.count == static.last_dma_data_queue_count and
                 self.cd_read_state.remaining_sectors == static.last_remaining_sectors)
             {
+                if (static.consecutive_busy_reads == 0)
+                    static.start_cycles = self._dc._global_cycles;
                 static.consecutive_busy_reads += 1;
+                const elapsed_cycles = self._dc._global_cycles - static.start_cycles;
                 if ((static.consecutive_busy_reads >= 1_000 and self.dma_data_queue.count > 0) or
-                    (static.consecutive_busy_reads >= 7 and self.cd_read_state.remaining_sectors > 0))
+                    (elapsed_cycles >= 1000_0000 and self.cd_read_state.remaining_sectors > 0))
                 {
-                    gdrom_log.err(termcolor.red("Multi-Read DMA Hack: Stuck with data in dma queue ({d} bytes, {d} sectors), discarding."), .{ self.dma_data_queue.count, self.cd_read_state.remaining_sectors });
+                    gdrom_log.err(termcolor.red("Multi-Read DMA Hack: Stuck with data in dma queue ({d} bytes, {d} sectors), discarding. (Waited {d} cycles)"), .{ self.dma_data_queue.count, self.cd_read_state.remaining_sectors, elapsed_cycles });
                     self.dma_data_queue.discard(self.dma_data_queue.count);
                     self.cd_read_state.remaining_sectors = 0;
                     self.status_register.bsy = 0;
