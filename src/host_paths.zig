@@ -71,6 +71,16 @@ pub fn safe_path(path: []u8) void {
     }
 }
 
+/// Replaces invalid characters with underscores in place.
+pub fn safe_filename(path: []u8) void {
+    for (path) |*c| {
+        switch (c.*) {
+            '0'...'9', 'A'...'Z', 'a'...'z', '.', '[', ']', '{', '}', '-' => {},
+            else => c.* = '_',
+        }
+    }
+}
+
 /// Absolute path to data folder.
 pub fn get_data_path() []const u8 {
     return context.?.data_path;
@@ -98,8 +108,8 @@ pub fn userdata() std.Io.Dir {
 /// Caller owns the returned memory.
 pub fn game_directory_path(allocator: std.mem.Allocator, uid: ProductUID) ![]const u8 {
     const folder_name = try std.fmt.allocPrint(allocator, "{s}[{s}]", .{ uid.name, uid.id });
-    safe_path(folder_name);
     defer allocator.free(folder_name);
+    safe_filename(folder_name);
     const path = try std.fs.path.join(allocator, &[_][]const u8{ get_userdata_path(), folder_name });
     return path;
 }
