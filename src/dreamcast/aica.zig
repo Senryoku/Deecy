@@ -797,7 +797,7 @@ pub const AICA = struct {
             aica_log.err("Invalid Read({}) to AICA Register at 0x{X:0>8}", .{ T, addr });
             return 0;
         }
-        if (local_addr % 4 > 1) {
+        if (T != u8 and local_addr % 4 != 0) {
             aica_log.warn(termcolor.yellow("Read({}) to non-existent (not 4 bytes aligned) AICA register at 0x{X:0>8}"), .{ T, addr });
             return 0;
         }
@@ -858,7 +858,7 @@ pub const AICA = struct {
             return self.dsp.read_register(T, local_addr - 0x3000);
 
         return switch (T) {
-            u8 => @as([*]const u8, @ptrCast(&self.regs[0]))[local_addr],
+            u8 => std.mem.sliceAsBytes(self.regs)[local_addr],
             u32 => self.regs[local_addr / 4],
             else => @compileError("Invalid value type"),
         };
@@ -872,7 +872,7 @@ pub const AICA = struct {
             aica_log.err("Invalid Write({}) to AICA Register at 0x{X:0>8} = 0x{X:0>8}", .{ T, addr, value });
             return;
         }
-        if (local_addr % 4 > 1) {
+        if (T != u8 and local_addr % 4 != 0) {
             aica_log.warn("Unaligned Write({}) to AICA Register at 0x{X:0>8} = 0x{X:0>8}", .{ T, addr, value });
             return;
         }
@@ -882,7 +882,7 @@ pub const AICA = struct {
             switch (local_addr & 0x7F) {
                 0x00 => { // Play control
                     switch (T) {
-                        u8 => @as([*]u8, @ptrCast(self.regs.ptr))[local_addr] = value,
+                        u8 => std.mem.sliceAsBytes(self.regs)[local_addr] = value,
                         u32 => {
                             self.regs[local_addr / 4] = value & PlayControl.Mask;
 
@@ -897,7 +897,7 @@ pub const AICA = struct {
                 0x01 => { // Play control - High byte
                     switch (T) {
                         u8 => {
-                            @as([*]u8, @ptrCast(self.regs.ptr))[local_addr] = value & @as(u8, @truncate(PlayControl.Mask >> 8));
+                            std.mem.sliceAsBytes(self.regs)[local_addr] = value & @as(u8, @truncate(PlayControl.Mask >> 8));
                             const val: PlayControl = @bitCast(@as(u32, value) << 8);
                             if (val.key_on_execute) self.key_on_execute();
                         },
@@ -923,7 +923,7 @@ pub const AICA = struct {
                 },
                 .DDIR_DEXE => { // DMA transfer direction / DMA transfer start
                     if (T == u8)
-                        @as([*]u8, @ptrCast(&self.regs))[local_addr] = value & 0xFC;
+                        std.mem.sliceAsBytes(self.regs)[local_addr] = value & 0xFC;
                     if (T == u32)
                         self.regs[local_addr / 4] = value & 0xFFFFFFFC;
                     if (!high_byte and value & 1 == 1) {
@@ -1016,7 +1016,7 @@ pub const AICA = struct {
             return self.dsp.write_register(T, local_addr - 0x3000, value);
 
         switch (T) {
-            u8 => @as([*]u8, @ptrCast(self.regs.ptr))[local_addr] = value,
+            u8 => std.mem.sliceAsBytes(self.regs)[local_addr] = value,
             u32 => self.regs[local_addr / 4] = value & 0xFFFF, // Only half of each u32 register is actually used.
             else => @compileError("Invalid value type"),
         }
