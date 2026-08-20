@@ -13,6 +13,7 @@ pub fn init(io: std.Io, filepath: []const u8) !@This() {
         return err;
     };
     const size = (try file.stat(io)).size;
+    if (size == 0) return error.EmptyFile;
     const map = try std.Io.File.MemoryMap.create(io, file, .{
         .len = size,
         .protection = .{ .read = true, .write = false },
