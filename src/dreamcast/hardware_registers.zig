@@ -287,22 +287,51 @@ pub const SB_ISTEXT = packed struct(u32) {
     }
 };
 
-// SB_ADSUSP - SB_E1SUSP - SB_E2SUSP - SB_DDSUSP
+/// SB_ADSUSP, SB_E1SUSP, SB_E2SUSP, SB_DDSUSP
 pub const SB_SUSP = packed struct(u32) {
-    dma_suspend_request: u1 = 0, // Write Only
-    // 0: Continues DMA transfer without going to the suspended state. Or, bit 2 of the SB_ADTSEL register is "0"
-    // 1: Suspends and terminates DMA transfer
+    /// Write Only
+    /// 0: Continues DMA transfer without going to the suspended state. Or, bit 2 of the SB_ADTSEL register is "0"
+    /// 1: Suspends and terminates DMA transfer
+    dma_suspend_request: u1 = 0,
     _r: u3 = 0,
-    dma_suspend_or_dma_stop: u1 = 1, // Read Only
-    // 0: DMA transfer is in progress, or bit 2 of the SB_ADTSEL register is "0"
-    // 1: DMA transfer has ended, or is stopped due to a suspend
-    // * When bit 2 of the SB_ADTSEL register is "1" and bit 0 of the SB_ADSUSP
-    // register is "1", and data is not being transferred due to being in the suspended
-    // state, this bit becomes "1" when G2-DMA ends.
-    dma_request_input_state: u1 = 1, // Read Only
-    // 0: The DMA transfer request is high (transfer not possible), or bit 2 of the SB_ADTSEL register is "0"
-    // 1: The DMA transfer request is low (transfer possible)
+    /// Read Only
+    /// 0: DMA transfer is in progress, or bit 2 of the SB_ADTSEL register is "0"
+    /// 1: DMA transfer has ended, or is stopped due to a suspend
+    /// * When bit 2 of the SB_ADTSEL register is "1" and bit 0 of the SB_ADSUSP
+    /// register is "1", and data is not being transferred due to being in the suspended
+    /// state, this bit becomes "1" when G2-DMA ends.
+    dma_suspend_or_dma_stop: u1 = 1,
+    /// Read Only
+    /// 0: The DMA transfer request is high (transfer not possible), or bit 2 of the SB_ADTSEL register is "0"
+    /// 1: The DMA transfer request is low (transfer possible)
+    dma_request_input_state: u1 = 1,
     _: u26 = 0,
+};
+
+/// SB_ADTSEL, SB_E1TSEL, SB_E2TSEL, SB_DDTSEL
+pub const SB_TSEL = packed struct(u32) {
+    /// Trigger Selection 0
+    /// 0: Disables control of transfer through an external pin (transfer request input) (→ continuous transfer)
+    /// 1: Enables control of transfer through an external pin
+    external_pin: enum(u1) {
+        Disabled = 0,
+        Enabled = 1,
+    },
+    /// Trigger Selection 1
+    /// 0: CPU initiation (DMA transfer is initiated by writing to the SB_**ST register in the SH4.)
+    /// 1: Hardware trigger (DMA transfer is initiated according to the interrupt setting)
+    initiation_tigger: enum(u1) {
+        CPU = 0,
+        Hardware = 1,
+    },
+    /// Trigger Selection 2
+    /// 0: Disables the DMA suspend function
+    /// 1: Enables the DMA suspend function (In the case of AICA-DMA, the SB_ADSUSP register is enabled.)
+    suspend_function: enum(u1) {
+        Disabled = 0,
+        Enabled = 1,
+    },
+    _: u29 = 0,
 };
 
 /// SB_FFST (Read Only) 0x005F688C
