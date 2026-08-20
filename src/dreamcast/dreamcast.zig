@@ -1114,10 +1114,21 @@ pub const Dreamcast = struct {
 
     pub fn abort_gd_dma(self: *@This()) void {
         if (self.read_hw_register(u32, .SB_GDST) != 0) {
-            log.debug("Aborting GD DMA", .{});
             self.hw_register(u32, .SB_GDST).* = 0;
-            // FIXME: This should probably clear the EndGDDMA event, but it breaks everything :D
-            // self.clear_event(.EndGDDMA);
+
+            // A End GD DMA event should always be scheduled when SB_GDST is set, but just in case.
+            var it = self.scheduled_events.iterator();
+            while (it.next()) |event| {
+                if (event.event == .EndGDDMA) {
+                    // Reschedule the End GD DMA event early, workaround for Tech Romancer (#295)
+                    // NOTE: Outright clearing the event breaks a lot of games, surprisingly.
+                    //       I don't really understand what's going on there, why abort the DMA when you rely on its completion?
+                    log.warn("Aborting GD DMA (scheduled in {d} cycles)", .{if (event.trigger_cycle >= self._global_cycles) event.trigger_cycle - self._global_cycles else 0});
+                    self.clear_event(.EndGDDMA);
+                    self.schedule_int_event(.{ .EoD_GDROM = 1 }, .EndGDDMA, 200);
+                    break;
+                }
+            }
         }
     }
 
