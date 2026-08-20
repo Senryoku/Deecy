@@ -1485,7 +1485,7 @@ pub const AICA = struct {
             state.fractional_play_position -= sample_length;
 
             state.prev_sample = state.curr_sample;
-            const sample_ram = self.wave_memory[registers.sample_address()..];
+            const sample_ram = self.wave_memory[registers.sample_address() % self.wave_memory.len ..];
             state.curr_sample = switch (registers.play_control.sample_format) {
                 .i16 => @as([*]align(1) const i16, @ptrCast(sample_ram.ptr))[state.play_position],
                 .i8 => @as(i32, @as(i8, @bitCast(sample_ram[state.play_position]))) << 8,
