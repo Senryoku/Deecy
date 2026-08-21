@@ -1170,6 +1170,7 @@ pub const Renderer = struct {
         // Wait for async pipeline creation to finish (prevents crashing on exit).
         var async_pipeline_creation = true;
         while (async_pipeline_creation) {
+            self._gctx.instance.processEvents();
             async_pipeline_creation = false;
             var it = self.opaque_pipelines.iterator();
             while (it.next()) |pipeline| {
