@@ -3745,6 +3745,7 @@ fn set_sr(block: *IRBlock, ctx: *JITContext, sr_value: JIT.Operand) !void {
     try call(block, ctx, sh4.SH4.set_sr);
 
     ctx.sr_fpu_status = .Unknown;
+    ctx.force_exit = true;
 }
 
 pub fn rte(block: *IRBlock, ctx: *JITContext, _: sh4.Instr) !bool {
