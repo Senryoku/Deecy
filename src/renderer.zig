@@ -1277,8 +1277,9 @@ pub const Renderer = struct {
         const previous = self.game_settings;
         self.game_settings = game_settings;
 
+        log.info("Updating game settings:", .{});
         inline for (@typeInfo(GameSettings).@"struct".fields) |field|
-            log.info("Setting " ++ field.name ++ ": {}", .{@field(self.game_settings, field.name)});
+            log.info("  " ++ field.name ++ ": {}", .{@field(self.game_settings, field.name)});
 
         if (previous.aspect_ratio != game_settings.aspect_ratio) {
             self.resolution = .{
@@ -1588,29 +1589,56 @@ pub const Renderer = struct {
         // Fill with repeating texture data when v_size != u_size to avoid wrapping artifacts.
         const repeat_vertically = v_size <= u_size;
         const copies = if (repeat_vertically) u_size / v_size else v_size / u_size;
-        var tex_source = [2][]u8{ self._scratch_pad[0 .. 4 * u_size * v_size], self._scratch_pad[0 .. 4 * u_size * v_size] };
+        const total_pixels = u_size * v_size;
+        const scratch_pixels = std.mem.bytesAsSlice([4]u8, self._scratch_pad[0 .. 2 * 4 * total_pixels]);
+        var tex_source = [2][][4]u8{
+            scratch_pixels[0..total_pixels],
+            scratch_pixels[0..total_pixels], // By default (no clamp or flip), the repetitions will be straight copies.
+        };
+        var alternate_copies = false;
         // Flip the repetition depending on wrapping settings
         if (copies > 1) {
             const clamp = tsp_instruction.clamp_uv;
             const flip = tsp_instruction.final_flip_uv();
             if ((clamp.u or flip.u) and !repeat_vertically) {
-                tex_source[1] = self._scratch_pad[4 * u_size * v_size .. 2 * 4 * u_size * v_size];
-                for (0..v_size) |v| {
-                    for (0..u_size) |u| {
-                        const src = tex_source[0][4 * (u_size * v + (u_size - u - 1)) ..];
-                        const dst = tex_source[1][4 * (u_size * v + u) ..];
-                        @memcpy(dst[0..4], src[0..4]);
+                tex_source[1] = scratch_pixels[total_pixels .. 2 * total_pixels];
+                if (clamp.u) {
+                    // Fill the copy with the last column.
+                    for (0..v_size) |v| {
+                        const last_pixel = tex_source[0][v * u_size + (u_size - 1)];
+                        @memset(tex_source[1][v * u_size ..][0..u_size], last_pixel);
                     }
+                } else {
+                    // Horizontally flipped copy.
+                    for (0..v_size) |v| {
+                        const src_row = tex_source[0][v * u_size ..][0..u_size];
+                        const dst_row = tex_source[1][v * u_size ..][0..u_size];
+                        for (0..u_size) |u|
+                            dst_row[u] = src_row[u_size - u - 1];
+                    }
+                    alternate_copies = true;
                 }
             } else if ((clamp.v or flip.v) and repeat_vertically) {
-                tex_source[1] = self._scratch_pad[4 * u_size * v_size .. 2 * 4 * u_size * v_size];
-                for (0..v_size) |v| {
-                    @memcpy(tex_source[1][4 * u_size * v ..][0 .. 4 * u_size], tex_source[0][4 * u_size * (v_size - v - 1) ..][0 .. 4 * u_size]);
+                tex_source[1] = scratch_pixels[total_pixels .. 2 * total_pixels];
+                if (clamp.v) {
+                    // Fill copy with the last row.
+                    const last_row = tex_source[0][(v_size - 1) * u_size ..][0..u_size];
+                    for (0..v_size) |v|
+                        @memcpy(tex_source[1][v * u_size ..][0..u_size], last_row);
+                } else {
+                    // Vertically flipped copy.
+                    for (0..v_size) |v|
+                        @memcpy(
+                            tex_source[1][v * u_size ..][0..u_size],
+                            tex_source[0][(v_size - v - 1) * u_size ..][0..u_size],
+                        );
+                    alternate_copies = true;
                 }
             }
         }
 
         for (0..copies) |part| {
+            const src: usize = if (alternate_copies) part % 2 else if (part > 0) 1 else 0;
             self._gctx.queue.writeTexture(
                 .{
                     .texture = self._gctx.lookupResource(self.texture_arrays[size_index].texture).?,
@@ -1626,7 +1654,7 @@ pub const Renderer = struct {
                 },
                 .{ .width = u_size, .height = v_size, .depth_or_array_layers = 1 },
                 u8,
-                tex_source[part % 2],
+                std.mem.sliceAsBytes(tex_source[src]),
             );
         }
 
