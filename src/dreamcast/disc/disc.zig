@@ -47,7 +47,7 @@ pub const Disc = union(enum) {
     pub fn get_format(self: *const @This()) DiscFormat {
         switch (self.*) {
             .GDI => return .GDROM,
-            .CHD => return .GDROM,
+            .CHD => |chd| return chd.disc_format,
             .CUE => |cue| return cue.get_format(),
             .CDI => return .CDROM_XA,
         }

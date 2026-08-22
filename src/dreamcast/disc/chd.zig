@@ -9,6 +9,8 @@ const MemoryMappedFile = @import("../host/memory_mapped_file.zig");
 const Track = @import("track.zig");
 const Session = @import("session.zig");
 
+disc_format: @import("disc.zig").DiscFormat = .GDROM,
+
 tracks: std.ArrayList(Track) = .empty,
 sessions: std.ArrayList(Session) = .empty,
 
@@ -103,6 +105,44 @@ const MetadataEntry = struct {
     flags: u8,
 };
 
+/// As found in CHD ASCII Metadata
+const SectorType = enum {
+    @"MODE1/2048",
+    MODE1,
+    @"MODE1/2352",
+    MODE1_RAW,
+    @"MODE2/2336",
+    MODE2,
+    MODE2_FORM_MIX,
+    @"MODE2/2048",
+    MODE2_FORM1,
+    @"MODE2/2324",
+    MODE2_FORM2,
+    @"MODE2/2352",
+    MODE2_RAW,
+    @"CDI/2352",
+    AUDIO,
+
+    pub fn parse(s: []const u8) ?@This() {
+        inline for (std.meta.fields(@This())) |t| {
+            if (std.mem.eql(u8, s, t.name)) return @enumFromInt(t.value);
+        }
+        return null;
+    }
+
+    pub fn byte_size(self: @This()) u32 {
+        return switch (self) {
+            .@"MODE1/2048", .MODE1 => 0x800,
+            .@"MODE1/2352", .MODE1_RAW => 0x930,
+            .@"MODE2/2336", .MODE2, .MODE2_FORM_MIX => 0x920,
+            .@"MODE2/2048", .MODE2_FORM1 => 0x800,
+            .@"MODE2/2324", .MODE2_FORM2 => 0x914,
+            .@"MODE2/2352", .MODE2_RAW => 0x930,
+            .@"CDI/2352", .AUDIO => 0x930,
+        };
+    }
+};
+
 pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@This() {
     var self: @This() = .{
         ._file = try .init(io, filepath),
@@ -176,22 +216,29 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
             for (tracks_metadata.items) |track| {
                 log.debug("Track Metadata entry: {}", .{track});
                 switch (track.tag) {
-                    .GDROMTrack => {
-                        // "TRACK:%d TYPE:%s SUBTYPE:%s FRAMES:%d PAD:%d PREGAP:%d PGTYPE:%s PGSUB:%s POSTGAP:%d"
+                    .GDROMTrack, .CDROMTrack2 => {
+                        // "TRACK:%d TYPE:%s SUBTYPE:%s FRAMES:%d [PAD:%d] PREGAP:%d PGTYPE:%s PGSUB:%s POSTGAP:%d"
 
                         var iterator = std.mem.tokenizeScalar(u8, self._file.view()[track.offset + 16 ..][0 .. track.length - 1], ' ');
-                        const track_num = try std.fmt.parseInt(u32, iterator.next().?["TRACK:".len..], 10);
-                        const track_type_str = iterator.next().?["TYPE:".len..];
-                        const sub_type = iterator.next().?["SUBTYPE:".len..];
-                        const frames = try std.fmt.parseInt(u32, iterator.next().?["FRAMES:".len..], 10);
-                        const pad = try std.fmt.parseInt(u32, iterator.next().?["PAD:".len..], 10);
-                        const pregap = try std.fmt.parseInt(u32, iterator.next().?["PREGAP:".len..], 10);
-                        const pgtype = iterator.next().?["PGTYPE:".len..];
-                        const pgsub = iterator.next().?["PGSUB:".len..];
-                        const postgap = try std.fmt.parseInt(u32, iterator.next().?["POSTGAP:".len..], 10);
+                        const track_num = try std.fmt.parseInt(u32, try nextValue(&iterator, "TRACK:"), 10);
+                        const sector_type_str = try nextValue(&iterator, "TYPE:");
+                        const sub_type = try nextValue(&iterator, "SUBTYPE:");
+                        const frames = try std.fmt.parseInt(u32, try nextValue(&iterator, "FRAMES:"), 10);
+
+                        var pad: u32 = 0;
+                        if (track.tag == .GDROMTrack) {
+                            pad = try std.fmt.parseInt(u32, try nextValue(&iterator, "PAD:"), 10);
+                        } else {
+                            self.disc_format = .CDROM_XA;
+                        }
+
+                        const pregap = try std.fmt.parseInt(u32, try nextValue(&iterator, "PREGAP:"), 10);
+                        const pgtype = try nextValue(&iterator, "PGTYPE:");
+                        const pgsub = try nextValue(&iterator, "PGSUB:");
+                        const postgap = try std.fmt.parseInt(u32, try nextValue(&iterator, "POSTGAP:"), 10);
 
                         log.debug("    track_num: {d}", .{track_num});
-                        log.debug("    track_type: {s}", .{track_type_str});
+                        log.debug("    sector_type: {s}", .{sector_type_str});
                         log.debug("    sub_type: {s}", .{sub_type});
                         log.debug("    frames: {d}", .{frames});
                         log.debug("    pad: {d}", .{pad});
@@ -203,8 +250,9 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
                         log.debug("    fad: {d}", .{current_fad});
 
                         const sectors_per_hunk = self.hunk_bytes / CDFrameSize;
-                        const track_type: Track.TrackType = if (std.mem.eql(u8, track_type_str, "AUDIO")) .Audio else .Data;
-                        const format: u32 = if (std.mem.eql(u8, track_type_str, "AUDIO")) 2336 else if (std.mem.eql(u8, track_type_str, "MODE1_RAW")) CDMaxSectorBytes else return error.UnsupportedFormat;
+                        const sector_type = SectorType.parse(sector_type_str) orelse return error.InvalidSectorType;
+                        const track_type: Track.TrackType = if (sector_type == .AUDIO) .Audio else .Data;
+                        const sector_size: u32 = sector_type.byte_size();
                         const data = try host_memory.virtual_alloc(u8, CDMaxSectorBytes * std.mem.alignForward(u32, frames, sectors_per_hunk));
 
                         try self.track_data.append(allocator, data);
@@ -213,7 +261,7 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
                             .fad = current_fad,
                             .end_fad = @intCast(current_fad + frames),
                             .track_type = track_type,
-                            .format = format,
+                            .format = sector_size,
                             .pregap = 0,
                             .data = data,
                         });
@@ -226,15 +274,21 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
                 }
             }
 
-            try self.decompress_sectors(self.tracks.items[2].fad, 1);
+            try self.decompress_sectors((self.get_first_data_track() orelse return error.NoDataTracks).fad, 1);
         },
         else => {
-            log.err(termcolor.red("CHD version {d} not supported."), .{self.version});
+            log.err("CHD version {d} not supported.", .{self.version});
             return error.CHDVersionNotSupported;
         },
     }
 
     return self;
+}
+
+inline fn nextValue(it: *std.mem.TokenIterator(u8, .scalar), comptime name: []const u8) ![]const u8 {
+    const token = it.next() orelse return error.InvalidTrackMetadata;
+    if (!std.mem.startsWith(u8, token, name)) return error.InvalidTrackMetadata;
+    return token[name.len..];
 }
 
 pub fn deinit(self: *@This(), _: std.mem.Allocator, io: std.Io) void {
@@ -251,9 +305,19 @@ pub fn deinit(self: *@This(), _: std.mem.Allocator, io: std.Io) void {
 }
 
 pub fn get_first_data_track(self: *const @This()) ?Track {
-    for (self.tracks.items[self.get_area_boundaries(.DoubleDensity)[0]..]) |track| {
-        if (track.track_type == .Data)
-            return track;
+    switch (self.disc_format) {
+        .GDROM => {
+            for (self.tracks.items[self.get_area_boundaries(.DoubleDensity)[0]..]) |track| {
+                if (track.track_type == .Data)
+                    return track;
+            }
+        },
+        else => {
+            for (self.tracks.items) |track| {
+                if (track.track_type == .Data)
+                    return track;
+            }
+        },
     }
     return null;
 }
@@ -651,34 +715,55 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
     }
 }
 
-// FIXME: The following methods shouldn't be hardcoded.
-
-pub fn get_session_count(_: *const @This()) u32 {
-    return 2;
+pub fn get_session_count(self: *const @This()) u32 {
+    return switch (self.disc_format) {
+        .GDROM => 2,
+        else => 2,
+    };
 }
 
 pub fn get_session(self: *const @This(), session_number: u32) Session {
-    return switch (session_number) {
-        1 => .{
-            .first_track = 0,
-            .last_track = 1,
-            .start_fad = 0,
-            .end_fad = self.tracks.items[1].get_end_fad(),
+    return switch (self.disc_format) {
+        .GDROM => switch (session_number) {
+            1 => .{
+                .first_track = 0,
+                .last_track = 1,
+                .start_fad = 0,
+                .end_fad = self.tracks.items[1].get_end_fad(),
+            },
+            2 => .{
+                .first_track = 2,
+                .last_track = @intCast(self.tracks.items.len - 1),
+                .start_fad = self.tracks.items[2].fad,
+                .end_fad = self.tracks.items[self.tracks.items.len - 1].get_end_fad(),
+            },
+            else => std.debug.panic("CDH: Invalid session number: {d}", .{session_number}),
         },
-        2 => .{
-            .first_track = 2,
-            .last_track = @intCast(self.tracks.items.len - 1),
-            .start_fad = self.tracks.items[2].fad,
-            .end_fad = self.tracks.items[self.tracks.items.len - 1].get_end_fad(),
+        else => switch (session_number) {
+            1 => .{
+                .first_track = 0,
+                .last_track = 0,
+                .start_fad = self.tracks.items[0].fad,
+                .end_fad = self.tracks.items[0].get_end_fad(),
+            },
+            2 => .{
+                .first_track = 1,
+                .last_track = @intCast(self.tracks.items.len - 1),
+                .start_fad = self.tracks.items[1].fad,
+                .end_fad = self.tracks.items[self.tracks.items.len - 1].get_end_fad(),
+            },
+            else => std.debug.panic("CDH: Invalid session number: {d}", .{session_number}),
         },
-        else => std.debug.panic("CDH: Invalid session number: {d}", .{session_number}),
     };
 }
 
 pub fn get_area_boundaries(self: *const @This(), area: Session.Area) [2]u32 {
-    return switch (area) {
-        .SingleDensity => [2]u32{ 0, 1 },
-        .DoubleDensity => [2]u32{ 2, @intCast(self.tracks.items.len - 1) },
+    return switch (self.disc_format) {
+        .GDROM => switch (area) {
+            .SingleDensity => [2]u32{ 0, 1 },
+            .DoubleDensity => [2]u32{ 2, @intCast(self.tracks.items.len - 1) },
+        },
+        else => [2]u32{ 0, @intCast(self.tracks.items.len - 1) },
     };
 }
 
