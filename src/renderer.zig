@@ -2026,7 +2026,7 @@ pub const Renderer = struct {
         const screen_width: f32 = if (self.write_back_parameters.scaler_ctl.horizontal_scaling_enable) 1280.0 else 640.0;
         const screen_height: f32 = 480.0;
 
-        const depth = gpu.read_register(f32, .ISP_BACKGND_D);
+        const depth = @max(1e-34, gpu.read_register(f32, .ISP_BACKGND_D));
         // NOTE: We draw the background with depth test disabled, but it might get clipped if for some reason it's drawn in front and we don't consider it for the max_depth.
         //       So, even if we're not using the min_depth right now (where it is most likely to matter), I'd rather be safe :)
         self.min_depth = @min(self.min_depth, depth);
