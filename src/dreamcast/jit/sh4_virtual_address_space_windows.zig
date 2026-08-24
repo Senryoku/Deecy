@@ -1,7 +1,8 @@
 const std = @import("std");
 const windows = @import("../host/windows.zig");
 const termcolor = @import("termcolor");
-const Dreamcast = @import("../dreamcast.zig").Dreamcast;
+const DreamcastModule = @import("../dreamcast.zig");
+const Dreamcast = DreamcastModule.Dreamcast;
 const Architecture = @import("x86_64.zig");
 pub const VAS = @import("sh4_virtual_address_space.zig");
 
@@ -17,6 +18,7 @@ boot: std.os.windows.LPVOID = undefined,
 ram: std.os.windows.LPVOID = undefined,
 vram: std.os.windows.LPVOID = undefined,
 aram: std.os.windows.LPVOID = undefined,
+ocram: []align(64) u8 = undefined, // Page size is 64k minimum on Windows, can't safely directly map OCRAM and its mirrors.
 
 pub fn init(allocator: std.mem.Allocator) !@This() {
     if (GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE) |_| {
@@ -30,6 +32,8 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
     vas.ram = try allocate_backing_memory(Dreamcast.RAMSize);
     vas.vram = try allocate_backing_memory(Dreamcast.VRAMSize);
     vas.aram = try allocate_backing_memory(Dreamcast.ARAMSize);
+
+    vas.ocram = try allocator.allocWithOptions(u8, DreamcastModule.SH4.OCRAMSize, .@"64", null);
 
     // Try repeatedly to map the virtual address space.
     // It can technically fail if another thread uses the VirtualAlloc/MapViewOfFile API.
@@ -97,6 +101,7 @@ fn release_views(self: *@This()) void {
 }
 
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    allocator.free(self.ocram);
     self.release_views();
     self.mirrors.deinit(allocator);
     self.no_access.deinit(allocator);
