@@ -845,7 +845,7 @@ pub const SH4JIT = struct {
             const physical_pc = get_cached_physical_pc(cpu);
             var block = self.block_cache.get(physical_pc, cpu.fpscr.sz, cpu.fpscr.pr);
 
-            const start = if (BasicBlock.EnableInstrumentation) std.time.nanoTimestamp() else {}; // Make sure this isn't called when instrumentation is disabled.
+            const start = if (BasicBlock.EnableInstrumentation) std.Io.Timestamp.now(@import("../dreamcast.zig").Context.io, .awake) else {}; // Make sure this isn't called when instrumentation is disabled.
 
             @as(*const fn (*sh4.SH4, *anyopaque) callconv(Architecture.CallingConvention) void, @ptrCast(&self.block_cache.buffer[self.enter_block_offset]))(
                 cpu,
@@ -855,7 +855,7 @@ pub const SH4JIT = struct {
             cpu._pending_cycles = 0;
 
             if (BasicBlock.EnableInstrumentation and block.offset > 0) { // Might have been invalidated.
-                block.time_spent += std.time.nanoTimestamp() - start;
+                block.time_spent.nanoseconds += start.untilNow(@import("../dreamcast.zig").Context.io, .awake).nanoseconds;
                 block.call_count += 1;
             }
 
@@ -1252,7 +1252,7 @@ pub const SH4JIT = struct {
         var block = BasicBlock{ .offset = @intCast(self.block_cache.cursor) };
         if (BasicBlock.EnableInstrumentation) {
             block.cycles = ctx.cycles;
-            block.start_addr = ctx.entry_point_address;
+            block.start_addr = ctx.entry_point_physical_address;
             block.len = ctx.index;
         }
         self.block_cache.cursor += block_size;

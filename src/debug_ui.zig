@@ -281,10 +281,10 @@ fn reset_hover(self: *@This()) void {
 }
 
 fn compare_blocks(_: void, a: BasicBlock, b: BasicBlock) std.math.Order {
-    return std.math.order(a.time_spent, b.time_spent);
+    return std.math.order(a.time_spent.nanoseconds, b.time_spent.nanoseconds);
 }
 fn compare_blocks_desc(_: void, a: BasicBlock, b: BasicBlock) bool {
-    return a.time_spent > b.time_spent;
+    return a.time_spent.nanoseconds > b.time_spent.nanoseconds;
 }
 
 fn display_tlb(comptime name: [:0]const u8, tlbs: []SH4Module.mmu.TLBEntry) void {
@@ -703,26 +703,21 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             if (zgui.collapsingHeader("Block statistics", .{ .default_open = true })) {
                 const max = 50;
                 const static = struct {
-                    var top: std.PriorityQueue(BasicBlock, void, compare_blocks) = undefined;
+                    var top: std.PriorityQueue(BasicBlock, void, compare_blocks) = .empty;
                     var sorted: [max]usize = @splat(0);
-                    var initialized: bool = false;
                 };
                 zgui.beginDisabled(.{ .disabled = d.running });
                 if (zgui.button("Refresh", .{})) {
-                    if (!static.initialized) {
-                        static.top = .init(dc._allocator, {});
-                        static.initialized = true;
-                    } else {
-                        while (static.top.count() > 0) _ = static.top.remove();
-                    }
+                    while (static.top.count() > 0) _ = static.top.pop();
+
                     for (0..dc.sh4_jit.block_cache.blocks.len) |i| {
                         if (dc.sh4_jit.block_cache.blocks[i].offset > 0) {
                             const block = dc.sh4_jit.block_cache.blocks[i];
-                            if (block.call_count > 0 and (static.top.count() < max or static.top.peek().?.time_spent < block.time_spent)) {
-                                try static.top.add(block);
+                            if (block.call_count > 0 and (static.top.count() < max or static.top.peek().?.time_spent.nanoseconds < block.time_spent.nanoseconds)) {
+                                try static.top.push(d._allocator, block);
                             }
                             if (static.top.count() > max) {
-                                _ = static.top.remove();
+                                _ = static.top.pop();
                             }
                         }
                     }
@@ -740,12 +735,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 zgui.endDisabled();
 
                 for (static.top.items) |block| {
-                    zgui.text("Block {X:0>6} ({d}, {d}): {d}ms - {d}ns ({d})", .{
+                    zgui.text("Block {X:0>6} ({d}, {d}): {f} - {f} ({d})", .{
                         block.start_addr,
                         block.len,
                         block.cycles,
-                        @divTrunc(block.time_spent, 1_000_000),
-                        @divTrunc(block.time_spent, block.call_count),
+                        block.time_spent,
+                        std.Io.Duration{ .nanoseconds = @divTrunc(block.time_spent.nanoseconds, block.call_count) },
                         block.call_count,
                     });
                     for (0..block.len) |i| {

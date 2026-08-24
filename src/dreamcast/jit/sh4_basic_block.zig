@@ -1,3 +1,4 @@
+const std = @import("std");
 const builtin = @import("builtin");
 const dc_config = @import("dc_config");
 
@@ -8,7 +9,7 @@ pub const EnableInstrumentation = dc_config.jit_instrumentation;
 offset: u32,
 
 cycles: if (EnableInstrumentation) u32 else void = if (EnableInstrumentation) 0 else {},
-time_spent: if (EnableInstrumentation) i128 else void = if (EnableInstrumentation) 0 else {},
+time_spent: if (EnableInstrumentation) std.Io.Duration else void = if (EnableInstrumentation) .zero else {},
 call_count: if (EnableInstrumentation) u64 else void = if (EnableInstrumentation) 0 else {},
 start_addr: if (EnableInstrumentation) u32 else void = if (EnableInstrumentation) 0 else {},
 len: if (EnableInstrumentation) u32 else void = if (EnableInstrumentation) 0 else {},
