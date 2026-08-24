@@ -186,7 +186,10 @@ pub const Dreamcast = struct {
             dc.sh4_jit = try .init(allocator, null);
             dc.boot = @as([*]align(64) u8, @ptrCast(@alignCast(dc.sh4_jit.virtual_address_space.base_addr())))[0..BootSize];
             dc.ram = @as([*]align(64) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0C00_0000))[0..RAMSize];
-            dc.ocram = @as([*]align(64) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x7C00_0000))[0..SH4.OCRAMSize];
+            dc.ocram = if (builtin.os.tag == .windows)
+                dc.sh4_jit.virtual_address_space.ocram
+            else
+                @as([*]align(64) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x7C00_0000))[0..SH4.OCRAMSize];
             dc.vram = @as([*]align(64) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0400_0000))[0..Holly.VRAMSize];
             dc.aram = @as([*]align(64) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0080_0000))[0..AICA.RAMSize];
         } else {

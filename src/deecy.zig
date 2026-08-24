@@ -45,6 +45,7 @@ pub const host_paths = @import("host_paths.zig");
 const ProductUID = @import("ProductUID.zig");
 const Cheats = @import("./cheats.zig");
 const GameSettings = @import("./GameSettings.zig");
+const MemSize = @import("MemSize.zig");
 
 const lz4 = @import("lz4");
 
@@ -577,14 +578,13 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
             defer deecy_log.info("Graphics context initialized in {f}", .{gctx_start_time.durationTo(std.Io.Clock.awake.now(self.io))});
 
             // Request increase limits for buffer sizes to accomodate OIT Fragment Buffer (UI will only allow valid values for this config).
-            const u32_undefined: u32 = 0xFFFFFFFF;
-            var max_storage_buffer_binding_size = u32_undefined; // Default is 128MiB
+            var max_storage_buffer_binding_size = MemSize.fromMiB(128); // WGPU default
             if (config.renderer.oit_fragment_buffer_size > 128)
-                max_storage_buffer_binding_size = config.renderer.oit_fragment_buffer_size * 1024 * 1024;
-            var max_buffer_size = u32_undefined; // Default is 256MiB
-            if (max_storage_buffer_binding_size > 256 * 1024 * 1024)
+                max_storage_buffer_binding_size = MemSize.fromMiB(config.renderer.oit_fragment_buffer_size);
+            var max_buffer_size = MemSize.fromMiB(256); // WGPU default
+            if (max_storage_buffer_binding_size.asBytes() > max_buffer_size.asBytes())
                 max_buffer_size = max_storage_buffer_binding_size;
-            deecy_log.info("Requested WGPU Limits max_buffer_size={d}, max_storage_buffer_binding_size={d}.", .{ max_buffer_size, max_storage_buffer_binding_size });
+            deecy_log.info("Requested WGPU Limits max_buffer_size={f}, max_storage_buffer_binding_size={f}.", .{ max_buffer_size, max_storage_buffer_binding_size });
 
             self.gctx = try zgpu.GraphicsContext.create(allocator, .{
                 .window = self.window,
@@ -604,8 +604,8 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
                 // (support for Vulkan: https://vulkan.gpuinfo.org/displaydevicelimit.php?name=maxImageArrayLayers)
                 .required_limits = &.{
                     .max_texture_array_layers = 2048,
-                    .max_buffer_size = max_buffer_size,
-                    .max_storage_buffer_binding_size = max_storage_buffer_binding_size,
+                    .max_buffer_size = max_buffer_size.asBytes(),
+                    .max_storage_buffer_binding_size = max_storage_buffer_binding_size.asBytes(),
                 },
                 .cache_descriptor = if (self.config.enable_dawn_pipeline_cache) .{
                     .isolation_key = .init("Deecy-" ++ comptime_config.version),
