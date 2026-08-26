@@ -2091,8 +2091,7 @@ pub const Renderer = struct {
             inline for ([_]HollyModule.ListType{ .Opaque, .PunchThrough, .Translucent }) |list_type| {
                 const display_list: *const HollyModule.DisplayList = @constCast(ta_lists).get_list(list_type);
 
-                var current_depth_compare_function: ?wgpu.CompareFunction = null;
-                var current_step: *std.array_hash_map.Auto(PipelineKey, PipelineMetadata) = undefined;
+                var last_keys: ?struct { pipeline: PipelineKey, draw_call: DrawCallKey } = null;
 
                 const pass = switch (list_type) {
                     .Opaque => &render_pass.opaque_pass,
@@ -2100,6 +2099,7 @@ pub const Renderer = struct {
                     .Translucent => &render_pass.translucent_pass,
                     else => @compileError("Invalid list type"),
                 };
+                try pass.steps.append(self._allocator, .empty);
 
                 for (0..display_list.vertex_strips.items.len) |idx| {
                     const strip_first_vertex_index: usize = self.vertices.items.len;
@@ -2584,40 +2584,32 @@ pub const Renderer = struct {
                                     try pre_sorted_indices.append(self._allocator, @intCast(FirstVertex + i));
                                 try pre_sorted_indices.append(self._allocator, std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
                             } else {
+                                const draw_call_key = DrawCallKey{ .sampler = sampler, .user_clip = display_list.vertex_strips.items[idx].user_clip };
                                 // Draw calls are batched together as much as possible by PipelineKeys (and then by DrawCallKey).
                                 // This works well in most cases and reduces host draw calls by a lot, but it fails in some
                                 // edge cases. To alleviate those, changes in depth compare function are treated as a "barrier",
                                 // guaranteeing correct ordering between draws before and after the change (spliting them into
-                                // two distinct 'steps'). As failure cases I found involved the use of 'always' or 'never' compare
-                                // functions, this seem to be enough, while keeping most of the benefit of batching.
-                                if (current_depth_compare_function == null) { // Initialisation
-                                    current_depth_compare_function = pipeline_key.depth_compare;
-                                    try pass.steps.append(self._allocator, .empty);
-                                    current_step = &pass.steps.items[0];
-                                } else if (current_depth_compare_function != pipeline_key.depth_compare) { // Next Step
-                                    current_depth_compare_function = pipeline_key.depth_compare;
-                                    try pass.steps.append(self._allocator, .empty);
-                                    current_step = &pass.steps.items[pass.steps.items.len - 1];
+                                // two distinct 'steps').
+                                if (last_keys) |prev| {
+                                    if (prev.pipeline.depth_compare != pipeline_key.depth_compare) {
+                                        try pass.steps.append(self._allocator, .empty);
+                                    } else if (pipeline_key.depth_compare == .always) {
+                                        // Order also matters between multiple `always` draws. This is fine as long as we end up in the same draw call
+                                        // (order within a host draw call is preserved), but we have to introduce a barrier otherwise.
+                                        const pipeline_changed = !std.meta.eql(prev.pipeline, pipeline_key);
+                                        const draw_call_changed = !std.meta.eql(prev.draw_call, draw_call_key);
+                                        if (pipeline_changed or draw_call_changed)
+                                            try pass.steps.append(self._allocator, .empty);
+                                    }
                                 }
+                                last_keys = .{ .pipeline = pipeline_key, .draw_call = draw_call_key };
 
-                                var pipeline = current_step.getPtr(pipeline_key) orelse put: {
-                                    try current_step.put(self._allocator, pipeline_key, .{});
-                                    break :put current_step.getPtr(pipeline_key).?;
-                                };
-
-                                const draw_call_key = DrawCallKey{ .sampler = sampler, .user_clip = display_list.vertex_strips.items[idx].user_clip };
-
-                                var draw_call = pipeline.draw_calls.getPtr(draw_call_key);
-                                if (draw_call == null) {
-                                    try pipeline.draw_calls.put(self._allocator, draw_call_key, .init(
-                                        sampler,
-                                        display_list.vertex_strips.items[idx].user_clip,
-                                    ));
-                                    draw_call = pipeline.draw_calls.getPtr(draw_call_key);
-                                }
+                                const current_step = &pass.steps.items[pass.steps.items.len - 1];
+                                const pipeline = (try current_step.getOrPutValue(self._allocator, pipeline_key, .{})).value_ptr;
+                                const draw_call = (try pipeline.draw_calls.getOrPutValue(self._allocator, draw_call_key, .init(sampler, display_list.vertex_strips.items[idx].user_clip))).value_ptr;
                                 for (strip_first_vertex_index..self.vertices.items.len) |i|
-                                    try draw_call.?.indices.append(self._allocator, @intCast(FirstVertex + i));
-                                try draw_call.?.indices.append(self._allocator, std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
+                                    try draw_call.indices.append(self._allocator, @intCast(FirstVertex + i));
+                                try draw_call.indices.append(self._allocator, std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
                             }
                         }
                     }
