@@ -1590,7 +1590,7 @@ pub const Renderer = struct {
         const repeat_vertically = v_size <= u_size;
         const copies = if (repeat_vertically) u_size / v_size else v_size / u_size;
         const total_pixels = u_size * v_size;
-        const scratch_pixels = std.mem.bytesAsSlice([4]u8, self._scratch_pad[0 .. 2 * 4 * total_pixels]);
+        const scratch_pixels = std.mem.bytesAsSlice([4]u8, self._scratch_pad);
         var tex_source = [2][][4]u8{
             scratch_pixels[0..total_pixels],
             scratch_pixels[0..total_pixels], // By default (no clamp or flip), the repetitions will be straight copies.
