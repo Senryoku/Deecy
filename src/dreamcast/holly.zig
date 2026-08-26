@@ -1365,30 +1365,11 @@ pub const VertexParameterType = enum(u8) {
 };
 
 /// This follows the TA layout, except that some unused bits are re-purposed as a union tag.
-pub const VertexParameter = union {
-    Type0: VertexParameter_0,
-    Type1: VertexParameter_1,
-    Type2: VertexParameter_2,
-    Type3: VertexParameter_3,
-    Type4: VertexParameter_4,
-    Type5: VertexParameter_5,
-    Type6: VertexParameter_6,
-    Type7: VertexParameter_7,
-    Type8: VertexParameter_8,
-    Type9: VertexParameter_9,
-    Type10: VertexParameter_10,
-    Type11: VertexParameter_11,
-    Type12: VertexParameter_12,
-    Type13: VertexParameter_13,
-    Type14: VertexParameter_14,
-    SpriteType0: VertexParameter_Sprite_0,
-    SpriteType1: VertexParameter_Sprite_1,
-
-    comptime {
-        // For some reason in debug mode, the size of this union is 80 bytes (as of zig 0.16.0).
-        // A packed union would be cleaner and a garanteed memory layout, but requires manual padding.
-        if (@import("builtin").mode != .Debug) std.debug.assert(@sizeOf(@This()) == 64);
-    }
+// NOTE: In debug mode, raw unions have an hidden safety tag flag which makes them dangerous in this weird use case.
+//       A packed union would be cleaner and a garanteed memory layout, but requires manual padding (because not all vertex parameters have the same size).
+pub const VertexParameter = packed struct(u512) {
+    parameter_control_word: ParameterControlWord,
+    _data: u480,
 
     pub inline fn init(cmd: []u32, t: VertexParameterType) @This() {
         var r: @This() = undefined;
@@ -1399,12 +1380,12 @@ pub const VertexParameter = union {
     pub inline fn init_in_place(self: *@This(), cmd: []u32, t: VertexParameterType) void {
         @memcpy(std.mem.asBytes(self)[0..64], std.mem.sliceAsBytes(cmd));
         // Re-purpose unused bits in PCW.obj_control as a union tag.
-        std.mem.bytesAsValue(ParameterControlWord, std.mem.asBytes(self)).obj_control._ = @intFromEnum(t);
+        self.parameter_control_word.obj_control._ = @intFromEnum(t);
         std.debug.assert(self.tag() == t);
     }
 
     pub fn tag(self: *const @This()) VertexParameterType {
-        return @enumFromInt(std.mem.bytesAsValue(ParameterControlWord, std.mem.asBytes(self)).obj_control._);
+        return @enumFromInt(self.parameter_control_word.obj_control._);
     }
 
     pub fn tagged(self: *const @This()) TaggedVertexParameter {

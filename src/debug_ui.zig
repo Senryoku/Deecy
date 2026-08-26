@@ -1835,7 +1835,7 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
                 switch (vertices[0].tag()) {
                     .SpriteType1 => for (vertices) |s| {
                         var points: [3][2]f32 = undefined;
-                        for (s.SpriteType1.uvs(), 0..) |uv, i| {
+                        for (s.tagged().SpriteType1.uvs(), 0..) |uv, i| {
                             points[i] = adjust_uv(origin, size, tsp, .{ uv.u_as_f32(), uv.v_as_f32() });
                             draw_list.addCircleFilled(.{ .p = points[i], .r = 2.0, .col = 0xFF0000FF });
                         }
@@ -1908,13 +1908,13 @@ fn display_vertex_data(self: *@This(), vertex: *const Holly.VertexParameter) voi
         switch (vertex.tagged()) {
             .SpriteType0 => {
                 for (0..3) |i| {
-                    zgui.text("Pos: {d: >6.2}, {d: >6.2}, {d: >6.2}", .{ sprite_positions[i][0], sprite_positions[i][1], sprite_positions[i][2] });
+                    zgui.text("Pos: {d: >6.2}, {d: >6.2}, {d: >6.4}", .{ sprite_positions[i][0], sprite_positions[i][1], sprite_positions[i][2] });
                 }
             },
             .SpriteType1 => |v| {
                 const uvs = v.uvs();
                 for (0..3) |i| {
-                    zgui.text("Pos: {d: >6.2}, {d: >6.2}, {d: >6.2} - UVs: {d: >5.2}, {d: >5.2}", .{ sprite_positions[i][0], sprite_positions[i][1], sprite_positions[i][2], uvs[i].u_as_f32(), uvs[i].v_as_f32() });
+                    zgui.text("Pos: {d: >6.2}, {d: >6.2}, {d: >6.4} - UVs: {d: >5.2}, {d: >5.2}", .{ sprite_positions[i][0], sprite_positions[i][1], sprite_positions[i][2], uvs[i].u_as_f32(), uvs[i].v_as_f32() });
                 }
             },
             else => {},
