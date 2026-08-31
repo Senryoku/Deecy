@@ -64,7 +64,7 @@ pub fn main(init: std.process.Init) !void {
     custom_log.init(io);
     defer custom_log.deinit();
 
-    try host_paths.init(io, allocator, init.environ_map.*);
+    try host_paths.init(io, allocator, init.environ_map);
     defer host_paths.deinit(io, allocator);
 
     defer DreamcastModule.SH4Module.SCIF.deinit(io);

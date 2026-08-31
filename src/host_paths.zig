@@ -7,7 +7,7 @@ var context: ?struct {
     userdata_dir: std.Io.Dir,
 } = null;
 
-pub fn init(io: std.Io, allocator: std.mem.Allocator, environ: std.process.Environ.Map) !void {
+pub fn init(io: std.Io, allocator: std.mem.Allocator, environ: *const std.process.Environ.Map) !void {
     std.debug.assert(context == null);
     var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
 

@@ -38,8 +38,8 @@
             .hash = "zglfw-0.10.0-dev-zgVDNGK_JQAgkrsKRDze2u_peWzXx9dxcws6jaBw8Djr",
         },
         .known_folders = .{
-            .url = "git+https://github.com/ziglibs/known-folders.git#207c34a16e4365edc20d92c7892f962b3bed46e8",
-            .hash = "known_folders-0.0.0-Fy-PJsbKAACbDh9bBxR0MMThxZSS6A9RH4apWphNHY70",
+            .url = "git+https://github.com/ziglibs/known-folders.git#6da0d0c41b78b9ed2d34fa364fcb81b5ebece6c4",
+            .hash = "known_folders-0.0.0-Fy-PJiDLAAB98m3uYUzatrTb2mO2fpvwx2zpSroEtfbO",
             .lazy = true,
         },
     },
