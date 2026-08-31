@@ -12,7 +12,8 @@ finish-args:
   - --share=ipc
   - --device=dri
   
-  - --device=all 
+  - --device=input 
+  - --device=usb
   
   - --socket=pulseaudio
 
@@ -23,6 +24,8 @@ modules:
       - mkdir -p /app/bin
       - cp zig /app/bin/zig
       - cp -r lib /app/
+    cleanup:
+      - '*'
     sources:
       - type: archive
         url: https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
