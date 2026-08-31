@@ -33,6 +33,7 @@ modules:
 
   - name: deecy
     buildsystem: simple
+    build-options: { build-args: ["--share=network"] } # Allow fetching dependencies
     build-commands:
       - /app/bin/zig build --release=fast -Dcpu=baseline -Dflatpak=true -p /app
     sources:
