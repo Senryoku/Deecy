@@ -7,6 +7,8 @@ zig-cache
 zig-out
 zig-pkg
 
+.flatpak-builder
+
 /bin/
 src/bin
 docs

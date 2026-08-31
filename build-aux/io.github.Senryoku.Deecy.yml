@@ -31,7 +31,7 @@ modules:
   - name: deecy
     buildsystem: simple
     build-commands:
-      - /app/bin/zig build --release=fast -Dcpu=baseline -Duse_appdata_dir=true -p /app
+      - /app/bin/zig build --release=fast -Dcpu=baseline -Dflatpak=true -p /app
     sources:
       - type: dir
         path: ../
