@@ -24,10 +24,3 @@ jobs:
         with:
           bundle: Deecy.flatpak
           manifest-path: build-aux/io.github.Senryoku.Deecy.yml
-          cache-key: flatpak-builder-${{ github.sha }}
-
-      - name: Upload Flatpak Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Deecy-flatpak
-          path: Deecy.flatpak
