@@ -1909,8 +1909,16 @@ pub fn submit_ui(self: *@This()) void {
 
 /// Display an error message and wait for the user to close the window.
 fn display_unrecoverable_error(self: *@This(), comptime fmt: []const u8, args: anytype) void {
+    var precise_sleep: PreciseSleep = .init(self.io);
+    defer precise_sleep.deinit();
+
     while (!self.window.shouldClose()) {
         zglfw.pollEvents();
+
+        if (self.check_resize() catch return == .Resizing) {
+            _ = self.gctx.present();
+            continue;
+        }
 
         const fb_size = self.window.getFramebufferSize();
         zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
@@ -1927,16 +1935,27 @@ fn display_unrecoverable_error(self: *@This(), comptime fmt: []const u8, args: a
 
         self.submit_ui();
 
-        _ = self.gctx.present();
+        if (self.gctx.present() == .surface_reconfigured)
+            self.on_resize();
+
+        precise_sleep.wait_for_interval(self.io, 16_666_666);
     }
 }
 
 /// Display an error message for missing bios or flash files.
 fn display_missing_file_error(self: *@This(), filename: []const u8, expected_size: usize, comptime fmt: []const u8, args: anytype) !enum { retry, exit } {
+    var precise_sleep: PreciseSleep = .init(self.io);
+    defer precise_sleep.deinit();
+
     var retry = false;
     var file_error: ?anyerror = null;
     while (!self.window.shouldClose()) {
         zglfw.pollEvents();
+
+        if (try self.check_resize() == .Resizing) {
+            _ = self.gctx.present();
+            continue;
+        }
 
         const fb_size = self.window.getFramebufferSize();
         zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
@@ -1981,9 +2000,12 @@ fn display_missing_file_error(self: *@This(), filename: []const u8, expected_siz
 
         self.submit_ui();
 
-        _ = self.gctx.present();
+        if (self.gctx.present() == .surface_reconfigured)
+            self.on_resize();
 
         if (retry) return .retry;
+
+        precise_sleep.wait_for_interval(self.io, 16_666_666);
     }
     return .exit;
 }
