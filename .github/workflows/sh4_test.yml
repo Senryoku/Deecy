@@ -1,34 +1,34 @@
 name: SH4 Interpreter Test
 
 on:
-    push:
-        branches: [main]
-    pull_request:
-        branches: [main]
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
-    test:
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v4
-              with:
-                  repository: SingleStepTests/sh4
-                  path: sh4_json
-                  ref: 33c252a9e5abefc5e085649220ca08a116da0c0c
-            - name: Move JSON test files to temp directory
-              run: mkdir /home/runner/dev && mv sh4_json /home/runner/dev/sh4_json/
-            - name: Transcode JSON test files
-              working-directory: /home/runner/dev/sh4_json/
-              run: python ./transcode_json.py
-            - name: Move JSON test files to final location
-              run: mv /home/runner/dev/sh4_json/ ../SingleStepTests_sh4/
-            - uses: actions/checkout@v4
-              with:
-                submodules: 'true'
-            - name: Get zig version
-              id: zigversion
-              run: echo "version=$(cat .zigversion)" >> $GITHUB_OUTPUT
-            - uses: mlugg/setup-zig@v2
-              with:
-                version: ${{ steps.zigversion.outputs.version }}
-            - run: zig build sh4_test -Ddreampicoport=false --summary all
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: SingleStepTests/sh4
+          path: sh4_json
+          ref: 33c252a9e5abefc5e085649220ca08a116da0c0c
+      - name: Move JSON test files to temp directory
+        run: mkdir /home/runner/dev && mv sh4_json /home/runner/dev/sh4_json/
+      - name: Transcode JSON test files
+        working-directory: /home/runner/dev/sh4_json/
+        run: python ./transcode_json.py
+      - name: Move JSON test files to final location
+        run: mv /home/runner/dev/sh4_json/ ../SingleStepTests_sh4/
+      - uses: actions/checkout@v7
+        with:
+          submodules: "true"
+      - name: Get zig version
+        id: zigversion
+        run: echo "version=$(cat .zigversion)" >> $GITHUB_OUTPUT
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ steps.zigversion.outputs.version }}
+      - run: zig build sh4_test -Ddreampicoport=false --summary all

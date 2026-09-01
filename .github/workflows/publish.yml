@@ -26,10 +26,10 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt update && sudo apt -y install libgtk-3-dev libudev-dev
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
-          submodules: 'true'
-          lfs: 'true'
+          submodules: "true"
+          lfs: "true"
 
       - name: Get zig version
         id: zigversion
@@ -50,7 +50,7 @@ jobs:
           mkdir -p Deecy/data
           printf "Copy dc_boot.bin and dc_flash.bin in ./data.\nWebsite: https://github.com/Senryoku/Deecy" > Deecy/README.txt
           printf "Copy dc_boot.bin and dc_flash.bin here." > Deecy/data/README.txt
-          
+
           if [ "${{ runner.os }}" == "Windows" ]; then
             cp zig-out/bin/dxcompiler.dll Deecy/
             cp zig-out/bin/dxil.dll Deecy/
