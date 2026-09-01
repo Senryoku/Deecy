@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Deecy
+Comment=Dreamcast Emulator
+Exec=Deecy
+Icon=io.github.Senryoku.Deecy
+Terminal=false
+Categories=Game;Emulator;
+Keywords=dreamcast;emulator;

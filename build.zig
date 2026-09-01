@@ -20,7 +20,8 @@ pub fn build(b: *std.Build) !void {
     const jit_instrumentation = b.option(bool, "jit_instrumentation", "Enable JIT instrumentation (Slow, default: false)") orelse false;
     const data_path = b.option([]const u8, "data_path", "Path to the data directory (Copy your bios and flash files here, default: './data')") orelse "./data";
     const userdata_path = b.option([]const u8, "userdata_path", "Path to the userdata directory (default: './userdata')") orelse "./userdata";
-    const use_appdata_dir = b.option(bool, "use_appdata_dir", "Prepend the platform specific AppData directory to data_path and userdata_path (default: false)") orelse false;
+    const flatpak = b.option(bool, "flatpak", "Build for flatpak (default: false, implies 'use_appdata_dir')") orelse false;
+    const use_appdata_dir = b.option(bool, "use_appdata_dir", "Prepend the platform specific AppData directory to data_path and userdata_path (default: false)") orelse flatpak;
     const no_console = if (target.result.os.tag == .windows) b.option(bool, "no_console", "Do not open the console on Windows (default: false for debug builds, true otherwise)") orelse (optimize != .Debug) else false;
     const git_commit = b.option([]const u8, "git_commit", "Current git commit hash (default: auto detect)") orelse get_git_commit(b);
     const gpu_profiling = b.option(bool, "gpu_profiling", "Enable GPU profiling using timestamp queries (default: true for debug builds, false otherwise)") orelse (optimize == .Debug);
@@ -116,6 +117,7 @@ pub fn build(b: *std.Build) !void {
             exe.lto = .full;
         exe.link_gc_sections = true;
     }
+    if (flatpak) copy_flatpak_files(b);
 
     // Check target for IDE support
     const exe_check = b.addExecutable(.{
@@ -316,4 +318,30 @@ pub fn build(b: *std.Build) !void {
     const run_sh4_tests = b.addRunArtifact(sh4_tests);
     const sh4_test_step = b.step("sh4_test", "Run sh4 tests");
     sh4_test_step.dependOn(&run_sh4_tests.step);
+}
+
+fn copy_flatpak_files(b: *std.Build) void {
+    const install_desktop = b.addInstallFile(
+        b.path("flatpak/io.github.Senryoku.Deecy.desktop"),
+        "share/applications/io.github.Senryoku.Deecy.desktop",
+    );
+    b.getInstallStep().dependOn(&install_desktop.step);
+
+    const install_metadata = b.addInstallFile(
+        b.path("flatpak/io.github.Senryoku.Deecy.metainfo.xml"),
+        "share/metainfo/io.github.Senryoku.Deecy.metainfo.xml",
+    );
+    b.getInstallStep().dependOn(&install_metadata.step);
+
+    const install_icon = b.addInstallFile(
+        b.path("src/assets/logo.svg"),
+        "share/icons/hicolor/scalable/apps/io.github.Senryoku.Deecy.svg",
+    );
+    b.getInstallStep().dependOn(&install_icon.step);
+
+    const install_small_icon = b.addInstallFile(
+        b.path("src/assets/logo-small.svg"),
+        "share/icons/hicolor/16x16/apps/io.github.Senryoku.Deecy.svg",
+    );
+    b.getInstallStep().dependOn(&install_small_icon.step);
 }

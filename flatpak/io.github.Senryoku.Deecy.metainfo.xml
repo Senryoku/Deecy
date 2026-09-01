@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.Senryoku.Deecy</id>
+  <name>Deecy</name>
+  <summary>Dreamcast Emulator</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  
+  <description>
+    <p>
+      Deecy is an open-source Dreamcast emulator.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">io.github.Senryoku.Deecy.desktop</launchable>
+  
+  <developer id="io.github.Senryoku">
+    <name>Senryoku</name>
+  </developer>
+
+  <provides>
+    <binary>Deecy</binary>
+  </provides>
+</component>
