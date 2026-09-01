@@ -23,4 +23,4 @@ jobs:
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: Deecy.flatpak
-          manifest-path: build-aux/io.github.Senryoku.Deecy.yml
+          manifest-path: flatpak/io.github.Senryoku.Deecy.yml

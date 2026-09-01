@@ -346,7 +346,7 @@ fn copy_flatpak_files(b: *std.Build) void {
     b.getInstallStep().dependOn(&install_desktop.step);
 
     const install_metadata = b.addInstallFile(
-        b.path("build-aux/io.github.Senryoku.Deecy.metainfo.xml"),
+        b.path("flatpak/io.github.Senryoku.Deecy.metainfo.xml"),
         "share/metainfo/io.github.Senryoku.Deecy.metainfo.xml",
     );
     b.getInstallStep().dependOn(&install_metadata.step);
