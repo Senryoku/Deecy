@@ -127,35 +127,32 @@ pub fn draw_vmu_screens(self: *@This(), editable: bool) void {
     } })) {
         const win_width = zgui.getWindowWidth();
         if (!editable) {
-            zgui.dummy(.{ .w = 0, .h = 18.0 + 30.0 }); // Title Bar + Controls
-        } else {}
-
-        if (editable) {
+            zgui.dummy(.{ .w = 0, .h = 18.0 + 30.0 }); // Keep VMU screen at the same place regardless of editable state (Title Bar + Controls)
+        } else {
             var valid_count: u8 = 0;
-            inline for (&self.vmu_displays) |*tex| {
+            inline for (self.vmu_displays) |tex| {
                 if (tex.valid) valid_count += 1;
             }
-            zgui.setCursorPosX(@max(0.0, (win_width - @as(f32, valid_count) * 44.5) / 2.0));
-            inline for (&self.vmu_displays, 0..) |*tex, idx| {
-                if (tex.valid) {
-                    if (idx != 0) zgui.sameLine(.{});
-                    // _ = zgui.checkbox("##Display #" ++ std.fmt.comptimePrint("{d}", .{idx}), .{ .v = &tex.display });
-                    _ = zgui.checkbox(std.fmt.comptimePrint("{s}", .{.{ "A", "B", "C", "D" }[idx]}), .{ .v = &tex.display });
-                    zgui.setItemTooltip("Display VMU screen from port {s}", .{.{ "A", "B", "C", "D" }[idx]});
+            if (valid_count > 0) {
+                zgui.setCursorPosX(@max(0.0, (win_width - @as(f32, valid_count) * 44.5) / 2.0));
+                var first = true;
+                inline for (&self.vmu_displays, .{ "A", "B", "C", "D" }) |*tex, port| {
+                    if (tex.valid) {
+                        if (!first) zgui.sameLine(.{});
+                        _ = zgui.checkbox(port, .{ .v = &tex.display });
+                        zgui.setItemTooltip("Display VMU screen from port {s}", .{port});
+                        first = false;
+                    }
                 }
             }
         }
 
-        var valid_count: u8 = 0;
         inline for (&self.vmu_displays) |*vmu| {
-            if (vmu.valid) {
-                valid_count += 1;
-                if (vmu.display) {
-                    if (vmu.dirty)
-                        vmu.upload_vmu_texture(self.deecy);
-                    zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr((self.deecy.gctx.lookupResource(vmu.view).?))) }, .{ .w = win_width, .h = win_width * 32.0 / 48.0 });
-                    zgui.dummy(.{ .w = 0, .h = 12.0 });
-                }
+            if (vmu.valid and vmu.display) {
+                if (vmu.dirty)
+                    vmu.upload_vmu_texture(self.deecy);
+                zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr((self.deecy.gctx.lookupResource(vmu.view).?))) }, .{ .w = win_width, .h = win_width * 32.0 / 48.0 });
+                zgui.dummy(.{ .w = 0, .h = 12.0 });
             }
         }
     }
