@@ -558,15 +558,13 @@ pub const Dreamcast = struct {
                         const value: u32 = if (event.trigger_cycle <= self._global_cycles) // Done but not processed yet.
                             len
                         else b: { // In progress
-                            // FIXME: Jet Set Radio issue #95.
-                            break :b len;
-                            // const remaining_cycles = event.trigger_cycle - self._global_cycles;
-                            // const transfered = std.mem.alignForward(usize, (len * remaining_cycles) / GDROM.dma_cycles(len), 32);
-                            // break :b @intCast(transfered);
+                            const remaining_cycles = event.trigger_cycle - self._global_cycles;
+                            const transfered = std.mem.alignForward(usize, (len * remaining_cycles) / GDROM.dma_cycles(len), 32);
+                            break :b @intCast(transfered);
                         };
                         self.hw_register(u32, .SB_GDSTARD).* = start + value;
                         self.hw_register(u32, .SB_GDLEND).* = value;
-                        log.warn("Read({}) from {} while DMA is in progress: SB_GDSTARD={X}, SB_GDLEND={X}", .{ T, r, self.hw_register(u32, .SB_GDSTARD).*, self.hw_register(u32, .SB_GDLEND).* });
+                        log.info("Read({}) from {} while DMA is in progress: SB_GDSTARD={X}, SB_GDLEND={X}", .{ T, r, self.hw_register(u32, .SB_GDSTARD).*, self.hw_register(u32, .SB_GDLEND).* });
                         return self.hw_register(T, r).*;
                     }
                 }
