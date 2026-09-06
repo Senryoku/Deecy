@@ -781,6 +781,10 @@ fn ata_nop(self: *@This()) void {
         .status = .{ .drq = 0, .bsy = 0, .drdy = 1 },
         .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
     });
+
+    self.dma_data_queue.discard(self.dma_data_queue.count);
+    self.pio_data_queue.discard(self.pio_data_queue.count);
+    self.cd_read_state = .{};
 }
 
 fn test_unit(self: *@This()) void {
