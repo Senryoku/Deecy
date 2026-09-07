@@ -10,6 +10,7 @@ const DiscFormat = @import("disc.zig").DiscFormat;
 
 disc_format: DiscFormat = .CDROM_XA,
 tracks: std.ArrayList(Track) = .empty,
+sessions: std.ArrayList(Session) = .empty,
 
 _files: std.ArrayList(MemoryMappedFile) = .empty,
 
@@ -36,7 +37,28 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
             if (std.mem.endsWith(u8, lines[line_idx], "HIGH-DENSITY AREA")) {
                 self.disc_format = .GDROM;
                 track_fad = 45150;
-            }
+            } else if (std.mem.startsWith(u8, lines[line_idx], "REM SESSION ")) {
+                const session_number = try std.fmt.parseUnsigned(u32, lines[line_idx][12..], 10);
+                log.debug("Session: {d}", .{session_number});
+                if (self.sessions.items.len > 0) { // Close previous session
+                    self.sessions.items[self.sessions.items.len - 1].last_track = @intCast(self.tracks.items.len - 1);
+                    self.sessions.items[self.sessions.items.len - 1].end_fad = self.tracks.items[self.tracks.items.len - 1].get_end_fad();
+
+                    if (self.disc_format == .CDROM_XA) {
+                        // Session Lead-Out (4500 for first session, 2250 afterwards) + Session Lead-In + Pregap.
+                        if (session_number == 2)
+                            track_fad += 4500 + 6750 + 150
+                        else if (session_number > 2)
+                            track_fad += 2250 + 6750 + 150;
+                    }
+                }
+                try self.sessions.append(allocator, .{
+                    .first_track = @intCast(self.tracks.items.len),
+                    .last_track = 0,
+                    .start_fad = @intCast(track_fad),
+                    .end_fad = 0,
+                });
+            } else log.warn("Unsupported REM command: '{s}'", .{lines[line_idx]});
             line_idx += 1;
         } else if (std.mem.startsWith(u8, lines[line_idx], "FILE")) {
             var filename: []const u8 = undefined;
@@ -100,10 +122,16 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
         }
     }
 
+    if (self.sessions.items.len > 0) {
+        self.sessions.items[self.sessions.items.len - 1].last_track = @intCast(self.tracks.items.len - 1);
+        self.sessions.items[self.sessions.items.len - 1].end_fad = self.tracks.items[self.tracks.items.len - 1].get_end_fad();
+    }
+
     return self;
 }
 
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator, io: std.Io) void {
+    self.sessions.deinit(allocator);
     self.tracks.deinit(allocator);
     for (self._files.items) |*file|
         file.deinit(io);
@@ -164,25 +192,21 @@ pub fn load_sectors_raw(self: *const @This(), fad: u32, count: u32, dest: []u8) 
 }
 
 pub fn get_session_count(self: *const @This()) u32 {
+    if (self.sessions.items.len > 0)
+        return @intCast(self.sessions.items.len);
+
     return switch (self.disc_format) {
-        .CDROM_XA => 1,
         .GDROM => 2,
-        else => std.debug.panic("CUE: Unsupported disc format: {t}", .{self.disc_format}),
+        else => if (self.tracks.items.len > 1) 2 else 1,
     };
 }
 
 pub fn get_session(self: *const @This(), session_number: u32) Session {
-    switch (self.disc_format) {
-        .CDROM_XA => return switch (session_number) {
-            1 => .{
-                .first_track = 0,
-                .last_track = @intCast(self.tracks.items.len - 1),
-                .start_fad = self.tracks.items[0].fad,
-                .end_fad = self.tracks.items[self.tracks.items.len - 1].get_end_fad(),
-            },
-            else => std.debug.panic("CUE: Invalid session number: {d}", .{session_number}),
-        },
-        .GDROM => return switch (session_number) {
+    if (self.sessions.items.len <= session_number)
+        return self.sessions.items[session_number - 1];
+
+    return switch (self.disc_format) {
+        .GDROM => switch (session_number) {
             1 => .{
                 .first_track = 0,
                 .last_track = 1,
@@ -197,8 +221,28 @@ pub fn get_session(self: *const @This(), session_number: u32) Session {
             },
             else => std.debug.panic("CUE: Invalid session number: {d}", .{session_number}),
         },
+        .CDROM_XA => if (self.tracks.items.len > 1) switch (session_number) {
+            1 => .{
+                .first_track = 0,
+                .last_track = @intCast(self.tracks.items.len - 2),
+                .start_fad = self.tracks.items[self.tracks.items.len - 2].fad,
+                .end_fad = self.tracks.items[self.tracks.items.len - 2].get_end_fad(),
+            },
+            2 => .{
+                .first_track = @intCast(self.tracks.items.len - 1),
+                .last_track = @intCast(self.tracks.items.len - 1),
+                .start_fad = self.tracks.getLast().fad,
+                .end_fad = self.tracks.getLast().get_end_fad(),
+            },
+            else => std.debug.panic("CUE: Invalid session number: {d}", .{session_number}),
+        } else .{
+            .first_track = 0,
+            .last_track = @intCast(self.tracks.items.len - 1),
+            .start_fad = self.tracks.items[0].fad,
+            .end_fad = self.tracks.getLast().get_end_fad(),
+        },
         else => std.debug.panic("CUE: Unsupported disc format: {t}", .{self.disc_format}),
-    }
+    };
 }
 
 pub fn get_area_boundaries(self: *const @This(), area: Session.Area) [2]u32 {
