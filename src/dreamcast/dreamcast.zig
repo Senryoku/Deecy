@@ -278,6 +278,7 @@ pub const Dreamcast = struct {
 
         self.hw_register(u32, .SB_MSYS).* = 0x3A980000;
         self.hw_register(u32, .SB_MST).* = 0x000000FF;
+        self.hw_register(HardwareRegisters.SB_MDAPRO, .SB_MDAPRO).* = .{};
         self.hw_register(u32, .SB_MMSEL).* = 0x00000001;
 
         // NOTE: SB_G1SYSM:
@@ -612,10 +613,8 @@ pub const Dreamcast = struct {
             },
             .SB_MDAPRO => {
                 if (T != u32) return log.err("Invalid Write({any}) to 0x{X:0>8} (SB_MDAPRO)\n", .{ T, addr });
-                // This register specifies the address range for Maple-DMA involving the system (work) memory.
-                // Check "Security code"
                 if (value & 0xFFFF0000 != 0x61550000) return;
-                self.hw_register(T, .SB_MDAPRO).* = value;
+                self.hw_register(T, .SB_MDAPRO).* = value & 0x00007F7F;
             },
             .SB_MDST => if (value == 1) self.start_maple_dma(),
             .SB_ISTNRM, .SB_ISTERR => {
@@ -1053,9 +1052,16 @@ pub const Dreamcast = struct {
             defer self.hw_register(u32, .SB_MDST).* = 0;
 
             log.debug("Maple-DMA initiation!", .{});
-            const sb_mdstar = self.read_hw_register(u32, .SB_MDSTAR);
-            std.debug.assert(sb_mdstar >> 28 == 0 and sb_mdstar & 0x1F == 0);
-            self.maple.transfer(self, @as([*]u32, @ptrCast(@alignCast(&self.ram[sb_mdstar - 0x0C000000])))[0..]);
+            const command_address = self.read_hw_register(u32, .SB_MDSTAR);
+            const memory_protection = self.read_hw_register(HardwareRegisters.SB_MDAPRO, .SB_MDAPRO);
+            if (command_address < memory_protection.min() or command_address > memory_protection.max()) {
+                log.warn("Maple-DMA: Invalid command address (SB_MDSTAR) {X:0>8} (SB_MDAPRO: [{X:0>8}, {X:0>8}])", .{ command_address, memory_protection.min(), memory_protection.max() });
+                // TODO: Generate MIAINT (Illegal Address Set) error.
+                // NOTE: SB_MDSTAR should be checked on write too.
+                return;
+            }
+            std.debug.assert(command_address >> 28 == 0 and command_address & 0x1F == 0);
+            self.maple.transfer(self, @alignCast(std.mem.bytesAsSlice(u32, self.ram[command_address & 0x03FFFFE0 ..])));
         }
     }
 

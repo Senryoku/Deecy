@@ -209,11 +209,13 @@ const EmulatedPort = struct {
     /// Returns the number of 32bit words transferred to the host.
     pub fn handle_command(self: *@This(), dc: *Dreamcast, data: []const u32) u32 {
         const return_addr = data[0];
-        std.debug.assert(return_addr >= 0x0C000000 and return_addr < 0x10000000);
-        std.debug.assert(return_addr % 4 == 0);
         const command: CommandWord = @bitCast(data[1]);
         const function_type = if (data.len >= 3) data[2] else 0;
-        log.debug("  Dest: {X:0>8}, Command: {f}, Function: {f}", .{ return_addr, command, @as(FunctionCodesMask, @bitCast(function_type)) });
+        log.debug("  Dest: {X:0>8}, Command: {f}, Function: {f}", .{ return_addr, command, FunctionCodesMask.from_u32(function_type) });
+        if (return_addr < 0x0C000000 or return_addr > 0x10000000 or return_addr % 4 != 0) {
+            log.warn("Invalid return address: {X:0>8}", .{return_addr});
+            return 0;
+        }
 
         // NOTE: The sender address should also include the sub-peripheral bit when appropriate.
         // "When a main peripheral identifies itself in the response to a command, it sets the sub-peripheral bit for each sub-peripheral that is connected in addition to bit 5."
@@ -387,7 +389,7 @@ pub const MapleHost = struct {
         for (&self.ports) |*port| port.deinit(io, allocator);
     }
 
-    pub fn transfer(self: *MapleHost, dc: *Dreamcast, data: [*]u32) void {
+    pub fn transfer(self: *MapleHost, dc: *Dreamcast, data: []u32) void {
         var idx: u32 = 0;
 
         var transferred_words: usize = 0;

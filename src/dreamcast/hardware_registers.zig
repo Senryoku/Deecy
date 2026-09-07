@@ -334,6 +334,34 @@ pub const SB_TSEL = packed struct(u32) {
     _: u29 = 0,
 };
 
+/// This register specifies the address range for Maple-DMA involving the system (work) memory.
+/// NOTE: Adresss values bellow 0x40 are prohibited.
+/// ・ 40-7F → 0x0C000000-0x0FFFFFFF
+/// ・ 7F-7F → 0x0FF00000-0x0FFFFFFF
+/// ・ 7F-00 → Specification prohibited
+pub const SB_MDAPRO = packed struct(u32) {
+    /// This field specifies the ending address of the address range where received data will be stored in
+    /// system memory. (This field corresponds to A26 to A20; A28 and A27 are treated as "0x01".)
+    /// Specify the address in units of 1MB. (default = 0x00)
+    bottom_address: u7 = 0,
+    _0: u1 = 0,
+    /// This field specifies the starting address of the address range where received data will be stored in
+    /// system memory. (This field corresponds to A26 to A20; A28 and A27 are treated as "0x01".)
+    /// Specify the address in units of 1MB. (default = 0x7F)
+    top_address: u7 = 0x7F,
+    _1: u1 = 0,
+    /// When updating bits 14 through 8 and bits 6 through 0, it is necessary to add "0x6155."
+    /// (default = 0x0000) If this value is not added, bits 14 through 8 and bits 6 through 0 will not be updated.
+    security_code: u16 = 0,
+
+    pub fn min(self: @This()) u32 {
+        return @as(u32, @max(0x40, self.top_address)) << 20 | 0x08000000;
+    }
+    pub fn max(self: @This()) u32 {
+        return @as(u32, @max(0x40, self.bottom_address)) << 20 | 0x080FFFFF;
+    }
+};
+
 /// SB_FFST (Read Only) 0x005F688C
 /// This register indicates the FIFO status. If one of the bits shown below is read and
 /// returns a "0," the corresponding FIFO is empty; if the bit returns a "1," the
