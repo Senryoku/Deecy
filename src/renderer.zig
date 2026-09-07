@@ -1792,8 +1792,8 @@ pub const Renderer = struct {
         self.fb_r_ctrl = gpu.read_register(HollyModule.FB_R_CTRL, .FB_R_CTRL);
         self.write_back_parameters = gpu.get_write_back_parameters();
         // I suspect I'll have to come back to this: Printing some information to help detect unusual configurations.
-        if (self.fb_r_ctrl.line_double) // Not handled: Emit a warning.
-            if (Once(@src())) log.warn(termcolor.yellow("FB_R_CTRL.line_double is set: {any}"), .{self.fb_r_ctrl});
+        if (self.fb_r_ctrl.line_double)
+            if (Once(@src())) log.warn("FB_R_CTRL.line_double is set: {any}", .{self.fb_r_ctrl});
 
         const render_to_texture = gpu.render_to_texture();
 
@@ -1836,7 +1836,7 @@ pub const Renderer = struct {
                 .height = if (!vga and !self.spg_control.interlace) 240 else 480,
             };
             if (self.write_back_parameters.video_out_ctrl.pixel_double) self.output_resolution.width /= 2;
-            // TODO: Same thing for line double?
+            if (self.fb_r_ctrl.line_double) self.output_resolution.height /= 2;
             // FIXME: Because scaling isn't implemented (scaling up/down after rendering), output_resolution must be scaled as well.
             self.output_resolution.width *= scale_x;
             // Ignore "Flicker-free Interlacing" type B (e.g. Mr Driller)
