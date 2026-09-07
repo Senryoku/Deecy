@@ -274,6 +274,14 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
                 }
             }
 
+            if (self.disc_format == .CDROM_XA and self.tracks.items.len > 1) {
+                // First session Lead-Out (2250 afterwards) + Session Lead-In + Pregap.
+                const SessionGap = 4500 + 6750 + 150;
+                self.tracks.items[self.tracks.items.len - 1].fad += SessionGap;
+                self.tracks.items[self.tracks.items.len - 1].end_fad += SessionGap;
+                self.track_offsets.items[self.track_offsets.items.len - 1] += SessionGap;
+            }
+
             try self.decompress_sectors((self.get_first_data_track() orelse return error.NoDataTracks).fad, 1);
         },
         else => {
@@ -718,7 +726,7 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
 pub fn get_session_count(self: *const @This()) u32 {
     return switch (self.disc_format) {
         .GDROM => 2,
-        else => 2,
+        else => if (self.tracks.items.len > 1) 2 else 1,
     };
 }
 
@@ -735,24 +743,29 @@ pub fn get_session(self: *const @This(), session_number: u32) Session {
                 .first_track = 2,
                 .last_track = @intCast(self.tracks.items.len - 1),
                 .start_fad = self.tracks.items[2].fad,
-                .end_fad = self.tracks.items[self.tracks.items.len - 1].get_end_fad(),
+                .end_fad = self.tracks.getLast().get_end_fad(),
             },
             else => std.debug.panic("CDH: Invalid session number: {d}", .{session_number}),
         },
-        else => switch (session_number) {
+        else => if (self.tracks.items.len > 1) switch (session_number) {
             1 => .{
                 .first_track = 0,
-                .last_track = 0,
-                .start_fad = self.tracks.items[0].fad,
-                .end_fad = self.tracks.items[0].get_end_fad(),
+                .last_track = @intCast(self.tracks.items.len - 2),
+                .start_fad = self.tracks.items[self.tracks.items.len - 2].fad,
+                .end_fad = self.tracks.items[self.tracks.items.len - 2].get_end_fad(),
             },
             2 => .{
-                .first_track = 1,
+                .first_track = @intCast(self.tracks.items.len - 1),
                 .last_track = @intCast(self.tracks.items.len - 1),
-                .start_fad = self.tracks.items[1].fad,
-                .end_fad = self.tracks.items[self.tracks.items.len - 1].get_end_fad(),
+                .start_fad = self.tracks.getLast().fad,
+                .end_fad = self.tracks.getLast().get_end_fad(),
             },
             else => std.debug.panic("CDH: Invalid session number: {d}", .{session_number}),
+        } else .{
+            .first_track = 0,
+            .last_track = @intCast(self.tracks.items.len - 1),
+            .start_fad = self.tracks.items[0].fad,
+            .end_fad = self.tracks.getLast().get_end_fad(),
         },
     };
 }
