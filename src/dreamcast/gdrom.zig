@@ -838,12 +838,12 @@ fn req_stat(self: *@This()) !void {
         try self.pio_data_queue.write(&[_]u8{
             if (self.disc == null) @intFromEnum(GDROMStatus.Empty) else @intFromEnum(self.state), // 0000 | Status
             (if (self.disc) |d| @as(u8, @intFromEnum(d.get_format())) << 4 else 0) | self.audio_state.repetitions, // Disc Format | Repeat Count
-            control_addr >> 4 | (control_addr & 0x0F) << 4, // Address | Control - Is 'Address' the same thin as 'ADR'? Is it actually reversed? This is only instance where it's reversed in the spec.
+            control_addr,
             track_number, // TNO (Subcode Q track number)
             0x01, // X (Subcode Q index number) - 00: Pause area?
-            @truncate(fad >> 0), // FAD
-            @truncate(fad >> 8), // FAD
             @truncate(fad >> 16), // FAD
+            @truncate(fad >> 8), // FAD
+            @truncate(fad >> 0), // FAD
             0x00, // Max Read Error Retry Times - Indicates how many read retries were necessary. This item is cleared (set to 0) when read.
             0x00,
         });
