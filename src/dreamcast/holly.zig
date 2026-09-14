@@ -1115,6 +1115,10 @@ pub const UV16 = packed struct(u32) {
     pub fn v_as_f32(self: UV16) f32 {
         return to_f32(self.v);
     }
+
+    pub fn as_f32(self: UV16) [2]f32 {
+        return .{ to_f32(self.u), to_f32(self.v) };
+    }
 };
 
 // Packed Color, Non-Textured
@@ -1333,6 +1337,10 @@ const VertexParameter_Sprite_1 = packed struct(u512) {
 
     pub fn uvs(self: @This()) [3]UV16 {
         return .{ self.auv, self.buv, self.cuv };
+    }
+
+    pub fn uvs_as_f32(self: @This()) [3][2]f32 {
+        return .{ self.auv.as_f32(), self.buv.as_f32(), self.cuv.as_f32() };
     }
 };
 

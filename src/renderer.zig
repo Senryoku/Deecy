@@ -409,76 +409,43 @@ pub const RenderPass = struct {
     }
 };
 
-fn gen_sprite_vertices(sprite: HollyModule.TaggedVertexParameter) [4]Vertex {
-    var r: [4]Vertex = @splat(Vertex.undef);
-
-    // B --- C
-    // |  \  |
-    // A --- D
-    // Pushing the vertices in clockwise order: A, B, D, C
-    const a, const b, const c, const d = .{ &r[0], &r[1], &r[3], &r[2] };
-
-    switch (sprite) {
-        inline .SpriteType0, .SpriteType1 => |v| {
-            a.x = v.ax;
-            a.y = v.ay;
-            a.z = v.az;
-
-            d.x = v.dx;
-            d.y = v.dy;
-
-            b.x = v.bx;
-            b.y = v.by;
-            b.z = v.bz;
-
-            c.x = v.cx;
-            c.y = v.cy;
-            c.z = v.cz;
+/// Returns the sprite vertices position and UVs in clockwise winding order: A, B, D, C.
+/// B --- C
+/// |  \  |
+/// A --- D
+fn gen_sprite_vertices(sprite: HollyModule.TaggedVertexParameter) [4]struct { @Vector(3, f32), @Vector(2, f32) } {
+    const a, const b, const c, var d = switch (sprite) {
+        inline .SpriteType0, .SpriteType1 => |v| [4]@Vector(3, f32){
+            .{ v.ax, v.ay, v.az },
+            .{ v.bx, v.by, v.bz },
+            .{ v.cx, v.cy, v.cz },
+            .{ v.dx, v.dy, 1.0 },
         },
         else => @panic("Not a Sprite"),
-    }
-    if (sprite == .SpriteType1) {
-        const v = sprite.SpriteType1;
-        a.u = v.auv.u_as_f32();
-        a.v = v.auv.v_as_f32();
-        b.u = v.buv.u_as_f32();
-        b.v = v.buv.v_as_f32();
-        c.u = v.cuv.u_as_f32();
-        c.v = v.cuv.v_as_f32();
-    }
-    const dz = if (a.z == b.z and a.z == c.z) a.z else pe: {
+    };
+    d[2] = if (a[2] == b[2] and a[2] == c[2]) a[2] else pe: {
         // dz has to be deduced from the plane equation
-        const ab = @Vector(3, f32){
-            b.x - a.x,
-            b.y - a.y,
-            b.z - a.z,
-        };
-        const ac = @Vector(3, f32){
-            c.x - a.x,
-            c.y - a.y,
-            c.z - a.z,
-        };
+        const ab = b - a;
+        const ac = c - a;
         const normal = @Vector(3, f32){
             ab[1] * ac[2] - ab[2] * ac[1],
             ab[2] * ac[0] - ab[0] * ac[2],
             ab[0] * ac[1] - ab[1] * ac[0],
         };
-        const plane_equation_coeff = @Vector(4, f32){
+        const plane_coeffs = @Vector(3, f32){
             normal[0],
             normal[1],
-            normal[2],
-            -(normal[0] * a.x + normal[1] * a.y + normal[2] * a.z),
+            -@reduce(.Add, normal * a),
         };
-        break :pe (-plane_equation_coeff[0] * d.x - plane_equation_coeff[1] * d.y - plane_equation_coeff[3]) / plane_equation_coeff[2];
+        break :pe -@reduce(.Add, plane_coeffs * d) / normal[2];
     };
-    // Same thing, texture coordinates have to be deduced from other vertices.
-    const du = a.u + c.u - b.u;
-    const dv = a.v + c.v - b.v;
-    d.z = dz;
-    d.u = du;
-    d.v = dv;
-
-    return r;
+    var auv, var buv, var cuv, var duv = [4]@Vector(2, f32){ @splat(0), @splat(0), @splat(0), @splat(0) };
+    if (sprite == .SpriteType1) {
+        auv, buv, cuv = sprite.SpriteType1.uvs_as_f32();
+        // Same thing, d texture coordinates have to be deduced from other vertices.
+        duv = auv + cuv - buv;
+    }
+    return .{ .{ a, auv }, .{ b, buv }, .{ d, duv }, .{ c, cuv } };
 }
 
 const VertexAttributes = [_]wgpu.VertexAttribute{
@@ -2380,16 +2347,21 @@ pub const Renderer = struct {
                                 });
                             },
                             .SpriteType0, .SpriteType1 => {
-                                var vs = gen_sprite_vertices(vertex.tagged());
-                                for (&vs) |*v| {
-                                    v.primitive_index = primitive_index;
-                                    v.base_color = global_parameters.sprite_face_base_color.with_alpha(use_alpha);
-                                    if (use_offset)
-                                        v.offset_color = global_parameters.sprite_face_offset_color;
+                                for (gen_sprite_vertices(vertex.tagged())) |puv| {
+                                    const v: Vertex = .{
+                                        .x = puv[0][0],
+                                        .y = puv[0][1],
+                                        .z = puv[0][2],
+                                        .primitive_index = primitive_index,
+                                        .base_color = global_parameters.sprite_face_base_color.with_alpha(use_alpha),
+                                        .offset_color = if (use_offset) global_parameters.sprite_face_offset_color else .zero,
+                                        .u = puv[1][0],
+                                        .v = puv[1][1],
+                                    };
                                     self.min_depth = @min(self.min_depth, v.z);
                                     self.max_depth = @max(self.max_depth, v.z);
 
-                                    try self.vertices.append(self._allocator, v.*);
+                                    try self.vertices.append(self._allocator, v);
                                 }
                             },
                         }
