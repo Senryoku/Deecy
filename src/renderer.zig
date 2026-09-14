@@ -415,47 +415,48 @@ fn gen_sprite_vertices(sprite: HollyModule.TaggedVertexParameter) [4]Vertex {
     // B --- C
     // |  \  |
     // A --- D
-    // Pushing the vertices in CCW order: A, D, B, C
+    // Pushing the vertices in clockwise order: A, B, D, C
+    const a, const b, const c, const d = .{ &r[0], &r[1], &r[3], &r[2] };
 
     switch (sprite) {
         inline .SpriteType0, .SpriteType1 => |v| {
-            r[0].x = v.ax;
-            r[0].y = v.ay;
-            r[0].z = v.az;
+            a.x = v.ax;
+            a.y = v.ay;
+            a.z = v.az;
 
-            r[1].x = v.dx;
-            r[1].y = v.dy;
+            d.x = v.dx;
+            d.y = v.dy;
 
-            r[2].x = v.bx;
-            r[2].y = v.by;
-            r[2].z = v.bz;
+            b.x = v.bx;
+            b.y = v.by;
+            b.z = v.bz;
 
-            r[3].x = v.cx;
-            r[3].y = v.cy;
-            r[3].z = v.cz;
+            c.x = v.cx;
+            c.y = v.cy;
+            c.z = v.cz;
         },
         else => @panic("Not a Sprite"),
     }
     if (sprite == .SpriteType1) {
         const v = sprite.SpriteType1;
-        r[0].u = v.auv.u_as_f32();
-        r[0].v = v.auv.v_as_f32();
-        r[2].u = v.buv.u_as_f32();
-        r[2].v = v.buv.v_as_f32();
-        r[3].u = v.cuv.u_as_f32();
-        r[3].v = v.cuv.v_as_f32();
+        a.u = v.auv.u_as_f32();
+        a.v = v.auv.v_as_f32();
+        b.u = v.buv.u_as_f32();
+        b.v = v.buv.v_as_f32();
+        c.u = v.cuv.u_as_f32();
+        c.v = v.cuv.v_as_f32();
     }
-    const dz = if (r[0].z == r[2].z and r[0].z == r[3].z) r[0].z else pe: {
+    const dz = if (a.z == b.z and a.z == c.z) a.z else pe: {
         // dz has to be deduced from the plane equation
         const ab = @Vector(3, f32){
-            r[2].x - r[0].x,
-            r[2].y - r[0].y,
-            r[2].z - r[0].z,
+            b.x - a.x,
+            b.y - a.y,
+            b.z - a.z,
         };
         const ac = @Vector(3, f32){
-            r[3].x - r[0].x,
-            r[3].y - r[0].y,
-            r[3].z - r[0].z,
+            c.x - a.x,
+            c.y - a.y,
+            c.z - a.z,
         };
         const normal = @Vector(3, f32){
             ab[1] * ac[2] - ab[2] * ac[1],
@@ -466,16 +467,16 @@ fn gen_sprite_vertices(sprite: HollyModule.TaggedVertexParameter) [4]Vertex {
             normal[0],
             normal[1],
             normal[2],
-            -(normal[0] * r[0].x + normal[1] * r[0].y + normal[2] * r[0].z),
+            -(normal[0] * a.x + normal[1] * a.y + normal[2] * a.z),
         };
-        break :pe (-plane_equation_coeff[0] * r[1].x - plane_equation_coeff[1] * r[1].y - plane_equation_coeff[3]) / plane_equation_coeff[2];
+        break :pe (-plane_equation_coeff[0] * d.x - plane_equation_coeff[1] * d.y - plane_equation_coeff[3]) / plane_equation_coeff[2];
     };
     // Same thing, texture coordinates have to be deduced from other vertices.
-    const du = r[0].u + r[3].u - r[2].u;
-    const dv = r[0].v + r[3].v - r[2].v;
-    r[1].z = dz;
-    r[1].u = du;
-    r[1].v = dv;
+    const du = a.u + c.u - b.u;
+    const dv = a.v + c.v - b.v;
+    d.z = dz;
+    d.u = du;
+    d.v = dv;
 
     return r;
 }

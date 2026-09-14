@@ -1179,6 +1179,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             display(dc.gpu.read_register(Holly.TEXT_CONTROL, .TEXT_CONTROL));
         zgui.text("PT_ALPHA_REF: {X}", .{dc.gpu.read_register(u32, .PT_ALPHA_REF)});
         zgui.text("FPU_SHAD_SCALE: {any}", .{dc.gpu.read_register(Holly.FPU_SHAD_SCALE, .FPU_SHAD_SCALE)});
+        zgui.text("FPU_CULL_VAL: {}", .{dc.gpu.read_register(f32, .FPU_CULL_VAL)});
         zgui.text("FOG_CLAMP_MIN: {f}", .{dc.gpu.read_register(Holly.FOG_CLAMP, .FOG_CLAMP_MIN)});
         zgui.text("FOG_CLAMP_MAX: {f}", .{dc.gpu.read_register(Holly.FOG_CLAMP, .FOG_CLAMP_MAX)});
 
