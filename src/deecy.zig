@@ -474,6 +474,7 @@ rewind: Rewind = .{},
 input_recording: struct {
     state: enum { Idle, Playing, Recording } = .Idle,
     record: @import("input_record.zig") = .{},
+    mutex: std.Io.Mutex = .init,
 } = .{},
 
 io: std.Io,
@@ -1194,6 +1195,9 @@ pub fn stop_rumble(self: *@This()) void {
 fn on_get_condition(comptime port: u8) fn (*Self, *DreamcastModule.Maple.Peripheral) void {
     return struct {
         fn handler(self: *Self, peripheral: *DreamcastModule.Maple.Peripheral) void {
+            if (self.input_recording.state != .Idle) self.input_recording.mutex.lock(self.io) catch return;
+            defer if (self.input_recording.state != .Idle) self.input_recording.mutex.unlock(self.io);
+
             defer {
                 if (self.input_recording.state == .Recording) {
                     switch (peripheral.*) {
@@ -1208,7 +1212,22 @@ fn on_get_condition(comptime port: u8) fn (*Self, *DreamcastModule.Maple.Periphe
                 }
             }
             if (self.input_recording.state == .Playing) {
-                // TODO
+                switch (self.dc.maple.ports[port]) {
+                    .emulated => |*e| {
+                        switch (e.main) {
+                            .Controller => |*c| {
+                                if (self.input_recording.record.cursor < self.input_recording.record.inputs.items.len) {
+                                    const input = self.input_recording.record.inputs.items[self.input_recording.record.cursor].input;
+                                    self.input_recording.record.cursor += 1;
+                                    c.axis = input.axis;
+                                    c.buttons = input.buttons;
+                                }
+                            },
+                            else => {},
+                        }
+                    },
+                    else => {},
+                }
             } else {
                 self.update_emulated_port(port);
             }
@@ -2525,6 +2544,29 @@ fn rewind_confirm_impl(self: *@This()) !void {
                 },
             }
             try self.rewind.discard_after(self.io, self._allocator, self.rewind.selected_snapshot);
+
+            switch (self.input_recording.state) {
+                .Recording => {
+                    try self.input_recording.mutex.lock(self.io);
+                    defer self.input_recording.mutex.unlock(self.io);
+                    if (self.input_recording.record.inputs.items.len > 0) {
+                        var idx = self.input_recording.record.inputs.items.len - 1;
+                        while (idx > 0 and self.input_recording.record.inputs.items[idx].cycle > self.dc._global_cycles)
+                            idx -= 1;
+                        self.input_recording.record.inputs.shrinkRetainingCapacity(idx + 1);
+                    }
+                },
+                .Playing => {
+                    try self.input_recording.mutex.lock(self.io);
+                    defer self.input_recording.mutex.unlock(self.io);
+                    if (self.input_recording.record.inputs.items.len > 0) {
+                        self.input_recording.record.cursor = @max(self.input_recording.record.cursor, self.input_recording.record.inputs.items.len - 1);
+                        while (self.input_recording.record.cursor > 0 and self.input_recording.record.inputs.items[self.input_recording.record.cursor].cycle > self.dc._global_cycles)
+                            self.input_recording.record.cursor -= 1;
+                    }
+                },
+                .Idle => {},
+            }
         }
         self.start();
     }

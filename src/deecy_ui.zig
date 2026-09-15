@@ -1,34 +1,3 @@
-const std = @import("std");
-const builtin = @import("builtin");
-const comptime_config = @import("config");
-const custom_log = @import("custom_log.zig");
-const helpers = @import("helpers");
-const Once = helpers.Once;
-const MemSize = @import("MemSize.zig");
-
-const zglfw = @import("zglfw");
-const zgui = @import("zgui");
-const zgpu = @import("zgpu");
-
-const ui_log = std.log.scoped(.ui);
-
-const nfd = @import("nfd");
-
-const Deecy = @import("deecy.zig");
-const host_paths = Deecy.host_paths;
-const DreamcastModule = @import("dreamcast");
-const MapleModule = DreamcastModule.Maple;
-const Disc = DreamcastModule.GDROM.Disc;
-const PVRFile = @import("pvr_file.zig");
-
-const Notifications = @import("./ui/notifications.zig");
-pub const common = @import("./ui/common.zig");
-pub const Icons = common.Icons;
-const wait_for = @import("./ui/wait_for_input.zig");
-const GameInfoCache = @import("ui/GameInfoCache.zig");
-
-const Self = @This();
-
 pub const GameFile = struct {
     path: [:0]const u8,
     name: [:0]const u8,
@@ -1133,6 +1102,23 @@ pub fn draw(self: *@This()) !void {
         zgui.end();
     }
 
+    if (try InputEditor.draw(d)) |a| switch (a) {
+        .StartRecord => {
+            d.pause();
+            d.input_recording.state = .Recording;
+            d.input_recording.record.cursor = 0;
+            try d.reset();
+            d.start();
+        },
+        .StartReplay => {
+            d.pause();
+            d.input_recording.state = .Playing;
+            d.input_recording.record.cursor = 0;
+            try d.reset();
+            d.start();
+        },
+    };
+
     // NOTE: Modals have to be in the same ID stack as the openPopup call :(
     //       Hence the weird workaround.
     if (error_popup_to_open.len > 0) {
@@ -1458,3 +1444,35 @@ fn select_game_directory(self: *@This()) !void {
         try self.deecy.launch_async(refresh_games, .{self});
     }
 }
+
+const std = @import("std");
+const builtin = @import("builtin");
+const comptime_config = @import("config");
+const custom_log = @import("custom_log.zig");
+const helpers = @import("helpers");
+const Once = helpers.Once;
+const MemSize = @import("MemSize.zig");
+
+const zglfw = @import("zglfw");
+const zgui = @import("zgui");
+const zgpu = @import("zgpu");
+
+const ui_log = std.log.scoped(.ui);
+
+const nfd = @import("nfd");
+
+const Deecy = @import("deecy.zig");
+const host_paths = Deecy.host_paths;
+const DreamcastModule = @import("dreamcast");
+const MapleModule = DreamcastModule.Maple;
+const Disc = DreamcastModule.GDROM.Disc;
+const PVRFile = @import("pvr_file.zig");
+
+const Notifications = @import("./ui/notifications.zig");
+pub const common = @import("./ui/common.zig");
+pub const Icons = common.Icons;
+const wait_for = @import("./ui/wait_for_input.zig");
+const GameInfoCache = @import("ui/GameInfoCache.zig");
+const InputEditor = @import("ui/input_editor.zig");
+
+const Self = @This();

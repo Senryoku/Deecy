@@ -1,5 +1,6 @@
 //! Input record
 inputs: std.ArrayList(Entry) = .empty,
+cursor: usize = 0,
 
 pub fn add(self: *@This(), allocator: std.mem.Allocator, port: u8, cycle: u64, state: ControllerState) !void {
     _ = port;
