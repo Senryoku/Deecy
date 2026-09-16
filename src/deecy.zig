@@ -4,6 +4,7 @@ pub const comptime_config = @import("config");
 const Self = @This();
 
 pub const Rewind = @import("rewind.zig");
+pub const InputRecord = @import("input_record.zig");
 
 const custom_log = @import("custom_log.zig");
 
@@ -473,8 +474,16 @@ save_state_slots: [MaxSaveStates]bool = .{ false, false, false, false },
 rewind: Rewind = .{},
 input_recording: struct {
     state: enum { Idle, Playing, Recording } = .Idle,
-    record: @import("input_record.zig") = .{},
+    path: ?[]const u8 = null,
+    record: InputRecord = .{},
+    /// Playing head.
+    cursor: usize = 0,
     mutex: std.Io.Mutex = .init,
+
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        if (self.path) |p| allocator.free(p);
+        self.record.deinit(allocator);
+    }
 } = .{},
 
 io: std.Io,
@@ -746,6 +755,7 @@ pub fn destroy(self: *@This()) void {
     self.debug_ui.deinit();
     self.ui_deinit();
     self.ui.destroy();
+    self.input_recording.deinit(self._allocator);
 
     zaudio.deinit();
 
@@ -1216,9 +1226,9 @@ fn on_get_condition(comptime port: u8) fn (*Self, *DreamcastModule.Maple.Periphe
                     .emulated => |*e| {
                         switch (e.main) {
                             .Controller => |*c| {
-                                if (self.input_recording.record.cursor < self.input_recording.record.inputs.items.len) {
-                                    const input = self.input_recording.record.inputs.items[self.input_recording.record.cursor].input;
-                                    self.input_recording.record.cursor += 1;
+                                if (self.input_recording.cursor < self.input_recording.record.inputs.items.len) {
+                                    const input = self.input_recording.record.inputs.items[self.input_recording.cursor].input;
+                                    self.input_recording.cursor += 1;
                                     c.axis = input.axis;
                                     c.buttons = input.buttons;
                                 }
@@ -2545,9 +2555,9 @@ fn rewind_confirm_impl(self: *@This()) !void {
             }
             try self.rewind.discard_after(self.io, self._allocator, self.rewind.selected_snapshot);
 
-            switch (self.input_recording.state) {
+            sw: switch (self.input_recording.state) {
                 .Recording => {
-                    try self.input_recording.mutex.lock(self.io);
+                    self.input_recording.mutex.lock(self.io) catch break :sw;
                     defer self.input_recording.mutex.unlock(self.io);
                     if (self.input_recording.record.inputs.items.len > 0) {
                         var idx = self.input_recording.record.inputs.items.len - 1;
@@ -2557,12 +2567,13 @@ fn rewind_confirm_impl(self: *@This()) !void {
                     }
                 },
                 .Playing => {
-                    try self.input_recording.mutex.lock(self.io);
+                    self.input_recording.mutex.lock(self.io) catch break :sw;
                     defer self.input_recording.mutex.unlock(self.io);
                     if (self.input_recording.record.inputs.items.len > 0) {
-                        self.input_recording.record.cursor = @max(self.input_recording.record.cursor, self.input_recording.record.inputs.items.len - 1);
-                        while (self.input_recording.record.cursor > 0 and self.input_recording.record.inputs.items[self.input_recording.record.cursor].cycle > self.dc._global_cycles)
-                            self.input_recording.record.cursor -= 1;
+                        self.input_recording.cursor = @min(self.input_recording.cursor, self.input_recording.record.inputs.items.len - 1);
+                        while (self.input_recording.cursor > 0 and self.input_recording.record.inputs.items[self.input_recording.cursor].cycle > self.dc._global_cycles)
+                            self.input_recording.cursor -= 1;
+                        self.input_recording.cursor += 1;
                     }
                 },
                 .Idle => {},

@@ -1025,6 +1025,7 @@ pub const AICA = struct {
     pub fn timestamp() u32 {
         const utc = std.Io.Clock.real.now(Context.io).toSeconds();
         // TODO: Handle timezone?
+        // TODO: Add a simulated RTC mode, counting up from a given timestamp and adjusted by DC cycles instead of the real time.
         return @intCast(utc + (20 * 365 + 5) * 24 * 60 * 60); // Dreamcast epoch is January 1, 1950 00:00
     }
 

@@ -1102,18 +1102,53 @@ pub fn draw(self: *@This()) !void {
         zgui.end();
     }
 
-    if (try InputEditor.draw(d)) |a| switch (a) {
+    if (try InputEditor.draw(d)) |a| sw: switch (a) {
+        .Save => {
+            if (d.input_recording.path) |path| {
+                d.pause();
+                try save_dcm(d, path);
+            } else continue :sw .SaveAs;
+        },
+        .SaveAs => {
+            const open_path = try nfd.saveFileDialog("dcm", null);
+            if (open_path) |path| {
+                defer nfd.freePath(path);
+                d.pause();
+                try save_dcm(d, path);
+                if (d.input_recording.path) |p| d._allocator.free(p);
+                d.input_recording.path = try d._allocator.dupe(u8, path);
+            }
+        },
+        .Load => {
+            const open_path = try nfd.openFileDialog("dcm", null);
+            if (open_path) |path| {
+                defer nfd.freePath(path);
+                d.pause();
+                d.input_recording.record.deinit(d._allocator);
+
+                var file = try std.Io.Dir.cwd().openFile(d.io, path, .{});
+                defer file.close(d.io);
+                var buffer: [2048]u8 = undefined;
+                var file_reader = file.reader(d.io, &buffer);
+                d.input_recording.record = try Deecy.InputRecord.deserialize(d._allocator, &file_reader.interface);
+
+                if (d.input_recording.path) |p| d._allocator.free(p);
+                d.input_recording.path = try d._allocator.dupe(u8, path);
+            }
+        },
         .StartRecord => {
             d.pause();
             d.input_recording.state = .Recording;
-            d.input_recording.record.cursor = 0;
+            d.input_recording.record.set_game(d.product_uid());
+            d.input_recording.record.initial_rtc = DreamcastModule.AICA.timestamp();
+            d.input_recording.cursor = 0;
             try d.reset();
             d.start();
         },
         .StartReplay => {
             d.pause();
             d.input_recording.state = .Playing;
-            d.input_recording.record.cursor = 0;
+            d.input_recording.cursor = 0;
             try d.reset();
             d.start();
         },
@@ -1137,6 +1172,15 @@ pub fn draw(self: *@This()) !void {
             zgui.closeCurrentPopup();
         zgui.endPopup();
     }
+}
+
+fn save_dcm(d: *Deecy, path: []const u8) !void {
+    var file = try std.Io.Dir.cwd().createFile(d.io, path, .{});
+    defer file.close(d.io);
+    var buffer: [2048]u8 = undefined;
+    var file_writer = file.writer(d.io, &buffer);
+    try d.input_recording.record.serialize(&file_writer.interface);
+    try file_writer.end();
 }
 
 /// A few random colors to help differentiate games without images.
