@@ -233,7 +233,7 @@ pub fn draw_controller_settings(d: *Deecy, comptime port: u8) !void {
 
     var has_right_stick = capabilities.analogVertical2 != 0;
     zgui.setCursorScreenPos(.{ x + s * 60.0, y + s * 170.0 });
-    if (zgui.checkbox("Right Stick", .{ .v = &has_right_stick })) {
+    if (common.toggle("Right Stick", .{ .v = &has_right_stick })) {
         if (has_right_stick) {
             capabilities.analogVertical2 = 1;
             capabilities.analogHorizontal2 = 1;

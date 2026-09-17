@@ -397,7 +397,7 @@ pub fn draw(self: *@This()) !void {
             zgui.separator();
 
             var realtime = self.deecy.realtime;
-            if (zgui.checkbox("Realtime", .{ .v = &realtime }))
+            if (common.toggle("Realtime", .{ .v = &realtime }))
                 self.deecy.set_realtime(realtime);
             zgui.separator();
 
@@ -552,7 +552,7 @@ pub fn draw(self: *@This()) !void {
         if (zgui.begin("Settings", .{ .popen = &self.deecy.config.display_settings, .flags = .{ .no_collapse = true } })) {
             if (zgui.beginTabBar("SettingsTabBar", .{})) {
                 if (zgui.beginTabItem("General", .{})) {
-                    _ = zgui.checkbox("Start in Game Launcher", .{ .v = &d.config.auto_start_launcher });
+                    _ = common.toggle("Start in Game Launcher", .{ .v = &d.config.auto_start_launcher });
                     zgui.setItemTooltip("When enabled, Deecy will start automatically in the game launcher, allowing you to select games using your configured DC controller.", .{});
                     {
                         zgui.beginDisabled(.{ .disabled = d.running and builtin.mode != .Debug });
@@ -592,7 +592,7 @@ pub fn draw(self: *@This()) !void {
                     }
                     {
                         zgui.separatorText("Rewind");
-                        _ = zgui.checkbox("Enabled", .{ .v = &d.config.rewind.enabled });
+                        _ = common.toggle("Enabled", .{ .v = &d.config.rewind.enabled });
                         zgui.beginDisabled(.{ .disabled = !d.config.rewind.enabled });
                         defer zgui.endDisabled();
                         var period: i32 = @intCast(d.config.rewind.period);
@@ -611,7 +611,7 @@ pub fn draw(self: *@This()) !void {
                 if (zgui.beginTabItem("Renderer", .{})) {
                     const dropdown_size = 196.0;
                     var fullscreen = self.deecy.config.fullscreen;
-                    if (zgui.checkbox("Fullscreen", .{ .v = &fullscreen })) {
+                    if (common.toggle("Fullscreen", .{ .v = &fullscreen })) {
                         self.deecy.toggle_fullscreen();
                         // (Hackish) Skip current UI frame since it's no longer renderer at the correct size.
                         zgui.endTabItem();
@@ -713,7 +713,7 @@ pub fn draw(self: *@This()) !void {
                         }
                         zgui.setItemTooltip(Icons.TriangleExclamation ++ " Restart Required.\nMay prevent artifacts with translucent geometry, especially at higher resolution.", .{});
 
-                        _ = zgui.checkbox("Use Pipeline Cache", .{ .v = &d.config.enable_dawn_pipeline_cache });
+                        _ = common.toggle("Use Pipeline Cache", .{ .v = &d.config.enable_dawn_pipeline_cache });
                         zgui.setItemTooltip(Icons.TriangleExclamation ++ " Restart Required.\nReduces 'pop-in' due to pipeline creation delay (shader compilation).", .{});
                         if (builtin.mode == .Debug) {
                             zgui.sameLine(.{});
@@ -767,7 +767,7 @@ pub fn draw(self: *@This()) !void {
 
                 if (zgui.beginTabItem("Controls", .{})) {
                     var per_game_vmu = d.config.per_game_vmu;
-                    if (zgui.checkbox("Per-Game VMU", .{ .v = &per_game_vmu })) {
+                    if (common.toggle("Per-Game VMU", .{ .v = &per_game_vmu })) {
                         try d.set_per_game_vmu(per_game_vmu);
                     }
 
@@ -808,7 +808,7 @@ pub fn draw(self: *@This()) !void {
                                 defer zgui.popId();
 
                                 var connected: bool = d.dc.maple.ports[port] != .none;
-                                if (zgui.checkbox("Plugged in", .{ .v = &connected })) {
+                                if (common.toggle("Plugged in", .{ .v = &connected })) {
                                     try d.enable_port(port, connected);
                                 }
 

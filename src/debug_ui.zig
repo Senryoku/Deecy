@@ -550,7 +550,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.endDisabled();
 
         if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
-            _ = zgui.checkbox("Debug trace", .{ .v = &dc.cpu.debug_trace });
+            _ = common.toggle("Debug trace", .{ .v = &dc.cpu.debug_trace });
         } else {
             zgui.textColored(.{ 0.5, 0.5, 0.5, 1 }, "Debug trace is not available in ReleaseFast builds!", .{});
         }
@@ -674,10 +674,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     zgui.end();
 
     if (zgui.begin("SH4 JIT", .{})) {
-        _ = zgui.checkbox("Enable", .{ .v = &d.enable_jit });
+        _ = common.toggle("Enable", .{ .v = &d.enable_jit });
         zgui.separator();
         {
-            _ = zgui.checkbox("Enable Idle Skip", .{ .v = &d.dc.sh4_jit.idle_skip_enabled });
+            _ = common.toggle("Enable Idle Skip", .{ .v = &d.dc.sh4_jit.idle_skip_enabled });
             var idle_skip_cycles: i32 = @intCast(d.dc.sh4_jit.idle_skip_cycles);
             if (zgui.inputInt("Idle Skip Cycles", .{ .v = &idle_skip_cycles })) d.dc.sh4_jit.idle_skip_cycles = @intCast(idle_skip_cycles);
             zgui.separator();
@@ -793,7 +793,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
     if (zgui.begin("AICA - ARM", .{})) {
         var jit_enabled = dc.aica.enable_arm_jit;
-        if (zgui.checkbox("ARM JIT", .{ .v = &jit_enabled })) {
+        if (common.toggle("ARM JIT", .{ .v = &jit_enabled })) {
             const was_running = d.running;
             if (was_running)
                 d.pause();
@@ -803,7 +803,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 d.start();
         }
         zgui.sameLine(.{});
-        _ = zgui.checkbox("Debug Trace", .{ .v = &dc.aica.arm_debug_trace });
+        _ = common.toggle("Debug Trace", .{ .v = &dc.aica.arm_debug_trace });
         if (zgui.button("Dump Memory", .{})) {
             dc.aica.dump_wave_memory();
         }
@@ -887,7 +887,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             .no_mouse_text = true,
             .no_inputs = true,
         };
-        _ = zgui.checkbox("Show disabled channels", .{ .v = &self.show_disabled_channels });
+        _ = common.toggle("Show disabled channels", .{ .v = &self.show_disabled_channels });
         inline for (0..64) |i| {
             const channel = dc.aica.get_channel_registers(@intCast(i));
             zgui.pushPtrId(channel);
@@ -900,7 +900,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     zgui.alignTextToFramePadding();
                     zgui.text("Channel {d} -", .{i});
                     zgui.sameLine(.{});
-                    _ = zgui.checkbox("Mute (Debug)", .{ .v = &dc.aica.channel_states[i].debug.mute });
+                    _ = common.toggle("Mute (Debug)", .{ .v = &dc.aica.channel_states[i].debug.mute });
                     const start_addr = channel.sample_address();
 
                     colored(channel.play_control.key_on_bit, "KeyOn: {s: >3}", .{if (channel.play_control.key_on_bit) "Yes" else "No"});
@@ -1261,7 +1261,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             const static = struct {
                 var view_all: bool = false;
             };
-            _ = zgui.checkbox("View All", .{ .v = &static.view_all });
+            _ = common.toggle("View All", .{ .v = &static.view_all });
             var region = dc.gpu.get_region_array_data_config(0);
             var idx: usize = 1;
             while (idx < 512) : (idx += 1) {
@@ -1282,15 +1282,15 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         }
 
         if (zgui.collapsingHeader("Wireframe", .{ .frame_padding = true })) {
-            _ = zgui.checkbox("Draw wireframe", .{ .v = &self.draw_wireframe });
+            _ = common.toggle("Draw wireframe", .{ .v = &self.draw_wireframe });
             {
                 zgui.indent(.{});
                 defer zgui.unindent(.{});
-                _ = zgui.checkbox("Draw Opaque Wireframe", .{ .v = &self.draw_list_wireframe[0] });
-                _ = zgui.checkbox("Draw Translucent Wireframe", .{ .v = &self.draw_list_wireframe[1] });
-                _ = zgui.checkbox("Draw Punchthrough Wireframe", .{ .v = &self.draw_list_wireframe[2] });
-                _ = zgui.checkbox("Draw Opaque Modifier Volumes Wireframe", .{ .v = &self.draw_modifier_volume_wireframe[0] });
-                _ = zgui.checkbox("Draw Translucent Modifier Volumes Wireframe", .{ .v = &self.draw_modifier_volume_wireframe[1] });
+                _ = common.toggle("Draw Opaque Wireframe", .{ .v = &self.draw_list_wireframe[0] });
+                _ = common.toggle("Draw Translucent Wireframe", .{ .v = &self.draw_list_wireframe[1] });
+                _ = common.toggle("Draw Punchthrough Wireframe", .{ .v = &self.draw_list_wireframe[2] });
+                _ = common.toggle("Draw Opaque Modifier Volumes Wireframe", .{ .v = &self.draw_modifier_volume_wireframe[0] });
+                _ = common.toggle("Draw Translucent Modifier Volumes Wireframe", .{ .v = &self.draw_modifier_volume_wireframe[1] });
             }
         }
 
@@ -1453,7 +1453,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             _ = zgui.inputInt("Start", .{ .v = &static.start_addr, .step = 0x8000, .flags = .{ .chars_hexadecimal = true } });
             _ = zgui.inputInt("Format", .{ .v = &static.format, .step = 1, .flags = .{ .chars_hexadecimal = true } });
             _ = zgui.inputInt("Width", .{ .v = &static.width, .step = 8 });
-            _ = zgui.checkbox("Twiddled", .{ .v = &static.twiddled });
+            _ = common.toggle("Twiddled", .{ .v = &static.twiddled });
             static.format = std.math.clamp(static.format, 0, 0x6);
             static.width = std.math.clamp(static.width, 8, @as(i32, @intCast(vram_width)));
             const width: u32 = @intCast(static.width);
@@ -1552,7 +1552,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             }
         }
         if (zgui.collapsingHeader("Texture Cache", .{})) {
-            _ = zgui.checkbox("Disable Texture Cache", .{ .v = &d.renderer.DebugDisableTextureCacheAcrossFrames });
+            _ = common.toggle("Disable Texture Cache", .{ .v = &d.renderer.DebugDisableTextureCacheAcrossFrames });
             if (zgui.button("Clear Texture Cache", .{})) {
                 for (0..d.renderer.texture_metadata.len) |size_index| {
                     for (0..d.renderer.texture_metadata[size_index].len) |i| {

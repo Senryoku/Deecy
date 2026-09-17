@@ -11,6 +11,8 @@ pub const Red: [4]f32 = .{ 0.60, 0.12, 0.15, 1.0 };
 
 pub const DCBlueU: u32 = 0xFFC2763B;
 
+pub const toggle = @import("toggle.zig").toggle;
+
 /// Afterwards:
 ///   defer zgui.pop_red_button_style();
 pub fn push_red_button_style() void {

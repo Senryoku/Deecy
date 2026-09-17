@@ -80,7 +80,7 @@ pub fn draw(self: *@This(), io: std.Io, allocator: std.mem.Allocator) !void {
                         zgui.pushIntId(@intCast(cheat_idx));
                         defer zgui.popId();
 
-                        _ = zgui.checkbox("##Enabled", .{ .v = &c.enabled });
+                        _ = common.toggle("##Enabled", .{ .v = &c.enabled });
                         zgui.sameLine(.{});
                         @memset(&buffer, 0);
                         @memcpy(buffer[0..@min(buffer.len, c.name.len)], c.name[0..@min(buffer.len, c.name.len)]);
@@ -198,24 +198,25 @@ pub fn draw_renderer_game_settings(game_settings: *Renderer.GameSettings) bool {
     zgui.setNextItemWidth(dropdown_size);
     modified = zgui.comboFromEnum("Scaling Filter", &game_settings.scaling_filter) or modified;
     zgui.separatorText("Compatibility Tweaks");
-    modified = zgui.checkbox("Framebuffer Emulation", .{ .v = &game_settings.framebuffer_emulation }) or modified;
+    modified = common.toggle("Framebuffer Emulation", .{ .v = &game_settings.framebuffer_emulation }) or modified;
     zgui.setItemTooltip("Allow re-use of the result of rendering to the framebuffer.\nSlower, particularly with 'Copy to Guest VRAM' enabled, but necessary for some effects (Static loading screens for example).", .{});
     if (game_settings.framebuffer_emulation and game_settings.copy_to_vram) {
         zgui.sameLine(.{});
+        zgui.alignTextToFramePadding();
         zgui.textUnformattedColored(common.Yellow, Icons.TriangleExclamation);
         zgui.setItemTooltip("'Framebuffer Emulation' and 'Copy to Guest VRAM' are rarely necessary at the same time and can hinder performance.", .{});
     }
-    modified = zgui.checkbox("Copy to Guest VRAM", .{ .v = &game_settings.copy_to_vram }) or modified;
+    modified = common.toggle("Copy to Guest VRAM", .{ .v = &game_settings.copy_to_vram }) or modified;
     zgui.setItemTooltip("Copy the result of rendering to the guest VRAM.\nSlower, particularly with 'Framebuffer Emulation' enabled, but necessary for some effects.", .{});
-    modified = zgui.checkbox("Clamp Sprites UVs", .{ .v = &game_settings.clamp_sprites_uvs }) or modified;
+    modified = common.toggle("Clamp Sprites UVs", .{ .v = &game_settings.clamp_sprites_uvs }) or modified;
     zgui.setItemTooltip("Avoid some seams around sprites when upscaling.", .{});
-    modified = zgui.checkbox("Synchronous Render", .{ .v = &game_settings.synchronous_render }) or modified;
+    modified = common.toggle("Synchronous Render", .{ .v = &game_settings.synchronous_render }) or modified;
     zgui.setItemTooltip(
         \\ Render synchronously with the guest system.
         \\ Can avoid some synchronization issues at a slight performance cost.
         \\ Try this when you notice corrupted textures, especially during transitions.
     , .{});
-    modified = zgui.checkbox("Delayed Render", .{ .v = &game_settings.delay_render }) or modified;
+    modified = common.toggle("Delayed Render", .{ .v = &game_settings.delay_render }) or modified;
     zgui.setItemTooltip(
         \\ Delay rendering until a frame is actually presented.
         \\ Can prevent flickering or missing pause screens, it should only be enabled when encountering these issues.
