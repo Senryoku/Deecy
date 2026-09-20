@@ -2,10 +2,16 @@
 
 game_id: GameID = .{},
 initial_rtc: u32 = 0,
-inputs: std.ArrayList(Entry) = .empty,
+ports: [4]union(Device) {
+    none,
+    controller: struct { inputs: std.ArrayList(Entry(ControllerState)) = .empty },
+} = @splat(.none),
 
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-    self.inputs.deinit(allocator);
+    for (&self.ports) |*p| switch (p.*) {
+        .none => {},
+        .controller => |*c| c.inputs.deinit(allocator),
+    };
 }
 
 pub fn set_game(self: *@This(), product_id: ProductUID) void {
@@ -16,8 +22,10 @@ pub fn set_game(self: *@This(), product_id: ProductUID) void {
 }
 
 pub fn add(self: *@This(), allocator: std.mem.Allocator, port: u8, cycle: u64, state: ControllerState) !void {
-    _ = port;
-    try self.inputs.append(allocator, .{ .cycle = cycle, .input = state });
+    switch (self.ports[port]) {
+        .controller => |*c| try c.inputs.append(allocator, .{ .cycle = cycle, .input = state }),
+        else => return error.InvalidDevice,
+    }
 }
 
 const ControllerState = extern struct {
@@ -25,9 +33,16 @@ const ControllerState = extern struct {
     axis: [6]u8,
 };
 
-const Entry = extern struct {
-    cycle: u64,
-    input: ControllerState,
+fn Entry(comptime T: type) type {
+    return extern struct {
+        cycle: u64,
+        input: T,
+    };
+}
+
+const Device = enum(u8) {
+    none = 0,
+    controller = 1,
 };
 
 const Header = extern struct {
@@ -38,10 +53,7 @@ const Header = extern struct {
     deecy_commit: [8]u8 = padded(comptime_config.git_commit, 8),
     game_id: GameID,
     initial_rtc: u32,
-    ports: [4]enum(u8) {
-        none = 0,
-        controller = 1,
-    },
+    ports: [4]Device,
     _reserved: [8]u8 = @splat(0),
 
     const Tag = "DEECYMOV".*;
@@ -63,14 +75,19 @@ pub fn serialize(self: *const @This(), writer: *std.Io.Writer) !void {
         .game_id = self.game_id,
         .initial_rtc = self.initial_rtc,
         .ports = .{
-            .controller,
-            .none,
-            .none,
-            .none,
+            std.meta.activeTag(self.ports[0]),
+            std.meta.activeTag(self.ports[1]),
+            std.meta.activeTag(self.ports[2]),
+            std.meta.activeTag(self.ports[3]),
         },
     }, .little);
-    try writer.writeInt(u64, self.inputs.items.len, .little);
-    try writer.writeAll(std.mem.sliceAsBytes(self.inputs.items));
+    for (self.ports) |p| switch (p) {
+        .none => {},
+        .controller => |c| {
+            try writer.writeInt(u64, c.inputs.items.len, .little);
+            try writer.writeAll(std.mem.sliceAsBytes(c.inputs.items));
+        },
+    };
 }
 
 pub fn deserialize(allocator: std.mem.Allocator, reader: *std.Io.Reader) !@This() {
@@ -85,14 +102,15 @@ pub fn deserialize(allocator: std.mem.Allocator, reader: *std.Io.Reader) !@This(
     r.game_id = header.game_id;
     r.initial_rtc = header.initial_rtc;
 
-    for (header.ports) |port| {
+    for (header.ports, 0..) |port, idx| {
         switch (port) {
             .none => {},
             .controller => {
+                r.ports[idx] = .{ .controller = .{} };
                 const count = try reader.takeInt(u64, .little);
-                try r.inputs.ensureTotalCapacity(allocator, count);
+                try r.ports[idx].controller.inputs.ensureTotalCapacity(allocator, count);
                 for (0..count) |_| {
-                    try r.inputs.append(allocator, try reader.takeStruct(Entry, .little));
+                    try r.ports[idx].controller.inputs.append(allocator, try reader.takeStruct(Entry(ControllerState), .little));
                 }
             },
         }
