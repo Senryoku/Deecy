@@ -1107,8 +1107,7 @@ pub fn draw(self: *@This()) !void {
             d.pause();
             try d.reset();
             d.input_recording.deinit(d._allocator);
-            d.input_recording = .{};
-            d.input_recording.record = .{};
+            d.input_recording = .{ .state = .Recording, .record = .{} };
             if (d.input_recording.record) |*r| {
                 r.set_game(d.product_uid());
                 for (d.dc.maple.ports, 0..) |p, idx| {
@@ -1165,16 +1164,24 @@ pub fn draw(self: *@This()) !void {
                 d.input_recording.path = try d._allocator.dupe(u8, path);
             }
         },
-        .StartRecord => {
+        .Stop => {
+            d.pause();
+            d.input_recording.state = .Idle;
+        },
+        .Record => {
             d.pause();
             d.input_recording.state = .Recording;
+            // TODO: Make sure we're synchronized?
+            //       Delete inputs after current state?
             d.start();
         },
-        .StartReplay => {
+        .Play => {
             d.pause();
-            d.input_recording.state = .Playing;
-            d.input_recording.cursors = @splat(0);
-            try d.reset();
+            if (d.input_recording.state != .Playing) {
+                d.input_recording.state = .Playing;
+                d.input_recording.cursors = @splat(0);
+                try d.reset();
+            }
             d.start();
         },
     };
