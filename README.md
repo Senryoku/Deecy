@@ -104,7 +104,6 @@ sudo apt install libgtk-3-dev libudev-dev
         -   Missing: Open Translucent MVs. I've seen some uses, but no easy way to check an hypothetical implementation.
     -   Region Array Data Configuration are mostly ignored.
     -   Fog LUT Mode 2.
-    -   User Tile Clip, only the simplest version is supported.
     -   Secondary accumulate buffer (low priority, not many games use this feature).
     -   Mipmaps for palette textures?
     -   Follow ISP_FEED_CFG discard mode flag? (Find a game that turns it off)

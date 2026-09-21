@@ -2640,37 +2640,59 @@ pub const Renderer = struct {
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, @sizeOf(Vertex) * FirstVertex, Vertex, self.vertices.items);
     }
 
-    fn convert_clipping(self: *@This(), user_clip: ?HollyModule.UserTileClipInfo) HollyModule.UserTileClipInfo {
+    const ClipArea = struct { x: u32, y: u32, width: u32, height: u32 };
+    const ClipAreas = struct {
+        _count: u8 = 1,
+        _areas: [4]ClipArea,
+
+        pub fn inside(area: ClipArea) @This() {
+            return .{ ._count = 1, ._areas = @splat(area) };
+        }
+
+        pub inline fn areas(s: *const @This()) []const ClipArea {
+            return s._areas[0..s._count];
+        }
+    };
+    /// Apply global clipping and converts coordinates to real render resolution.
+    /// Split `OutsideEnabled` clip (inverted scissors) to four areas surrounding the masked area, allowing
+    /// the use of the standard WebGPU scissors feature, instead of relying on a specialized pipeline with a stencil mask.
+    fn convert_clipping(self: *const @This(), user_clip: ?HollyModule.UserTileClipInfo) ClipAreas {
         // TODO: Revert to integer math only when possible?
         const x_factor = @as(f32, @floatFromInt(self.resolution.width)) / @as(f32, @floatFromInt(NativeResolution.width));
         const y_factor = @as(f32, @floatFromInt(self.resolution.height)) / @as(f32, @floatFromInt(NativeResolution.height));
-        const x: u32 = @trunc(x_factor * self.global_clip.x.min);
-        const y: u32 = @trunc(y_factor * self.global_clip.y.min);
-        const width: u32 = @trunc(@min(x_factor * (self.global_clip.x.max - self.global_clip.x.min), @as(f32, @floatFromInt(self.resolution.width))));
-        const height: u32 = @trunc(@min(y_factor * (self.global_clip.y.max - self.global_clip.y.min), @as(f32, @floatFromInt(self.resolution.height))));
+        const global = ClipArea{
+            .x = @trunc(x_factor * self.global_clip.x.min),
+            .y = @trunc(y_factor * self.global_clip.y.min),
+            .width = @trunc(@min(x_factor * (self.global_clip.x.max - self.global_clip.x.min), @as(f32, @floatFromInt(self.resolution.width)))),
+            .height = @trunc(@min(y_factor * (self.global_clip.y.max - self.global_clip.y.min), @as(f32, @floatFromInt(self.resolution.height)))),
+        };
+        const max_x = global.x + global.width;
+        const max_y = global.y + global.height;
 
         if (user_clip) |uc| {
-            // FIXME: Handle other usages.
-            //        Use Stencil for OutsideEnabled
-            if (uc.usage == .InsideEnabled) {
-                const scaled_x = @max(@as(u32, @trunc(x_factor * @as(f32, @floatFromInt(uc.x)))), x);
-                const scaled_y = @max(@as(u32, @trunc(y_factor * @as(f32, @floatFromInt(uc.y)))), y);
-                return .{
-                    .usage = .InsideEnabled,
-                    .x = @min(scaled_x, self.resolution.width),
-                    .y = @min(scaled_y, self.resolution.height),
-                    .width = @min(@min(@as(u32, @trunc(x_factor * @as(f32, @floatFromInt(uc.width)))), width), self.resolution.width -| scaled_x),
-                    .height = @min(@min(@as(u32, @trunc(y_factor * @as(f32, @floatFromInt(uc.height)))), height), self.resolution.height -| scaled_y),
-                };
+            const scaled_x = @max(@as(u32, @trunc(x_factor * @as(f32, @floatFromInt(uc.x)))), global.x);
+            const scaled_y = @max(@as(u32, @trunc(y_factor * @as(f32, @floatFromInt(uc.y)))), global.y);
+            const area = ClipArea{
+                .x = @min(scaled_x, self.resolution.width),
+                .y = @min(scaled_y, self.resolution.height),
+                .width = @min(@min(@as(u32, @trunc(x_factor * @as(f32, @floatFromInt(uc.width)))), global.width), self.resolution.width -| scaled_x),
+                .height = @min(@min(@as(u32, @trunc(y_factor * @as(f32, @floatFromInt(uc.height)))), global.height), self.resolution.height -| scaled_y),
+            };
+            switch (uc.usage) {
+                .InsideEnabled => return .inside(area),
+                .OutsideEnabled => return .{
+                    ._count = 4,
+                    ._areas = .{
+                        .{ .x = global.x, .y = global.y, .width = max_x, .height = area.y }, // Above
+                        .{ .x = global.x, .y = area.y, .width = area.x, .height = area.height }, // Left
+                        .{ .x = area.x + area.width, .y = area.y, .width = max_x -| area.x -| area.width, .height = area.height }, // Right
+                        .{ .x = global.x, .y = area.y + area.height, .width = max_x, .height = max_y -| area.y -| area.height }, // Below
+                    },
+                },
+                else => {},
             }
         }
-        return .{
-            .usage = .InsideEnabled,
-            .x = x,
-            .y = y,
-            .width = width,
-            .height = height,
-        };
+        return .inside(global);
     }
 
     /// Convert framebuffer from internal resolution to upscaled resolution, copying from framebuffer to resized_framebuffer.
@@ -2852,9 +2874,10 @@ pub const Renderer = struct {
 
                 pass.setPipeline(background_pipeline);
                 pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)]).?, &.{});
-                const clip = self.convert_clipping(null);
-                pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
-                pass.drawIndexed(FirstIndex, 1, 0, 0, 0);
+                for (self.convert_clipping(null).areas()) |a| {
+                    pass.setScissorRect(a.x, a.y, a.width, a.height);
+                    pass.drawIndexed(FirstIndex, 1, 0, 0, 0);
+                }
             }
 
             for (self.render_passes.items, 0..) |render_pass, pass_idx| {
@@ -2927,11 +2950,15 @@ pub const Renderer = struct {
 
                                         for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
                                             if (draw_call.index_count > 0) {
-                                                const clip = self.convert_clipping(draw_call.user_clip);
-                                                pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
+                                                // NOTE: This issues 4 draws for `OutsideEnabled` user clipping, avoiding the masked area. Wasteful, but very simple.
+                                                //       A better implementation would use the stencil buffer, but would require duplicating all pipelines or
+                                                //       always enable the stencil test. I'm not convinced this is worth the hassle.
+                                                for (self.convert_clipping(draw_call.user_clip).areas()) |a| {
+                                                    pass.setScissorRect(a.x, a.y, a.width, a.height);
 
-                                                pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
-                                                pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                                                    pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
+                                                    pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                                                }
                                             }
                                         }
                                     }
@@ -3163,14 +3190,15 @@ pub const Renderer = struct {
                             }
 
                             if (draw_call.index_count > 0) {
-                                const clip = self.convert_clipping(draw_call.user_clip);
-                                pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
+                                for (self.convert_clipping(draw_call.user_clip).areas()) |a| {
+                                    pass.setScissorRect(a.x, a.y, a.width, a.height);
 
-                                if (current_sampler == null or draw_call.sampler != current_sampler.?) {
-                                    pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
-                                    current_sampler = draw_call.sampler;
+                                    if (current_sampler == null or draw_call.sampler != current_sampler.?) {
+                                        pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
+                                        current_sampler = draw_call.sampler;
+                                    }
+                                    pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
                                 }
-                                pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
                             }
                         }
 
@@ -3327,15 +3355,17 @@ pub const Renderer = struct {
                                             }
                                             for (entry.value_ptr.draw_calls.values()) |draw_call| {
                                                 if (draw_call.index_count > 0) {
-                                                    var clip = self.convert_clipping(draw_call.user_clip);
-                                                    const min_max_y = @min(clip.y + clip.height, start_y + slice_size);
-                                                    clip.y = @max(clip.y, start_y);
-                                                    clip.height = if (min_max_y > clip.y) min_max_y - clip.y else 0;
-                                                    if (clip.height > 0 and clip.width > 0) {
-                                                        pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
+                                                    for (self.convert_clipping(draw_call.user_clip).areas()) |a| {
+                                                        var clip = a; // Restrict to current slice.
+                                                        const min_max_y = @min(clip.y + clip.height, start_y + slice_size);
+                                                        clip.y = @max(clip.y, start_y);
+                                                        clip.height = if (min_max_y > clip.y) min_max_y - clip.y else 0;
+                                                        if (clip.height > 0 and clip.width > 0) {
+                                                            pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
 
-                                                        pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
-                                                        pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                                                            pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
+                                                            pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                                                        }
                                                     }
                                                 }
                                             }
