@@ -1105,9 +1105,25 @@ pub fn draw(self: *@This()) !void {
     if (try InputEditor.draw(d)) |a| sw: switch (a) {
         .New => {
             d.pause();
+            try d.reset();
             d.input_recording.deinit(d._allocator);
             d.input_recording = .{};
-            d.input_recording.record.set_game(d.product_uid());
+            d.input_recording.record = .{};
+            if (d.input_recording.record) |*r| {
+                r.set_game(d.product_uid());
+                for (d.dc.maple.ports, 0..) |p, idx| {
+                    switch (p) {
+                        .none => r.ports[idx] = .none,
+                        .emulated => |e| {
+                            switch (e.main) {
+                                .Controller => r.ports[idx] = .{ .controller = .{} },
+                                else => ui_log.warn("Recording unimplemented for device {t}.", .{std.meta.activeTag(e.main)}),
+                            }
+                        },
+                        .physical => ui_log.warn("Recording unimplemented for physical devices.", .{}),
+                    }
+                }
+            }
         },
         .NewFromState => {
             self.notifications.push("Unimplemented", .{}, "", .{});
@@ -1135,7 +1151,7 @@ pub fn draw(self: *@This()) !void {
             if (open_path) |path| {
                 defer nfd.freePath(path);
                 d.pause();
-                d.input_recording.record.deinit(d._allocator);
+                if (d.input_recording.record) |*r| r.deinit(d._allocator);
 
                 var file = try std.Io.Dir.cwd().openFile(d.io, path, .{});
                 defer file.close(d.io);
@@ -1184,13 +1200,15 @@ pub fn draw(self: *@This()) !void {
 }
 
 fn save_dcm(self: *@This(), d: *Deecy, path: []const u8) !void {
-    var file = try std.Io.Dir.cwd().createFile(d.io, path, .{});
-    defer file.close(d.io);
-    var buffer: [2048]u8 = undefined;
-    var file_writer = file.writer(d.io, &buffer);
-    try d.input_recording.record.serialize(&file_writer.interface);
-    try file_writer.end();
-    self.notifications.push("DCM Saved", .{}, "To file '{s}'", .{path});
+    if (d.input_recording.record) |r| {
+        var file = try std.Io.Dir.cwd().createFile(d.io, path, .{});
+        defer file.close(d.io);
+        var buffer: [2048]u8 = undefined;
+        var file_writer = file.writer(d.io, &buffer);
+        try r.serialize(&file_writer.interface);
+        try file_writer.end();
+        self.notifications.push("DCM Saved", .{}, "To file '{s}'", .{path});
+    }
 }
 
 /// A few random colors to help differentiate games without images.

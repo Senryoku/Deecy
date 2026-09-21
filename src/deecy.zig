@@ -475,14 +475,15 @@ rewind: Rewind = .{},
 input_recording: struct {
     state: enum { Idle, Playing, Recording } = .Idle,
     path: ?[]const u8 = null,
-    record: InputRecord = .{},
+    record: ?InputRecord = null,
     /// Playing heads. One per port.
     cursors: [4]usize = @splat(0),
     mutex: std.Io.Mutex = .init,
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         if (self.path) |p| allocator.free(p);
-        self.record.deinit(allocator);
+        if (self.record) |*r| r.deinit(allocator);
+        self.record = null;
     }
 } = .{},
 
@@ -1210,38 +1211,41 @@ fn on_get_condition(comptime port: u8) fn (*Self, *DreamcastModule.Maple.Periphe
 
             defer {
                 if (self.input_recording.state == .Recording) {
-                    switch (peripheral.*) {
-                        .Controller => |c| {
-                            self.input_recording.record.add(self._allocator, port, self.dc._global_cycles, .{ .buttons = c.buttons, .axis = c.axis }) catch |err| {
-                                deecy_log.err("Failed to append input: {t}", .{err});
-                            };
-                        },
-                        else => if (helpers.Once(@src()))
-                            deecy_log.err("Device '{t}' does not support input recording.", .{std.meta.activeTag(peripheral.*)}),
+                    if (self.input_recording.record) |*r| {
+                        switch (peripheral.*) {
+                            .Controller => |c| {
+                                r.add(self._allocator, port, self.dc._global_cycles, .{ .buttons = c.buttons, .axis = c.axis }) catch |err|
+                                    deecy_log.err("Failed to append input: {t}", .{err});
+                            },
+                            else => if (helpers.Once(@src()))
+                                deecy_log.err("Device '{t}' does not support input recording.", .{std.meta.activeTag(peripheral.*)}),
+                        }
                     }
                 }
             }
             if (self.input_recording.state == .Playing) {
-                switch (self.dc.maple.ports[port]) {
-                    .emulated => |*e| {
-                        switch (e.main) {
-                            .Controller => |*c| {
-                                switch (self.input_recording.record.ports[port]) {
-                                    .controller => |rc| {
-                                        if (self.input_recording.cursors[port] < rc.inputs.items.len) {
-                                            const input = rc.inputs.items[self.input_recording.cursors[port]].input;
-                                            self.input_recording.cursors[port] += 1;
-                                            c.axis = input.axis;
-                                            c.buttons = input.buttons;
-                                        }
-                                    },
-                                    else => {},
-                                }
-                            },
-                            else => {},
-                        }
-                    },
-                    else => {},
+                if (self.input_recording.record) |r| {
+                    switch (self.dc.maple.ports[port]) {
+                        .emulated => |*e| {
+                            switch (e.main) {
+                                .Controller => |*c| {
+                                    switch (r.ports[port]) {
+                                        .controller => |rc| {
+                                            if (self.input_recording.cursors[port] < rc.inputs.items.len) {
+                                                const input = rc.inputs.items[self.input_recording.cursors[port]].input;
+                                                self.input_recording.cursors[port] += 1;
+                                                c.axis = input.axis;
+                                                c.buttons = input.buttons;
+                                            }
+                                        },
+                                        else => {},
+                                    }
+                                },
+                                else => {},
+                            }
+                        },
+                        else => {},
+                    }
                 }
             } else {
                 self.update_emulated_port(port);
@@ -2564,34 +2568,38 @@ fn rewind_confirm_impl(self: *@This()) !void {
                 .Recording => {
                     self.input_recording.mutex.lock(self.io) catch break :sw;
                     defer self.input_recording.mutex.unlock(self.io);
-                    for (&self.input_recording.record.ports) |*port| {
-                        switch (port.*) {
-                            .none => {},
-                            inline .controller => |*c| {
-                                if (c.inputs.items.len > 0) {
-                                    var idx = c.inputs.items.len - 1;
-                                    while (idx > 0 and c.inputs.items[idx].cycle > self.dc._global_cycles)
-                                        idx -= 1;
-                                    c.inputs.shrinkRetainingCapacity(idx + 1);
-                                }
-                            },
+                    if (self.input_recording.record) |*r| {
+                        for (&r.ports) |*port| {
+                            switch (port.*) {
+                                .none => {},
+                                inline .controller => |*c| {
+                                    if (c.inputs.items.len > 0) {
+                                        var idx = c.inputs.items.len - 1;
+                                        while (idx > 0 and c.inputs.items[idx].cycle > self.dc._global_cycles)
+                                            idx -= 1;
+                                        c.inputs.shrinkRetainingCapacity(idx + 1);
+                                    }
+                                },
+                            }
                         }
                     }
                 },
                 .Playing => {
                     self.input_recording.mutex.lock(self.io) catch break :sw;
                     defer self.input_recording.mutex.unlock(self.io);
-                    for (self.input_recording.record.ports, 0..) |port, idx| {
-                        switch (port) {
-                            .none => {},
-                            inline .controller => |c| {
-                                if (c.inputs.items.len > 0) {
-                                    var cursor = @min(self.input_recording.cursors[idx], c.inputs.items.len - 1);
-                                    while (cursor > 0 and c.inputs.items[cursor].cycle > self.dc._global_cycles)
-                                        cursor -= 1;
-                                    self.input_recording.cursors[idx] = cursor + 1;
-                                } else self.input_recording.cursors[idx] = 0;
-                            },
+                    if (self.input_recording.record) |*r| {
+                        for (r.ports, 0..) |port, idx| {
+                            switch (port) {
+                                .none => {},
+                                inline .controller => |c| {
+                                    if (c.inputs.items.len > 0) {
+                                        var cursor = @min(self.input_recording.cursors[idx], c.inputs.items.len - 1);
+                                        while (cursor > 0 and c.inputs.items[cursor].cycle > self.dc._global_cycles)
+                                            cursor -= 1;
+                                        self.input_recording.cursors[idx] = cursor + 1;
+                                    } else self.input_recording.cursors[idx] = 0;
+                                },
+                            }
                         }
                     }
                 },
