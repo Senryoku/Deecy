@@ -1,11 +1,29 @@
 var allow_editing = false;
 
-pub fn draw(d: *Deecy) !?enum { New, NewFromState, Save, SaveAs, Load, StartRecord, StartReplay } {
+pub fn draw(d: *Deecy) !?enum { New, NewFromState, Save, SaveAs, Load, Stop, Record, Play } {
     try d.input_recording.mutex.lock(d.io);
     defer d.input_recording.mutex.unlock(d.io);
 
     defer zgui.end();
-    if (zgui.begin("Input Editor", .{})) {
+    if (zgui.begin("Input Editor", .{ .flags = .{ .menu_bar = true } })) {
+        if (zgui.beginMenuBar()) {
+            defer zgui.endMenuBar();
+            if (zgui.beginMenu("File", true)) {
+                defer zgui.endMenu();
+                if (zgui.menuItem(Icons.FileCirclePlus ++ " New", .{}))
+                    return .New;
+                if (zgui.menuItem(Icons.FileCircleCheck ++ " New from current state", .{}))
+                    return .NewFromState;
+                if (zgui.menuItem(Icons.FileImport ++ " Open", .{}))
+                    return .Load;
+                zgui.separator();
+                if (zgui.menuItem(Icons.FileExport ++ " Save", .{ .enabled = d.input_recording.record != null }))
+                    return .Save;
+                if (zgui.menuItem(Icons.FileExport ++ " Save As...", .{ .enabled = d.input_recording.record != null }))
+                    return .SaveAs;
+            }
+        }
+
         zgui.textUnformattedColored(common.Yellow, Icons.TriangleExclamation);
         zgui.sameLine(.{});
         zgui.textUnformatted("Input recording is experimental.");
@@ -17,33 +35,19 @@ pub fn draw(d: *Deecy) !?enum { New, NewFromState, Save, SaveAs, Load, StartReco
 
         zgui.text("Status: {t}", .{d.input_recording.state});
 
-        if (zgui.button(Icons.FileCirclePlus ++ " New", .{}))
-            return .New;
-        zgui.sameLine(.{});
-        if (zgui.button(Icons.FileCircleCheck ++ " New from current state", .{}))
-            return .NewFromState;
-
         if (d.input_recording.record) |*self| {
+            _ = common.toggle("Allow edition", .{ .v = &allow_editing });
             if (d.input_recording.path) |p|
                 zgui.text("Loaded: {s}", .{p});
 
-            if (zgui.button(Icons.FileExport ++ " Save", .{}))
-                return .Save;
+            if (zgui.button(Icons.Square ++ " Stop", .{}))
+                return .Stop;
             zgui.sameLine(.{});
-            if (zgui.button(Icons.FileExport ++ " Save As...", .{}))
-                return .SaveAs;
-            zgui.sameLine(.{});
-            if (zgui.button(Icons.FileImport ++ " Load", .{}))
-                return .Load;
-            zgui.sameLine(.{});
-
             if (zgui.button(Icons.Circle ++ " Record", .{}))
-                return .StartRecord;
+                return .Record;
             zgui.sameLine(.{});
-            if (zgui.button(Icons.Play ++ " Replay", .{}))
-                return .StartReplay;
-
-            _ = common.toggle("Allow edition", .{ .v = &allow_editing });
+            if (zgui.button(Icons.Play ++ " Play", .{}))
+                return .Play;
 
             zgui.text("Game ID: '{s}' ({s})", .{ self.game_id.name, self.game_id.id });
 
