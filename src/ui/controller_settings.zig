@@ -18,6 +18,13 @@ const Thickness = 2.0;
 const Rounding = 2.0;
 const IntendedSize = 200.0; // All the following pixel values are within a 200x200 image.
 
+pub const ButtonColors = .{
+    .a = 0xFF2751F2,
+    .b = 0xFFEEA200,
+    .x = 0xFF07B8FF,
+    .y = 0xFF02B97E,
+};
+
 fn controller_binding_tooltip(d: *Deecy, comptime port: u8, comptime field_name: [:0]const u8) void {
     comptime var controller_field_name = field_name;
     if (!@hasField(Deecy.ControllerBindings, field_name))
@@ -296,10 +303,10 @@ pub fn draw_controller_settings(d: *Deecy, comptime port: u8) !void {
     const button_radius = s * 7;
     const button_distance = s * 14.0;
     inline for (.{
-        .{ .p = .{ buttons_x, buttons_y + button_distance }, .button = buttons.a, .color = 0xFF2751F2, .field_name = "a" },
-        .{ .p = .{ buttons_x + button_distance, buttons_y }, .button = buttons.b, .color = 0xFFEEA200, .field_name = "b" },
-        .{ .p = .{ buttons_x - button_distance, buttons_y }, .button = buttons.x, .color = 0xFF07B8FF, .field_name = "x" },
-        .{ .p = .{ buttons_x, buttons_y - button_distance }, .button = buttons.y, .color = 0xFF02B97E, .field_name = "y" },
+        .{ .p = .{ buttons_x, buttons_y + button_distance }, .button = buttons.a, .color = ButtonColors.a, .field_name = "a" },
+        .{ .p = .{ buttons_x + button_distance, buttons_y }, .button = buttons.b, .color = ButtonColors.b, .field_name = "b" },
+        .{ .p = .{ buttons_x - button_distance, buttons_y }, .button = buttons.x, .color = ButtonColors.x, .field_name = "x" },
+        .{ .p = .{ buttons_x, buttons_y - button_distance }, .button = buttons.y, .color = ButtonColors.y, .field_name = "y" },
     }, 0..) |button, idx| {
         zgui.pushIntId(@intCast(idx));
         defer zgui.popId();
