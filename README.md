@@ -92,8 +92,6 @@ sudo apt install libgtk-3-dev libudev-dev
 
 ## Things I know I have to do
 
--   AICA:
-    -   More accurate low pass filter (Q is currently ignored. Test case: the bios)
 -   Renderer:
     -   Framebuffer:
         -   Improve detection of writes to framebuffer.
