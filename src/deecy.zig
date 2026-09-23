@@ -250,7 +250,7 @@ pub const DefaultVMUPaths = default_vmu_paths: {
     break :default_vmu_paths paths;
 };
 
-const ControllerSettings = struct {
+pub const ControllerSettings = struct {
     enabled: bool,
     device: union(enum) {
         Controller: struct {
@@ -1056,6 +1056,15 @@ pub fn load_vmu(self: *@This(), port: u8, slot: u8, vmu_path: []const u8) !void 
     switch (self.dc.maple.ports[port]) {
         .emulated => |*e| {
             e.subperipherals[slot] = .{ .VMU = try .init(self.io, self._allocator, vmu_path) };
+            self.install_vmu_callbacks(port, slot);
+        },
+        else => {},
+    }
+}
+
+pub fn install_vmu_callbacks(self: *@This(), port: u8, slot: u8) void {
+    switch (self.dc.maple.ports[port]) {
+        .emulated => |*e| {
             if (slot == 0) {
                 e.subperipherals[slot].?.VMU.on_screen_update = .{ .function = @ptrCast(&switch (port) {
                     inline 0, 1, 2, 3 => |pidx| UI.vmu_screen_callback(pidx).callback,
@@ -1203,7 +1212,7 @@ pub fn stop_rumble(self: *@This()) void {
     }
 }
 
-fn on_get_condition(comptime port: u8) fn (*Self, *DreamcastModule.Maple.Peripheral) void {
+pub fn on_get_condition(comptime port: u8) fn (*Self, *DreamcastModule.Maple.Peripheral) void {
     return struct {
         fn handler(self: *Self, peripheral: *DreamcastModule.Maple.Peripheral) void {
             if (self.input_recording.state != .Idle) self.input_recording.mutex.lock(self.io) catch return;

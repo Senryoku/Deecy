@@ -2,15 +2,12 @@
 
 game_id: GameID = .{},
 initial_rtc: u32 = 0,
-ports: [4]union(Device) {
-    none,
-    controller: struct { inputs: std.ArrayList(Entry(ControllerState)) = .empty },
-} = @splat(.none),
+ports: [4]Device = @splat(.none),
 
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     for (&self.ports) |*p| switch (p.*) {
         .none => {},
-        .controller => |*c| c.inputs.deinit(allocator),
+        .controller => |*c| c.deinit(allocator),
     };
 }
 
@@ -40,9 +37,80 @@ fn Entry(comptime T: type) type {
     };
 }
 
-const Device = enum(u8) {
+const DeviceTag = enum(u8) {
     none = 0,
     controller = 1,
+};
+
+const Device = union(DeviceTag) {
+    none,
+    controller: struct {
+        peripherals: [2]Peripheral,
+        inputs: std.ArrayList(Entry(ControllerState)) = .empty,
+
+        pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+            for (self.peripherals) |p| p.deinit(allocator);
+            self.inputs.deinit(allocator);
+        }
+    },
+};
+
+const PeripheralTag = enum(u8) {
+    none = 0,
+    vmu = 1,
+};
+
+const Peripheral = union(PeripheralTag) {
+    none: void,
+    vmu: VMU,
+
+    pub fn init(allocator: std.mem.Allocator, peripheral: ?maple.Peripheral) !@This() {
+        if (peripheral) |p| switch (p) {
+            .VMU => |vmu| return .{
+                .vmu = .{ .initial_state = try allocator.dupe(u8, std.mem.sliceAsBytes(vmu.blocks)) },
+            },
+            else => return .none,
+        };
+        return .none;
+    }
+
+    pub fn deinit(self: @This(), allocator: std.mem.Allocator) void {
+        switch (self) {
+            .none => {},
+            .vmu => |vmu| vmu.deinit(allocator),
+        }
+    }
+
+    pub fn serialize(self: @This(), writer: *std.Io.Writer) !void {
+        try writer.writeByte(@intFromEnum(std.meta.activeTag(self)));
+        switch (self) {
+            .none => {},
+            .vmu => |vmu| {
+                try writer.writeInt(u64, vmu.initial_state.len, .little);
+                try writer.writeAll(vmu.initial_state);
+            },
+        }
+    }
+
+    pub fn deserialize(allocator: std.mem.Allocator, reader: *std.Io.Reader) !@This() {
+        const peripheral: PeripheralTag = try reader.takeEnum(PeripheralTag, .little);
+        switch (peripheral) {
+            .none => return .none,
+            .vmu => {
+                const size = try reader.takeInt(u64, .little);
+                const initial_state = try reader.readAlloc(allocator, size);
+                return .{ .vmu = .{ .initial_state = initial_state } };
+            },
+        }
+    }
+};
+
+const VMU = struct {
+    initial_state: []const u8,
+
+    pub fn deinit(self: @This(), allocator: std.mem.Allocator) void {
+        allocator.free(self.initial_state);
+    }
 };
 
 const Header = extern struct {
@@ -53,7 +121,7 @@ const Header = extern struct {
     deecy_commit: [8]u8 = padded(comptime_config.git_commit, 8),
     game_id: GameID,
     initial_rtc: u32,
-    ports: [4]Device,
+    ports: [4]DeviceTag,
     _reserved: [8]u8 = @splat(0),
 
     const Tag = "DEECYMOV".*;
@@ -84,6 +152,7 @@ pub fn serialize(self: *const @This(), writer: *std.Io.Writer) !void {
     for (self.ports) |p| switch (p) {
         .none => {},
         .controller => |c| {
+            for (c.peripherals) |peripheral| try peripheral.serialize(writer);
             try writer.writeInt(u64, c.inputs.items.len, .little);
             try writer.writeAll(std.mem.sliceAsBytes(c.inputs.items));
         },
@@ -106,7 +175,9 @@ pub fn deserialize(allocator: std.mem.Allocator, reader: *std.Io.Reader) !@This(
         switch (port) {
             .none => {},
             .controller => {
-                r.ports[idx] = .{ .controller = .{} };
+                r.ports[idx] = .{ .controller = .{ .peripherals = @splat(.none) } };
+                for (&r.ports[idx].controller.peripherals) |*peri|
+                    peri.* = try .deserialize(allocator, reader);
                 const count = try reader.takeInt(u64, .little);
                 try r.ports[idx].controller.inputs.ensureTotalCapacity(allocator, count);
                 for (0..count) |_| {
@@ -124,3 +195,4 @@ const maple = @import("dreamcast").Maple;
 const comptime_config = @import("config");
 
 const ProductUID = @import("ProductUID.zig");
+const ControllerSettings = @import("deecy.zig").ControllerSettings;

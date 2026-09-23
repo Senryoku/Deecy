@@ -1115,7 +1115,12 @@ pub fn draw(self: *@This()) !void {
                         .none => r.ports[idx] = .none,
                         .emulated => |e| {
                             switch (e.main) {
-                                .Controller => r.ports[idx] = .{ .controller = .{} },
+                                .Controller => {
+                                    r.ports[idx] = .{ .controller = .{ .peripherals = .{
+                                        try .init(d._allocator, e.subperipherals[0]),
+                                        try .init(d._allocator, e.subperipherals[1]),
+                                    } } };
+                                },
                                 else => ui_log.warn("Recording unimplemented for device {t}.", .{std.meta.activeTag(e.main)}),
                             }
                         },
@@ -1157,6 +1162,32 @@ pub fn draw(self: *@This()) !void {
                 var buffer: [2048]u8 = undefined;
                 var file_reader = file.reader(d.io, &buffer);
                 d.input_recording.record = try Deecy.InputRecord.deserialize(d._allocator, &file_reader.interface);
+
+                // Update input devices to match the recording.
+                // FXIME: This feels really hacky. All helper function from Deecy rely on the current config.
+                inline for (d.input_recording.record.?.ports, 0..) |p, port_idx| {
+                    d.dc.maple.ports[port_idx].deinit(d.io, d._allocator);
+                    switch (p) {
+                        .none => d.dc.maple.ports[port_idx] = .none,
+                        .controller => {
+                            d.dc.maple.ports[port_idx] = .{ .emulated = .{
+                                .main = .{ .Controller = .{ .subcapabilities = .{ @bitCast(MapleModule.Controller.InputCapabilities.Standard), 0, 0 } } },
+                                .on_get_condition = .{ .callback = @ptrCast(&Deecy.on_get_condition(port_idx)), .context = d },
+                            } };
+                            inline for (p.controller.peripherals, 0..) |peripheral, slot_idx| switch (peripheral) {
+                                .none => {},
+                                .vmu => |vmu| {
+                                    // FIXME: VMU doesn't currently support not being backed by a file.
+                                    const vmu_path = try std.fs.path.join(d._allocator, &[_][]const u8{ host_paths.get_userdata_path(), std.fmt.comptimePrint("tmp_record_{d}_{d}.vmu", .{ port_idx, slot_idx }) });
+                                    defer d._allocator.free(vmu_path);
+                                    d.dc.maple.ports[port_idx].emulated.subperipherals[slot_idx] = .{ .VMU = try .init(d.io, d._allocator, vmu_path) };
+                                    d.install_vmu_callbacks(port_idx, slot_idx);
+                                    @memcpy(std.mem.sliceAsBytes(d.dc.maple.ports[port_idx].emulated.subperipherals[slot_idx].?.VMU.blocks), vmu.initial_state);
+                                },
+                            };
+                        },
+                    }
+                }
 
                 self.notifications.push("DCM Loaded", .{}, "From file '{s}'", .{path});
 
