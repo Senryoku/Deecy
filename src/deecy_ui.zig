@@ -892,7 +892,7 @@ pub fn draw(self: *@This()) !void {
                                                     switch (s.*) {
                                                         .VMU => |vmu| {
                                                             zgui.pushStyleColor1u(.{ .idx = .text, .c = 0xFF808080 });
-                                                            zgui.textWrapped("Loaded: '{s}'", .{vmu.backing_file_path});
+                                                            zgui.textWrapped("Loaded: '{s}'", .{vmu.backing_file_path orelse "None"});
                                                             zgui.popStyleColor(.{});
                                                             if (d.config.controllers[port].subperipherals[slot] == .VMU) {
                                                                 const vmu_config = &d.config.controllers[port].subperipherals[slot].VMU;
@@ -1177,10 +1177,7 @@ pub fn draw(self: *@This()) !void {
                             inline for (p.controller.peripherals, 0..) |peripheral, slot_idx| switch (peripheral) {
                                 .none => {},
                                 .vmu => |vmu| {
-                                    // FIXME: VMU doesn't currently support not being backed by a file.
-                                    const vmu_path = try std.fs.path.join(d._allocator, &[_][]const u8{ host_paths.get_userdata_path(), std.fmt.comptimePrint("tmp_record_{d}_{d}.vmu", .{ port_idx, slot_idx }) });
-                                    defer d._allocator.free(vmu_path);
-                                    d.dc.maple.ports[port_idx].emulated.subperipherals[slot_idx] = .{ .VMU = try .init(d.io, d._allocator, vmu_path) };
+                                    d.dc.maple.ports[port_idx].emulated.subperipherals[slot_idx] = .{ .VMU = try .init(d.io, d._allocator, null) };
                                     d.install_vmu_callbacks(port_idx, slot_idx);
                                     @memcpy(std.mem.sliceAsBytes(d.dc.maple.ports[port_idx].emulated.subperipherals[slot_idx].?.VMU.blocks), vmu.initial_state);
                                 },
