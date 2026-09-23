@@ -67,6 +67,8 @@ pub fn draw(d: *Deecy) !?enum { New, NewFromState, Save, SaveAs, Load, Stop, Rec
                                 } else {
                                     zgui.text("Entry count: {d}", .{c.inputs.items.len});
                                 }
+                                zgui.sameLine(.{});
+                                zgui.text(" | Peripherals: {t}, {t}", .{ std.meta.activeTag(c.peripherals[0]), std.meta.activeTag(c.peripherals[1]) });
 
                                 if (zgui.beginChild("Inputs", .{ .w = 0, .h = @max(300, zgui.getContentRegionAvail()[1]) })) {
                                     var clipper: zgui.ListClipper = .init();
