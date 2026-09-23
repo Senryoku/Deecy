@@ -132,9 +132,33 @@ pub const EnvSettings = packed struct(u32) {
     /// if this bit is set to 1, the constant attenuation, envelope, and LFO volumes will not take effect. however, the note will still end when the envelope level reaches zero in the release state.
     voff: bool,
     _: u1, // unknown [SAVED]
-    /// (TL) this value *4 seems to be added to the envelope attenuation (as in, 0x00-0xFF here corresponds to 0x000-0x3FF when referring to the envelope attenuation)
-    constant_attenuation: u8,
+    /// Total level: The actual amount of attenuation is specified by placing this value in the EG value.
+    ///          bit7   bit6   bit5   bit4  bit3  bit2    bit1    bit0
+    ///   Volume -48dB  -24dB  -12dB  -6dB  -3dB  -1.5dB  -0.8dB  -0.4dB
+    tl: u8,
     _r: u16,
+
+    pub fn apply_tl(self: @This(), sample: i32) i32 {
+        const product = @as(i64, sample) * TLTable[self.tl];
+        const rounded = product + (attenuation_one >> 1);
+        return @intCast(rounded >> attenuation_shift);
+    }
+
+    const TLTable = t: {
+        @setEvalBranchQuota(200000);
+        var table: [256]i64 = undefined;
+        for (0..table.len) |i| {
+            var db: f64 = 0.0;
+            var tl: u8 = @intCast(i);
+            for (.{ 0.4, 0.8, 1.5, 3.0, 6.0, 12.0, 24.0, 48.0 }) |att| {
+                if (tl & 1 == 1) db -= att;
+                tl >>= 1;
+            }
+            const linear_multiplier = std.math.pow(f64, 10.0, db / 20.0);
+            table[i] = @trunc(linear_multiplier * attenuation_one);
+        }
+        break :t table;
+    };
 };
 
 pub const LPFRates1 = packed struct(u32) {
@@ -1412,9 +1436,7 @@ pub const AICA = struct {
 
         // Apply amplitude envelope
         if (!registers.env_settings.voff) {
-            var attenuation: u32 = registers.env_settings.constant_attenuation;
-            attenuation <<= 2;
-            attenuation +|= state.amp_env_level;
+            var attenuation: u32 = state.amp_env_level;
             if (registers.lfo_control.amplitude_modulation_depth != 0) {
                 // Low Frequency Oscillator amplitude modulation
                 // FIXME: Needs more testing, hence the warning.
@@ -1428,6 +1450,7 @@ pub const AICA = struct {
                 // (every 0x40 on the envelope attenuation level is 3dB)
                 sample = attenuate(sample, @truncate(attenuation >> 6));
             }
+            sample = registers.env_settings.apply_tl(sample);
         }
 
         // Output to sample buffer and/or DSP

@@ -910,7 +910,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     colored(channel.play_control.sample_loop, "Loop: {s: >3}", .{if (channel.play_control.sample_loop) "Yes" else "No"});
                     zgui.text("Addr: {X: >6} - Loop: {X:0>4} - {X:0>4}, Link: {}", .{ start_addr, channel.loop_start, channel.loop_end, channel.amp_env_2.link });
                     zgui.text("FNS: {X:0>3} - Oct: {X:0>2} - KRS: {X:0>1}", .{ channel.sample_pitch_rate.fns, channel.sample_pitch_rate.oct, channel.amp_env_2.key_rate_scaling });
-                    zgui.text("DIPAN: {X:0>2} - DISDL: {X:0>1}", .{ channel.direct_pan_vol_send.pan, channel.direct_pan_vol_send.volume });
+                    zgui.text("DIPAN: {X:0>2} - DISDL: {X:0>1} - TL: {X}", .{ channel.direct_pan_vol_send.pan, channel.direct_pan_vol_send.volume, channel.env_settings.tl });
                     zgui.textColored(if (channel.dps_channel_send.level > 0) White else Grey, "DSP Vol: {X:0>1} - DSP Chan: {X:0>1}", .{ channel.dps_channel_send.level, channel.dps_channel_send.channel });
                     colored(state.playing, "{s: >7}", .{if (state.playing) "Playing" else "Stopped"});
                     zgui.sameLine(.{});
