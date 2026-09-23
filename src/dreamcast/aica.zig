@@ -411,8 +411,8 @@ pub const AICAChannelState = struct {
 
     prev_sample: i32 = 0,
     curr_sample: i32 = 0,
-    /// Last two sample for the low pass filter. Not serialized, but TODO: Should be at some point (it's just not worth breaking compatibility for)
-    low_pass_filter_samples: [2]i32 = @splat(0),
+    /// Low pass filter state. Not serialized, but TODO: Should be at some point (it's just not worth breaking compatibility for)
+    low_pass_filter: struct { low: i32 = 0, band: i32 = 0 } = .{},
 
     fractional_play_position: u32 = 0,
 
@@ -522,7 +522,7 @@ pub const AICAChannelState = struct {
     }
 
     // FIXME: These over-complicated serialization functions are here to preserve backward compatibility.
-    // /TODO: Clean them up when we have a good reason to break save state compatibility, and serialize low_pass_filter_samples.
+    // /TODO: Clean them up when we have a good reason to break save state compatibility, and serialize low_pass_filter.
 
     pub fn serialize(self: *const @This(), writer: *std.Io.Writer) !usize {
         var bytes: usize = 0;
@@ -557,7 +557,7 @@ pub const AICAChannelState = struct {
         try reader.readSliceAll(std.mem.asBytes(&self.filter_env_state));
         _ = try reader.discard(.limited(2));
 
-        self.low_pass_filter_samples = @splat(0);
+        self.low_pass_filter = .{};
     }
 };
 
@@ -1414,22 +1414,15 @@ pub const AICA = struct {
 
         // Apply resonant low pass filter
         if (!registers.env_settings.lpoff) {
-            const exponent: u4 = @truncate(state.filter_env_level >> 9);
-            const mantissa: u9 = @truncate(state.filter_env_level);
-            const f_raw: f32 = @as(f32, @floatFromInt(@as(u10, 0x200) | mantissa));
-            const shift: u5 = @as(u5, 16) - exponent;
-            var f: f32 = (f_raw / 0x200) / @as(f32, @floatFromInt(@as(u32, 1) << shift));
-            f = std.math.clamp(f, 0.0, 1.0);
-
-            const fsample: f32 = @floatFromInt(sample);
-            const prev: f32 = @floatFromInt(state.low_pass_filter_samples[0]);
-            const tmp = f * fsample + (1.0 - f) * prev;
-
-            // TODO: Figure out the resonant part and the exact contribution of the Q register (registers.env_settings.q).
-
-            sample = std.math.clamp(@as(i32, @round(tmp)), std.math.minInt(i16), std.math.maxInt(i16));
-            state.low_pass_filter_samples[1] = state.low_pass_filter_samples[0];
-            state.low_pass_filter_samples[0] = sample;
+            // Implementation from https://github.com/skmp/caique-rtl
+            const lpf_q128: [32]u8 = .{ 192, 176, 160, 144, 128, 120, 112, 104, 96, 88, 80, 72, 64, 60, 56, 52, 48, 44, 40, 36, 32, 30, 28, 26, 24, 22, 20, 18, 16, 15, 14, 13 };
+            const k: i64 = if (state.filter_env_level >= 0x1FFE) 512 else 256 + ((state.filter_env_level >> 1) & 0xFF);
+            const shift = 24 - (state.filter_env_level >> 9);
+            const damping = 2 * ceil_shift_right(lpf_q128[registers.env_settings.q] * state.low_pass_filter.band, 8);
+            const high: i64 = std.math.clamp(sample - state.low_pass_filter.low - damping, -0x800000, 0x800000);
+            state.low_pass_filter.band += @intCast((k * high) >> @intCast(shift));
+            state.low_pass_filter.low += @intCast(ceil_shift_right(k * state.low_pass_filter.band, shift));
+            sample = -state.low_pass_filter.low;
         }
 
         state.lfo_phase +%= LFOPhaseInc[registers.lfo_control.frequency];
@@ -1725,3 +1718,7 @@ pub const AICA = struct {
         }
     }
 };
+
+fn ceil_shift_right(v: i64, sh: i32) i64 {
+    return -((-v) >> @intCast(sh));
+}
