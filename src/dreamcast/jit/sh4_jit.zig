@@ -322,7 +322,6 @@ pub const JITContext = struct {
     mmu_enabled: bool,
     start_pc: u32, // Address of the first instruction in the instructions array.
     start_physical_pc: u32, // Physical address of the first instruction in the instructions array.
-    start_index: u32 = undefined, // Index in the block corresponding to the first guest instruction.
 
     current_pc: u32, // Address of the current instruction (actual PC).
     current_physical_pc: u32, // Physical address of the current instruction.
@@ -906,8 +905,6 @@ pub const SH4JIT = struct {
 
         b.clearRetainingCapacity();
 
-        ctx.start_index = @intCast(b.instructions.items.len);
-
         // Perform additionnal checks and re-compiles the block if a change is detected.
         var hash_invalidation_end_offset: usize = 0;
         var hash_invalidation_value_offset: usize = 0;
@@ -1141,7 +1138,7 @@ pub const SH4JIT = struct {
                         try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.blocks.ptr) + 4 * not_taken_key });
                     } else {
                         const taken_block = self.block_cache.get(taken, if (ctx.fpscr_sz == .Single) 0 else 1, if (ctx.fpscr_pr == .Single) 0 else 1);
-                        if (taken_block.offset != 0) {
+                        if (taken_block.offset != 0 and self.block_invalidation == .None) { // Don't directly link to existing blocks if they can self-invalidate.
                             try b.append(.{ .Jmp = .{ .condition = .Equal, .dst = .{ .abs = @intFromPtr(&self.block_cache.buffer[taken_block.offset]) } } });
                             try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.blocks.ptr) + 4 * not_taken_key });
                         } else {
@@ -1261,8 +1258,8 @@ pub const SH4JIT = struct {
 
         sh4_jit_log.debug("Compiled: {X}", .{self.block_cache.buffer[block.offset..][0..block_size]});
 
-        self.block_cache.put(start_ctx.start_physical_pc, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)), block);
-        return self.block_cache.get(start_ctx.start_physical_pc, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)));
+        self.block_cache.put(start_ctx.entry_point_physical_address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)), block);
+        return self.block_cache.get(start_ctx.entry_point_physical_address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)));
     }
 
     // Try to match some common division patterns and replace them with a "single" instruction.
