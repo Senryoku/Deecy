@@ -301,6 +301,7 @@ pub const Configuration = struct {
     performance_overlay: enum { Off, Simple, Detailed } = .Simple,
     display_vmus: bool = true,
     display_settings: bool = false,
+    display_input_recorder: bool = false,
     game_directory: ?[]const u8 = null,
     library_display: enum { Grid, List } = .Grid,
     display_debug_ui: bool = false,
@@ -472,20 +473,7 @@ debug_ui: DebugUI = undefined,
 save_state_slots: [MaxSaveStates]bool = .{ false, false, false, false },
 
 rewind: Rewind = .{},
-input_recording: struct {
-    state: enum { Idle, Playing, Recording } = .Idle,
-    path: ?[]const u8 = null,
-    record: ?InputRecord = null,
-    /// Playing heads. One per port.
-    cursors: [4]usize = @splat(0),
-    mutex: std.Io.Mutex = .init,
-
-    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-        if (self.path) |p| allocator.free(p);
-        if (self.record) |*r| r.deinit(allocator);
-        self.record = null;
-    }
-} = .{},
+input_recorder: @import("input_recorder.zig") = .{},
 
 io: std.Io,
 _allocator: std.mem.Allocator,
@@ -756,7 +744,7 @@ pub fn destroy(self: *@This()) void {
     self.debug_ui.deinit();
     self.ui_deinit();
     self.ui.destroy();
-    self.input_recording.deinit(self._allocator);
+    self.input_recorder.deinit();
 
     zaudio.deinit();
 
@@ -1215,12 +1203,12 @@ pub fn stop_rumble(self: *@This()) void {
 pub fn on_get_condition(comptime port: u8) fn (*Self, *DreamcastModule.Maple.Peripheral) void {
     return struct {
         fn handler(self: *Self, peripheral: *DreamcastModule.Maple.Peripheral) void {
-            if (self.input_recording.state != .Idle) self.input_recording.mutex.lock(self.io) catch return;
-            defer if (self.input_recording.state != .Idle) self.input_recording.mutex.unlock(self.io);
+            if (self.input_recorder.state != .Idle) self.input_recorder.mutex.lock(self.io) catch return;
+            defer if (self.input_recorder.state != .Idle) self.input_recorder.mutex.unlock(self.io);
 
             defer {
-                if (self.input_recording.state == .Recording) {
-                    if (self.input_recording.record) |*r| {
+                if (self.input_recorder.state == .Recording) {
+                    if (self.input_recorder.record) |*r| {
                         switch (peripheral.*) {
                             .Controller => |c| {
                                 r.add(self._allocator, port, self.dc._global_cycles, .{ .buttons = c.buttons, .axis = c.axis }) catch |err|
@@ -1232,17 +1220,17 @@ pub fn on_get_condition(comptime port: u8) fn (*Self, *DreamcastModule.Maple.Per
                     }
                 }
             }
-            if (self.input_recording.state == .Playing) {
-                if (self.input_recording.record) |r| {
+            if (self.input_recorder.state == .Playing) {
+                if (self.input_recorder.record) |r| {
                     switch (self.dc.maple.ports[port]) {
                         .emulated => |*e| {
                             switch (e.main) {
                                 .Controller => |*c| {
                                     switch (r.ports[port]) {
                                         .controller => |rc| {
-                                            if (self.input_recording.cursors[port] < rc.inputs.items.len) {
-                                                const input = rc.inputs.items[self.input_recording.cursors[port]].input;
-                                                self.input_recording.cursors[port] += 1;
+                                            if (self.input_recorder.cursors[port] < rc.inputs.items.len) {
+                                                const input = rc.inputs.items[self.input_recorder.cursors[port]].input;
+                                                self.input_recorder.cursors[port] += 1;
                                                 c.axis = input.axis;
                                                 c.buttons = input.buttons;
                                             }
@@ -2573,11 +2561,11 @@ fn rewind_confirm_impl(self: *@This()) !void {
             }
             try self.rewind.discard_after(self.io, self._allocator, self.rewind.selected_snapshot);
 
-            sw: switch (self.input_recording.state) {
+            sw: switch (self.input_recorder.state) {
                 .Recording => {
-                    self.input_recording.mutex.lock(self.io) catch break :sw;
-                    defer self.input_recording.mutex.unlock(self.io);
-                    if (self.input_recording.record) |*r| {
+                    self.input_recorder.mutex.lock(self.io) catch break :sw;
+                    defer self.input_recorder.mutex.unlock(self.io);
+                    if (self.input_recorder.record) |*r| {
                         for (&r.ports) |*port| {
                             switch (port.*) {
                                 .none => {},
@@ -2594,19 +2582,19 @@ fn rewind_confirm_impl(self: *@This()) !void {
                     }
                 },
                 .Playing => {
-                    self.input_recording.mutex.lock(self.io) catch break :sw;
-                    defer self.input_recording.mutex.unlock(self.io);
-                    if (self.input_recording.record) |*r| {
+                    self.input_recorder.mutex.lock(self.io) catch break :sw;
+                    defer self.input_recorder.mutex.unlock(self.io);
+                    if (self.input_recorder.record) |*r| {
                         for (r.ports, 0..) |port, idx| {
                             switch (port) {
                                 .none => {},
                                 inline .controller => |c| {
                                     if (c.inputs.items.len > 0) {
-                                        var cursor = @min(self.input_recording.cursors[idx], c.inputs.items.len - 1);
+                                        var cursor = @min(self.input_recorder.cursors[idx], c.inputs.items.len - 1);
                                         while (cursor > 0 and c.inputs.items[cursor].cycle > self.dc._global_cycles)
                                             cursor -= 1;
-                                        self.input_recording.cursors[idx] = cursor + 1;
-                                    } else self.input_recording.cursors[idx] = 0;
+                                        self.input_recorder.cursors[idx] = cursor + 1;
+                                    } else self.input_recorder.cursors[idx] = 0;
                                 },
                             }
                         }

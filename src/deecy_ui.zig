@@ -469,6 +469,9 @@ pub fn draw(self: *@This()) !void {
             if (zgui.menuItem(Icons.Gear ++ " Settings", .{ .selected = d.config.display_settings })) {
                 d.config.display_settings = !d.config.display_settings;
             }
+            if (zgui.menuItem(Icons.Circle ++ " Input Recorder", .{ .selected = d.config.display_input_recorder })) {
+                d.config.display_input_recorder = !d.config.display_input_recorder;
+            }
             zgui.separator();
             if (zgui.menuItem(Icons.Bug ++ " Debug Menu", .{ .selected = d.config.display_debug_ui, .shortcut = "D" })) {
                 d.config.display_debug_ui = !d.config.display_debug_ui;
@@ -734,7 +737,15 @@ pub fn draw(self: *@This()) !void {
                     zgui.endTabItem();
                 }
 
-                if (zgui.beginTabItem("Controls", .{})) {
+                if (zgui.beginTabItem("Controls", .{})) skip: {
+                    defer zgui.endTabItem();
+                    if (d.input_recorder.record != null) {
+                        // NOTE: This is here to prevent modification to the Maple state, but ideally host controller settings should still be accessible.
+                        zgui.textUnformatted("Disabled.");
+                        zgui.textUnformatted("Controlled by an input record.");
+                        break :skip;
+                    }
+
                     var per_game_vmu = d.config.per_game_vmu;
                     if (common.toggle("Per-Game VMU", .{ .v = &per_game_vmu })) {
                         try d.set_per_game_vmu(per_game_vmu);
@@ -926,8 +937,6 @@ pub fn draw(self: *@This()) !void {
                                 zgui.endTabItem();
                             }
                         }
-
-                        zgui.endTabItem();
                     }
                     zgui.endTabBar();
                 }
@@ -1102,117 +1111,63 @@ pub fn draw(self: *@This()) !void {
         zgui.end();
     }
 
-    if (try InputEditor.draw(d)) |a| sw: switch (a) {
-        .New => {
-            d.pause();
-            try d.reset();
-            d.input_recording.deinit(d._allocator);
-            d.input_recording = .{ .state = .Recording, .record = .{} };
-            if (d.input_recording.record) |*r| {
-                r.set_game(d.product_uid());
-                for (d.dc.maple.ports, 0..) |p, idx| {
-                    switch (p) {
-                        .none => r.ports[idx] = .none,
-                        .emulated => |e| {
-                            switch (e.main) {
-                                .Controller => {
-                                    r.ports[idx] = .{ .controller = .{ .peripherals = .{
-                                        try .init(d._allocator, e.subperipherals[0]),
-                                        try .init(d._allocator, e.subperipherals[1]),
-                                    } } };
-                                },
-                                else => ui_log.warn("Recording unimplemented for device {t}.", .{std.meta.activeTag(e.main)}),
-                            }
-                        },
-                        .physical => ui_log.warn("Recording unimplemented for physical devices.", .{}),
-                    }
+    if (self.deecy.config.display_input_recorder) {
+        if (try InputRecorder.draw(d)) |a| sw: switch (a) {
+            .New => try d.input_recorder.new(),
+            .NewFromState => {
+                self.notifications.push("Unimplemented", .{}, "", .{});
+            },
+            .Save => {
+                if (d.input_recorder.path) |path| {
+                    try self.save_dcm(d, path);
+                } else continue :sw .SaveAs;
+            },
+            .SaveAs => {
+                const open_path = try nfd.saveFileDialog("dcm", null);
+                if (open_path) |path| {
+                    defer nfd.freePath(path);
+                    try self.save_dcm(d, path);
                 }
-            }
-        },
-        .NewFromState => {
-            self.notifications.push("Unimplemented", .{}, "", .{});
-        },
-        .Save => {
-            if (d.input_recording.path) |path| {
-                d.pause();
-                try self.save_dcm(d, path);
-            } else continue :sw .SaveAs;
-        },
-        .SaveAs => {
-            const open_path = try nfd.saveFileDialog("dcm", null);
-            if (open_path) |path| {
-                defer nfd.freePath(path);
-                d.pause();
-
-                try self.save_dcm(d, path);
-
-                if (d.input_recording.path) |p| d._allocator.free(p);
-                d.input_recording.path = try d._allocator.dupe(u8, path);
-            }
-        },
-        .Load => {
-            const open_path = try nfd.openFileDialog("dcm", null);
-            if (open_path) |path| {
-                defer nfd.freePath(path);
-                d.pause();
-                if (d.input_recording.record) |*r| r.deinit(d._allocator);
-
-                var file = try std.Io.Dir.cwd().openFile(d.io, path, .{});
-                defer file.close(d.io);
-                var buffer: [2048]u8 = undefined;
-                var file_reader = file.reader(d.io, &buffer);
-                d.input_recording.record = try Deecy.InputRecord.deserialize(d._allocator, &file_reader.interface);
-
-                // Update input devices to match the recording.
-                // FXIME: This feels really hacky. All helper function from Deecy rely on the current config.
-                inline for (d.input_recording.record.?.ports, 0..) |p, port_idx| {
-                    d.dc.maple.ports[port_idx].deinit(d.io, d._allocator);
-                    switch (p) {
-                        .none => d.dc.maple.ports[port_idx] = .none,
-                        .controller => {
-                            d.dc.maple.ports[port_idx] = .{ .emulated = .{
-                                .main = .{ .Controller = .{ .subcapabilities = .{ @bitCast(MapleModule.Controller.InputCapabilities.Standard), 0, 0 } } },
-                                .on_get_condition = .{ .callback = @ptrCast(&Deecy.on_get_condition(port_idx)), .context = d },
-                            } };
-                            inline for (p.controller.peripherals, 0..) |peripheral, slot_idx| switch (peripheral) {
-                                .none => {},
-                                .vmu => |vmu| {
-                                    d.dc.maple.ports[port_idx].emulated.subperipherals[slot_idx] = .{ .VMU = try .init(d.io, d._allocator, null) };
-                                    d.install_vmu_callbacks(port_idx, slot_idx);
-                                    @memcpy(std.mem.sliceAsBytes(d.dc.maple.ports[port_idx].emulated.subperipherals[slot_idx].?.VMU.blocks), vmu.initial_state);
-                                },
-                            };
-                        },
-                    }
+            },
+            .Load => {
+                const open_path = try nfd.openFileDialog("dcm", null);
+                if (open_path) |path| {
+                    defer nfd.freePath(path);
+                    d.input_recorder.load(path) catch |err| {
+                        self.notifications.push("Error loading DCM", .{}, "DCM file '{s}' could not be loaded: {t}", .{ path, err });
+                        break :sw;
+                    };
+                    self.notifications.push("DCM Loaded", .{}, "From file '{s}'", .{path});
                 }
-
-                self.notifications.push("DCM Loaded", .{}, "From file '{s}'", .{path});
-
-                if (d.input_recording.path) |p| d._allocator.free(p);
-                d.input_recording.path = try d._allocator.dupe(u8, path);
-            }
-        },
-        .Stop => {
-            d.pause();
-            d.input_recording.state = .Idle;
-        },
-        .Record => {
-            d.pause();
-            d.input_recording.state = .Recording;
-            // TODO: Make sure we're synchronized?
-            //       Delete inputs after current state?
-            d.start();
-        },
-        .Play => {
-            d.pause();
-            if (d.input_recording.state != .Playing) {
-                d.input_recording.state = .Playing;
-                d.input_recording.cursors = @splat(0);
-                try d.reset();
-            }
-            d.start();
-        },
-    };
+            },
+            .Close => {
+                d.pause();
+                if (d.input_recorder.record) |*r| r.deinit(d._allocator);
+                d.input_recorder.record = null;
+                d.input_recorder.state = .Idle;
+            },
+            .Stop => {
+                d.pause();
+                d.input_recorder.state = .Idle;
+            },
+            .Record => {
+                d.pause();
+                d.input_recorder.state = .Recording;
+                // TODO: Make sure we're synchronized?
+                //       Delete inputs after current state?
+                d.start();
+            },
+            .Play => {
+                d.pause();
+                if (d.input_recorder.state != .Playing) {
+                    d.input_recorder.state = .Playing;
+                    d.input_recorder.cursors = @splat(0);
+                    try d.reset();
+                }
+                d.start();
+            },
+        };
+    }
 
     // NOTE: Modals have to be in the same ID stack as the openPopup call :(
     //       Hence the weird workaround.
@@ -1235,15 +1190,12 @@ pub fn draw(self: *@This()) !void {
 }
 
 fn save_dcm(self: *@This(), d: *Deecy, path: []const u8) !void {
-    if (d.input_recording.record) |r| {
-        var file = try std.Io.Dir.cwd().createFile(d.io, path, .{});
-        defer file.close(d.io);
-        var buffer: [2048]u8 = undefined;
-        var file_writer = file.writer(d.io, &buffer);
-        try r.serialize(&file_writer.interface);
-        try file_writer.end();
-        self.notifications.push("DCM Saved", .{}, "To file '{s}'", .{path});
-    }
+    d.pause();
+    d.input_recorder.save(path) catch |err| {
+        self.notifications.push("Error saving DCM", .{}, "DCM file '{s}' could not be saved: {t}", .{ path, err });
+        return;
+    };
+    self.notifications.push("DCM Saved", .{}, "To file '{s}'", .{path});
 }
 
 /// A few random colors to help differentiate games without images.
@@ -1580,6 +1532,6 @@ pub const common = @import("./ui/common.zig");
 pub const Icons = common.Icons;
 const wait_for = @import("./ui/wait_for_input.zig");
 const GameInfoCache = @import("ui/GameInfoCache.zig");
-const InputEditor = @import("ui/input_editor.zig");
+const InputRecorder = @import("ui/input_recorder.zig");
 
 const Self = @This();

@@ -1,11 +1,11 @@
 var allow_editing = false;
 
-pub fn draw(d: *Deecy) !?enum { New, NewFromState, Save, SaveAs, Load, Stop, Record, Play } {
-    try d.input_recording.mutex.lock(d.io);
-    defer d.input_recording.mutex.unlock(d.io);
+pub fn draw(d: *Deecy) !?enum { New, NewFromState, Save, SaveAs, Load, Close, Stop, Record, Play } {
+    try d.input_recorder.mutex.lock(d.io);
+    defer d.input_recorder.mutex.unlock(d.io);
 
     defer zgui.end();
-    if (zgui.begin("Input Editor", .{ .flags = .{ .menu_bar = true } })) {
+    if (zgui.begin("Input Recorder", .{ .popen = &d.config.display_input_recorder, .flags = .{ .menu_bar = true } })) {
         if (zgui.beginMenuBar()) {
             defer zgui.endMenuBar();
             if (zgui.beginMenu("File", true)) {
@@ -16,10 +16,12 @@ pub fn draw(d: *Deecy) !?enum { New, NewFromState, Save, SaveAs, Load, Stop, Rec
                     return .NewFromState;
                 if (zgui.menuItem(Icons.FileImport ++ " Open", .{}))
                     return .Load;
+                if (zgui.menuItem(Icons.FileCircleXmark ++ " Close", .{ .enabled = d.input_recorder.record != null }))
+                    return .Close;
                 zgui.separator();
-                if (zgui.menuItem(Icons.FileExport ++ " Save", .{ .enabled = d.input_recording.record != null }))
+                if (zgui.menuItem(Icons.FileExport ++ " Save", .{ .enabled = d.input_recorder.record != null }))
                     return .Save;
-                if (zgui.menuItem(Icons.FileExport ++ " Save As...", .{ .enabled = d.input_recording.record != null }))
+                if (zgui.menuItem(Icons.FileExport ++ " Save As...", .{ .enabled = d.input_recorder.record != null }))
                     return .SaveAs;
             }
         }
@@ -33,11 +35,11 @@ pub fn draw(d: *Deecy) !?enum { New, NewFromState, Save, SaveAs, Load, Stop, Rec
             zgui.textUnformatted("Rewind is disabled, enabling it is recommended for advanced editing.");
         }
 
-        zgui.text("Status: {t}", .{d.input_recording.state});
+        zgui.text("Status: {t}", .{d.input_recorder.state});
 
-        if (d.input_recording.record) |*self| {
+        if (d.input_recorder.record) |*self| {
             _ = common.toggle("Allow edition", .{ .v = &allow_editing });
-            if (d.input_recording.path) |p|
+            if (d.input_recorder.path) |p|
                 zgui.text("Loaded: {s}", .{p});
 
             if (zgui.button(Icons.Square ++ " Stop", .{}))
@@ -62,8 +64,8 @@ pub fn draw(d: *Deecy) !?enum { New, NewFromState, Save, SaveAs, Load, Stop, Rec
                         inline .controller => |c| {
                             if (zgui.beginTabItem("Port " ++ .{ "A", "B", "C", "D" }[port], .{})) {
                                 defer zgui.endTabItem();
-                                if (d.input_recording.state == .Playing) {
-                                    zgui.text(Icons.Play ++ " Playing: {d}/{d}", .{ d.input_recording.cursors[port], c.inputs.items.len });
+                                if (d.input_recorder.state == .Playing) {
+                                    zgui.text(Icons.Play ++ " Playing: {d}/{d}", .{ d.input_recorder.cursors[port], c.inputs.items.len });
                                 } else {
                                     zgui.text("Entry count: {d}", .{c.inputs.items.len});
                                 }
@@ -85,7 +87,7 @@ pub fn draw(d: *Deecy) !?enum { New, NewFromState, Save, SaveAs, Load, Stop, Rec
                                             zgui.pushIntId(@intCast(idx));
                                             defer zgui.popId();
                                             zgui.text("{s} {d: >8} {d: >6}M", .{
-                                                if (d.input_recording.state == .Playing and start + idx == d.input_recording.cursors[port]) Icons.AngleRight else "  ",
+                                                if (d.input_recorder.state == .Playing and start + idx == d.input_recorder.cursors[port]) Icons.AngleRight else "  ",
                                                 idx,
                                                 entry.cycle / 1_000_000,
                                             });
