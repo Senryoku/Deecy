@@ -25,6 +25,23 @@ pub fn add(self: *@This(), allocator: std.mem.Allocator, port: u8, cycle: u64, s
     }
 }
 
+/// Remove all inputs past the given DC cycle.
+pub fn trim(self: *@This(), cycle: u64) void {
+    for (&self.ports) |*port| {
+        switch (port.*) {
+            .none => {},
+            inline .controller => |*c| {
+                if (c.inputs.items.len > 0) {
+                    var idx = c.inputs.items.len - 1;
+                    while (idx > 0 and c.inputs.items[idx].cycle > cycle)
+                        idx -= 1;
+                    c.inputs.shrinkRetainingCapacity(idx + 1);
+                }
+            },
+        }
+    }
+}
+
 const ControllerState = extern struct {
     buttons: maple.Controller.Buttons,
     axis: [6]u8,

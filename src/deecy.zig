@@ -2343,6 +2343,18 @@ fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array
 }
 
 pub fn load_state(self: *@This(), index: usize) !void {
+    switch (self.input_recorder.state) {
+        .Idle => {},
+        .Playing, .Recording => |s| {
+            self.ui.notifications.push("State Loading disabled", .{}, "State loading is disabled while an input record is {s}. Use the rewind feature to re-record.", .{switch (s) {
+                .Playing => "playing",
+                .Recording => "recording",
+                else => unreachable,
+            }});
+            return;
+        },
+    }
+
     const was_running = self.running;
     if (was_running) self.pause();
     defer {
@@ -2565,21 +2577,7 @@ fn rewind_confirm_impl(self: *@This()) !void {
                 .Recording => {
                     self.input_recorder.mutex.lock(self.io) catch break :sw;
                     defer self.input_recorder.mutex.unlock(self.io);
-                    if (self.input_recorder.record) |*r| {
-                        for (&r.ports) |*port| {
-                            switch (port.*) {
-                                .none => {},
-                                inline .controller => |*c| {
-                                    if (c.inputs.items.len > 0) {
-                                        var idx = c.inputs.items.len - 1;
-                                        while (idx > 0 and c.inputs.items[idx].cycle > self.dc._global_cycles)
-                                            idx -= 1;
-                                        c.inputs.shrinkRetainingCapacity(idx + 1);
-                                    }
-                                },
-                            }
-                        }
-                    }
+                    if (self.input_recorder.record) |*r| r.trim(self.dc._global_cycles);
                 },
                 .Playing => {
                     self.input_recorder.mutex.lock(self.io) catch break :sw;

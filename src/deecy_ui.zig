@@ -1151,11 +1151,16 @@ pub fn draw(self: *@This()) !void {
                 d.input_recorder.state = .Idle;
             },
             .Record => {
-                d.pause();
-                d.input_recorder.state = .Recording;
-                // TODO: Make sure we're synchronized?
-                //       Delete inputs after current state?
-                d.start();
+                if (d.input_recorder.state != .Recording) {
+                    d.pause();
+                    {
+                        d.input_recorder.mutex.lock(d.io) catch break :sw;
+                        defer d.input_recorder.mutex.unlock(d.io);
+                        if (d.input_recorder.record) |*r| r.trim(d.dc._global_cycles);
+                    }
+                    d.input_recorder.state = .Recording;
+                    d.start();
+                }
             },
             .Play => {
                 d.pause();

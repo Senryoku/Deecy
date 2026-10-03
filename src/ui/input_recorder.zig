@@ -41,15 +41,26 @@ pub fn draw(d: *Deecy) !?enum { New, NewFromState, Save, SaveAs, Load, Close, St
             _ = common.toggle("Allow edition", .{ .v = &allow_editing });
             if (d.input_recorder.path) |p|
                 zgui.text("Loaded: {s}", .{p});
-
-            if (zgui.button(Icons.Square ++ " Stop", .{}))
-                return .Stop;
-            zgui.sameLine(.{});
-            if (zgui.button(Icons.Circle ++ " Record", .{}))
-                return .Record;
-            zgui.sameLine(.{});
-            if (zgui.button(Icons.Play ++ " Play", .{}))
-                return .Play;
+            {
+                zgui.beginDisabled(.{ .disabled = d.input_recorder.state == .Idle });
+                defer zgui.endDisabled();
+                if (zgui.button(Icons.Square ++ " Stop", .{}))
+                    return .Stop;
+            }
+            {
+                zgui.sameLine(.{});
+                zgui.beginDisabled(.{ .disabled = d.input_recorder.state == .Recording });
+                defer zgui.endDisabled();
+                if (zgui.button(Icons.Circle ++ " Record", .{}))
+                    return .Record;
+            }
+            {
+                zgui.sameLine(.{});
+                zgui.beginDisabled(.{ .disabled = d.input_recorder.state == .Playing });
+                defer zgui.endDisabled();
+                if (zgui.button(Icons.Play ++ " Play", .{}))
+                    return .Play;
+            }
 
             zgui.text("Game ID: '{s}' ({s})", .{ self.game_id.name, self.game_id.id });
 
