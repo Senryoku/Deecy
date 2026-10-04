@@ -489,8 +489,15 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
         if (host_paths.root().readFileAllocOptions(io, config_path, allocator, .limited(1024 * 1024), .@"8", 0)) |conf_str| {
             defer allocator.free(conf_str);
             @setEvalBranchQuota(2000);
-            const zon = std.zon.parse.fromSliceAlloc(helpers.Partial(Configuration), allocator, conf_str, null, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
+            var arena = std.heap.ArenaAllocator.init(allocator);
+            defer arena.deinit();
+            var diag: std.zon.parse.Diagnostics = undefined;
+            const zon = std.zon.parse.fromSlice(helpers.Partial(Configuration), .{ .gpa = allocator, .arena = arena.allocator(), .diagnostics = &diag, .source = conf_str, .ignore_unknown_fields = true }) catch |err| {
                 deecy_log.err("Failed to parse config file: {t}.", .{err});
+                switch (err) {
+                    error.ParseZon => diag.log(config_path),
+                    else => {},
+                }
                 break :config .{};
             };
             break :config helpers.to_complete(Configuration, zon);
@@ -1488,7 +1495,7 @@ pub fn load_launcher(self: *@This()) !void {
     try self.reset();
     try self.dc.skip_bios();
     try self.dc.install_hle_syscalls();
-    if (builtin.mode == .Debug) {
+    if (builtin.mode == .debug) {
         _ = try std.Io.Dir.cwd().readFile(self.io, "./src/assets/launcher.bin", self.dc.ram[0x10000..]);
     } else {
         const launcher = @embedFile("./assets/launcher.bin");
@@ -2703,7 +2710,7 @@ fn draw_rewind_ui(self: *@This()) !void {
             if (zgui.button("Cancel", .{})) {
                 self.rewind_cancel();
             }
-            if (builtin.mode == .Debug and self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
+            if (builtin.mode == .debug and self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
                 zgui.sameLine(.{});
                 zgui.text("Size: {d: >4.1}MB     Available preview texture: {d}", .{
                     @as(f32, @floatFromInt(self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].data.len)) / 1024 / 1024,

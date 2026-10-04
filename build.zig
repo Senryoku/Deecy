@@ -1,4 +1,5 @@
 const std = @import("std");
+const Translator = @import("translate_c").Translator;
 
 fn get_git_commit(b: *std.Build) []const u8 {
     var code: u8 = undefined;
@@ -22,9 +23,9 @@ pub fn build(b: *std.Build) !void {
     const userdata_path = b.option([]const u8, "userdata_path", "Path to the userdata directory (default: './userdata')") orelse "./userdata";
     const flatpak = b.option(bool, "flatpak", "Build for flatpak (default: false, implies 'use_appdata_dir')") orelse false;
     const use_appdata_dir = b.option(bool, "use_appdata_dir", "Prepend the platform specific AppData directory to data_path and userdata_path (default: false)") orelse flatpak;
-    const no_console = if (target.result.os.tag == .windows) b.option(bool, "no_console", "Do not open the console on Windows (default: false for debug builds, true otherwise)") orelse (optimize != .Debug) else false;
+    const no_console = if (target.result.os.tag == .windows) b.option(bool, "no_console", "Do not open the console on Windows (default: false for debug builds, true otherwise)") orelse (optimize != .debug) else false;
     const git_commit = b.option([]const u8, "git_commit", "Current git commit hash (default: auto detect)") orelse get_git_commit(b);
-    const gpu_profiling = b.option(bool, "gpu_profiling", "Enable GPU profiling using timestamp queries (default: true for debug builds, false otherwise)") orelse (optimize == .Debug);
+    const gpu_profiling = b.option(bool, "gpu_profiling", "Enable GPU profiling using timestamp queries (default: true for debug builds, false otherwise)") orelse (optimize == .debug);
 
     const dc_options = b.addOptions();
     dc_options.addOption(bool, "mmu", mmu);
@@ -36,11 +37,19 @@ pub fn build(b: *std.Build) !void {
     path_options.addOption([]const u8, "data_path", data_path);
     path_options.addOption([]const u8, "userdata_path", userdata_path);
 
+    const translate_c = b.dependency("translate_c", .{});
+
     const termcolor_module = b.createModule(.{ .root_source_file = b.path("src/termcolor.zig") });
     const helpers_module = b.createModule(.{ .root_source_file = b.path("src/helpers.zig") });
 
     const arm7 = b.dependency("arm7", .{});
     const arm7_module = arm7.module("arm7");
+
+    const c_stdlib_import: Translator = .init(translate_c, .{
+        .c_source_file = b.path("src/dreamcast/c_stdlib.h"),
+        .target = target,
+        .optimize = optimize,
+    });
 
     const dc_module = b.createModule(.{
         .target = target,
@@ -50,17 +59,18 @@ pub fn build(b: *std.Build) !void {
             .{ .name = "termcolor", .module = termcolor_module },
             .{ .name = "helpers", .module = helpers_module },
             .{ .name = "arm7", .module = arm7_module },
+            .{ .name = "c_stdlib", .module = c_stdlib_import.mod },
         },
     });
     dc_module.addOptions("dc_config", dc_options);
 
     const ziglz4 = b.dependency("ziglz4", .{
         .target = target,
-        .optimize = .ReleaseFast,
+        .optimize = .fast,
     });
-    const nfd = b.dependency("nfdzig", .{
+    const nfd = b.dependency("nfd", .{
         .target = target,
-        .optimize = .ReleaseFast,
+        .optimize = .fast,
     });
 
     const deecy_options = b.addOptions();
@@ -90,6 +100,15 @@ pub fn build(b: *std.Build) !void {
     deecy_module.addOptions("config", deecy_options);
     deecy_module.addOptions("path_config", path_options);
 
+    if (target.result.os.tag == .windows) {
+        const c_dmwapi: Translator = .init(translate_c, .{
+            .c_source_file = b.path("c_dmwapi.h"),
+            .target = target,
+            .optimize = optimize,
+        });
+        deecy_module.addImport("c_dmwapi", c_dmwapi.mod);
+    }
+
     if (use_appdata_dir) {
         if (b.lazyDependency("known_folders", .{
             .target = target,
@@ -109,8 +128,8 @@ pub fn build(b: *std.Build) !void {
     });
     exe.root_module.addWin32ResourceFile(.{ .file = b.path("src/assets/resource.rc") });
     if (target.result.os.tag == .windows and no_console)
-        exe.subsystem = .Windows;
-    if (optimize == .ReleaseFast) {
+        exe.subsystem = .windows;
+    if (optimize == .fast) {
         exe.root_module.strip = true;
         // FIXME: As of zig 0.16.0, full LTO leads to a bunch of undefined symbols on Windows. Disabling for now.
         if (target.result.os.tag != .windows)
@@ -143,14 +162,14 @@ pub fn build(b: *std.Build) !void {
                 .root_module = b.createModule(.{
                     .root_source_file = b.path("src/windows_wrapper.zig"),
                     .target = target,
-                    .optimize = .ReleaseSmall,
+                    .optimize = .small,
                     .unwind_tables = .none,
                     .strip = true,
                     .single_threaded = true,
                     .stack_check = false,
                 }),
             });
-            wrapper.subsystem = .Console;
+            wrapper.subsystem = .console;
             wrapper.lto = .full;
             wrapper.link_gc_sections = true;
             const install_wrapper = b.addInstallArtifact(wrapper, .{});
@@ -212,24 +231,9 @@ pub fn build(b: *std.Build) !void {
     const check = b.step("check", "Check if Deecy compiles");
     check.dependOn(&exe_check.step);
 
-    // This *creates* a Run step in the build graph, to be executed when another
-    // step is evaluated that depends on it. The next line below will establish
-    // such a dependency.
     const run_cmd = b.addRunArtifact(exe);
-
-    // By making the run step depend on the install step, it will be run from the
-    // installation directory rather than directly from within the cache directory.
-    // This is not necessary, however, if the application depends on other installed
-    // files, this ensures they will be present and in the expected location.
     run_cmd.step.dependOn(b.getInstallStep());
-
-    // This allows the user to pass arguments to the application in the build
-    // command itself, like this: `zig build run -- arg1 arg2 etc`
-    if (b.args) |args| run_cmd.addArgs(args);
-
-    // This creates a build step. It will be visible in the `zig build --help` menu,
-    // and can be selected like this: `zig build run`
-    // This will evaluate the `run` step rather than the default, which is "install".
+    run_cmd.addPassthruArgs();
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
@@ -239,7 +243,7 @@ pub fn build(b: *std.Build) !void {
             .root_module = b.createModule(.{
                 .root_source_file = b.path("test/interpreter_perf.zig"),
                 .target = target,
-                .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
+                .optimize = .fast, // Note: This ignores the optimization level set by the user.
             }),
         });
         interpreter_perf.root_module.strip = true;
@@ -256,7 +260,7 @@ pub fn build(b: *std.Build) !void {
         const interpreter_perf_step = b.step("interpreter_perf", "Run interpreter performance tests");
         interpreter_perf_step.dependOn(&run_interpreter_perf_tests.step);
         interpreter_perf_step.dependOn(&interpreter_pref_install.step);
-        if (b.args) |args| run_interpreter_perf_tests.addArgs(args);
+        run_interpreter_perf_tests.addPassthruArgs();
 
         const perf_install_step = b.step("interpreter_perf_install", "Install the interpreter performance tests");
         perf_install_step.dependOn(&interpreter_pref_install.step);
@@ -267,7 +271,7 @@ pub fn build(b: *std.Build) !void {
             .root_module = b.createModule(.{
                 .root_source_file = b.path("test/jit_perf.zig"),
                 .target = target,
-                .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
+                .optimize = .fast, // Note: This ignores the optimization level set by the user.
             }),
         });
         // jit_perf.root_module.strip = true;
@@ -284,7 +288,7 @@ pub fn build(b: *std.Build) !void {
         const perf_run_step = b.step("perf", "Run performance tests");
         perf_run_step.dependOn(&run_jit_perf_tests.step);
         perf_run_step.dependOn(&jit_pref_install.step);
-        if (b.args) |args| run_jit_perf_tests.addArgs(args);
+        run_jit_perf_tests.addPassthruArgs();
 
         const perf_install_step = b.step("perf_install", "Install the JIT performance tests");
         perf_install_step.dependOn(&jit_pref_install.step);
@@ -307,7 +311,7 @@ pub fn build(b: *std.Build) !void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/sh4_SingleStepTests.zig"),
             .target = target,
-            .optimize = .ReleaseFast,
+            .optimize = .fast,
         }),
         // NOTE: The ftrv XMTRX,FVn test fails with the self-hosted backend, I guess there are differences in float handling.
         //       I don't know if the test is reliable in the first place, but llvm is used in the releases anyway.

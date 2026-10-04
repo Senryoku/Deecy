@@ -52,7 +52,7 @@ fn address_mode_bit(address_mode: wgpu.AddressMode) u8 {
         .repeat => 1,
         .mirror_repeat => 2,
         else => {
-            if (@import("builtin").mode == .Debug)
+            if (@import("builtin").mode == .debug)
                 log.err("Unsupported address mode {t}", .{address_mode});
             return 0;
         },
@@ -64,7 +64,7 @@ fn filter_mode_bit(filter: anytype) u8 {
         .nearest => 0,
         .linear => 1,
         else => {
-            if (@import("builtin").mode == .Debug)
+            if (@import("builtin").mode == .debug)
                 log.err("Unsupported filter mode {t}", .{filter});
             return 0;
         },

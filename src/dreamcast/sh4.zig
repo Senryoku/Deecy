@@ -560,7 +560,7 @@ pub const SH4 = struct {
     }
 
     inline fn operand_cache(self: *@This(), comptime T: type, virtual_addr: u32) *T {
-        if ((comptime builtin.mode == .Debug) and self.read_p4_register(P4.CCR, .CCR).ora == 0)
+        if ((comptime builtin.mode == .debug) and self.read_p4_register(P4.CCR, .CCR).ora == 0)
             sh4_log.err(termcolor.red("Read to operand cache with RAM mode disabled: @{X:0>8}"), .{virtual_addr});
 
         // Half of the operand cache can be used as RAM when CCR.ORA == 1, and some games do.
@@ -573,7 +573,7 @@ pub const SH4 = struct {
         //       Assuming this gives us a really nice performance boost for games that use the operand cache in this way.
         if (comptime true) {
             // These are seemingly not automatically optimized away, not sure why.
-            if (comptime builtin.mode == .Debug) {
+            if (comptime builtin.mode == .debug) {
                 // We can't easily assert for the CCR.OIX == 0 case since there are many contiguous ranges, and in practice most adresses can be
                 // used in a contiguous manner. Only the first and last 4K area cannot.
                 // Ranges like 0x7C003000-0x7C004FFF (Area 2 then Area 1) are not contiguous, but won't repeat, so they **might** be fine?...

@@ -736,7 +736,7 @@ pub const Emitter = struct {
             switch (instr) {
                 .Nop => {},
                 .Break => {
-                    if (builtin.mode != .Debug) log.warn("Emitting a break instruction outside of Debug Build.", .{});
+                    if (builtin.mode != .debug) log.warn("Emitting a break instruction outside of Debug Build.", .{});
                     try self.emit_byte(0xCC);
                 },
                 .FunctionCall => |function| try self.native_call(function),

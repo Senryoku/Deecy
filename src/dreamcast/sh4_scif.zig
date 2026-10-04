@@ -227,10 +227,7 @@ fn update_interrupts(self: *SH4) void {
     self.set_interrupt(SH4Module.Interrupt.SCIF_ERI, status_register.er and (control_register.rie or control_register.reie));
 }
 
-const c = @cImport({
-    @cDefine("_XOPEN_SOURCE", "500");
-    @cInclude("stdlib.h");
-});
+const c = @import("c_stdlib");
 
 const builtin = @import("builtin");
 const std = @import("std");

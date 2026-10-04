@@ -413,8 +413,8 @@ fn schedule_event(self: *@This(), event: ScheduledEvent) void {
     if (event.state) |state|
         self.state = state;
 
-    inline for (std.meta.fields(@TypeOf(event.status))) |f| {
-        if (@field(event.status, f.name)) |v| @field(self.status_register, f.name) = v;
+    inline for (@TypeOf(event.status).@"struct".field_names) |field_name| {
+        if (@field(event.status, field_name)) |v| @field(self.status_register, field_name) = v;
     }
 
     if (event.interrupt_reason) |reason| {
@@ -571,7 +571,7 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
                         0x0, // 0x02 Version ID
                     }) catch |err| gdrom_log.err("Error writing to PIO data queue: {}\n", .{err});
                     // 0x03 - 0x0F Reserved
-                    self.pio_data_queue.write(&([1]u8{0x0} ** (0x10 - 0x03))) catch |err| gdrom_log.err("Error writing to PIO data queue: {}\n", .{err});
+                    self.pio_data_queue.write(@as([0x10 - 0x03]u8, @splat(0))) catch |err| gdrom_log.err("Error writing to PIO data queue: {}\n", .{err});
                     // 0x10 - 0x1F Manufacturer's name (16 ASCII characters)
                     self.pio_data_queue.write("            SEGA") catch |err| gdrom_log.err("Error writing to PIO data queue: {}\n", .{err});
                     // 0x20 - 0x2F Model name (16 ASCII characters)

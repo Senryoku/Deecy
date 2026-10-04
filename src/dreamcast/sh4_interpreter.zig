@@ -86,14 +86,14 @@ fn _execute(self: *SH4, opcode: u16) !void {
         const instr = Instr{ .value = opcode };
         const desc = sh4_instructions.Opcodes[sh4_instructions.JumpTable[opcode]];
 
-        if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
+        if ((comptime builtin.mode == .debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
             std.debug.print("[{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ self.pc, opcode, sh4.disassembly.disassemble(instr, self._allocator), instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
 
         self.add_cycles(desc.issue_cycles);
 
         try desc.fn_(self, instr);
 
-        if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
+        if ((comptime builtin.mode == .debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
             std.debug.print("[{X:0>8}] {X: >16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ self.pc, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
     }
 }

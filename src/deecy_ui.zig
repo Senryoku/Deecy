@@ -555,7 +555,7 @@ pub fn draw(self: *@This()) !void {
                     _ = common.toggle("Start in Game Launcher", .{ .v = &d.config.auto_start_launcher });
                     zgui.setItemTooltip("When enabled, Deecy will start automatically in the game launcher, allowing you to select games using your configured DC controller.", .{});
                     {
-                        zgui.beginDisabled(.{ .disabled = d.running and builtin.mode != .Debug });
+                        zgui.beginDisabled(.{ .disabled = d.running and builtin.mode != .debug });
                         defer zgui.endDisabled();
                         var flash_updated = false;
                         zgui.separatorText("Dreamcast Configuration");
@@ -715,7 +715,7 @@ pub fn draw(self: *@This()) !void {
 
                         _ = common.toggle("Use Pipeline Cache", .{ .v = &d.config.enable_dawn_pipeline_cache });
                         zgui.setItemTooltip(Icons.TriangleExclamation ++ " Restart Required.\nReduces 'pop-in' due to pipeline creation delay (shader compilation).", .{});
-                        if (builtin.mode == .Debug) {
+                        if (builtin.mode == .debug) {
                             zgui.sameLine(.{});
                             if (zgui.button("Reset", .{}))
                                 try @import("pipeline_cache.zig").clear(d._allocator);

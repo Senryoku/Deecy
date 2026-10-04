@@ -549,10 +549,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         }
         zgui.endDisabled();
 
-        if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+        if (comptime builtin.mode == .debug or builtin.mode == .safe) {
             _ = common.toggle("Debug trace", .{ .v = &dc.cpu.debug_trace });
         } else {
-            zgui.textColored(.{ 0.5, 0.5, 0.5, 1 }, "Debug trace is not available in ReleaseFast builds!", .{});
+            zgui.textColored(.{ 0.5, 0.5, 0.5, 1 }, "Debug trace is not available in fast builds!", .{});
         }
 
         for (0..d.breakpoints.items.len) |i| {
