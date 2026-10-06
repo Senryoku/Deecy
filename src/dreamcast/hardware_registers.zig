@@ -197,7 +197,7 @@ pub const HardwareRegister = enum(u32) {
 };
 
 pub fn getRegisterName(addr: u32) []const u8 {
-    return std.enums.tagName(HardwareRegister, @as(HardwareRegister, @enumFromInt(addr))) orelse "Unknown";
+    return std.enums.tagName(HardwareRegister, @as(HardwareRegister, @fromBackingInt(addr))) orelse "Unknown";
 }
 
 pub const SB_ISTNRM = packed struct(u32) {
@@ -239,8 +239,11 @@ pub const SB_ISTNRM = packed struct(u32) {
     pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         const as_u32: u32 = @bitCast(self);
         if (@popCount(as_u32) == 1) {
-            inline for (@typeInfo(@This()).@"struct".fields) |field| {
-                if (@field(self, field.name) == 1) try writer.writeAll(field.name);
+            inline for (@typeInfo(@This()).@"struct".field_names) |field_name| {
+                if (@field(self, field_name) == 1) {
+                    try writer.writeAll(field_name);
+                    break;
+                }
             }
         } else {
             try writer.print("{X}", .{as_u32});
@@ -250,8 +253,8 @@ pub const SB_ISTNRM = packed struct(u32) {
     pub fn c_str(self: @This()) [:0]const u8 {
         const as_u32: u32 = @bitCast(self);
         if (@popCount(as_u32) == 1) {
-            inline for (@typeInfo(@This()).@"struct".fields) |field| {
-                if (@field(self, field.name) == 1) return field.name;
+            inline for (@typeInfo(@This()).@"struct".field_names) |field_name| {
+                if (@field(self, field_name) == 1) return field_name;
             }
         }
         return "Unknown";
@@ -268,8 +271,11 @@ pub const SB_ISTEXT = packed struct(u32) {
     pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         const as_u32: u32 = @bitCast(self);
         if (@popCount(as_u32) == 1) {
-            inline for (@typeInfo(@This()).@"struct".fields) |field| {
-                if (@field(self, field.name) == 1) try writer.writeAll(field.name);
+            inline for (@typeInfo(@This()).@"struct".field_names) |field_name| {
+                if (@field(self, field_name) == 1) {
+                    try writer.writeAll(field_name);
+                    break;
+                }
             }
         } else {
             try writer.print("{X}", .{as_u32});
@@ -279,8 +285,8 @@ pub const SB_ISTEXT = packed struct(u32) {
     pub fn c_str(self: @This()) [:0]const u8 {
         const as_u32: u32 = @bitCast(self);
         if (@popCount(as_u32) == 1) {
-            inline for (@typeInfo(@This()).@"struct".fields) |field| {
-                if (@field(self, field.name) == 1) return field.name;
+            inline for (@typeInfo(@This()).@"struct".field_names) |field_name| {
+                if (@field(self, field_name) == 1) return field_name;
             }
         }
         return "Unknown";

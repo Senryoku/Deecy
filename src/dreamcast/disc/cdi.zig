@@ -126,7 +126,7 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
                 .num = @truncate(self.tracks.items.len + 1),
                 .fad = start_lba + pregap,
                 .end_fad = start_lba + pregap + length,
-                .track_type = @enumFromInt(sector_type),
+                .track_type = @fromBackingInt(@intCast(sector_type)),
                 .format = sector_size,
                 .pregap = pregap,
                 .data = mapped[track_offset + pregap * sector_size ..][0 .. length * sector_size],

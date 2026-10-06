@@ -124,6 +124,29 @@ pub fn build(b: *std.Build) !void {
         // NOTE:
         //  - zig 0.15.1: zgpu doesn't work correctly with the self-hosted backend, leading to a crash in Linux in debug mode. Forcing LLVM use fixes the issue.
         //  - zig 0.16.0: I can't get some inline assembly to compile in Linux with the self-hosted backend.
+        //  - zig 0.17.0: Inline assembly is still an issue (https://codeberg.org/ziglang/zig/issues/37096)
+        //                Segfault within zpool:
+        //    Segmentation fault at address 0x0
+        //    [..]/zpool/src/pool.zig:320:67: 0x271672d in addIfNotFull (main.zig)
+        //            pub fn addIfNotFull(self: *Self, values: Columns) ?Handle {
+        //                                                                      ^
+        //    [..]/zgpu/src/zgpu.zig:1683:39: 0x2712212 in addResource (zgpu.zig)
+        //                if (self.pool.addIfNotFull(.{ .info = info })) |handle| {
+        //                                          ^
+        //    [..]/zgpu/src/zgpu.zig:714:44: 0x2711e1d in createBuffer (zgpu.zig)
+        //            return gctx.buffer_pool.addResource(gctx.*, .{
+        //                                               ^
+        //    [..]/zgpu/src/zgpu.zig:554:48: 0x22f75ee in uniformsNextStagingBuffer (zgpu.zig)
+        //            const buffer_handle = gctx.createBuffer(.{
+        //                                                   ^
+        //    [..]/zgpu/src/zgpu.zig:614:39: 0x22f6e51 in submit (zgpu.zig)
+        //            gctx.uniformsNextStagingBuffer();
+        //                                          ^
+        //    [..]/Deecy/src/deecy.zig:1917:21: 0x271c0f1 in submit_ui (main.zig)
+        //        self.gctx.submit(&.{commands});
+        //                        ^
+        //    [..]/Deecy/src/main.zig:241:20: 0x1a7cc05 in main (main.zig)
+        //        d.submit_ui();
         .use_llvm = true,
     });
     exe.root_module.addWin32ResourceFile(.{ .file = b.path("src/assets/resource.rc") });

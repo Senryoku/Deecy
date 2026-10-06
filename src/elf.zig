@@ -2,8 +2,8 @@ const std = @import("std");
 
 const log = std.log.scoped(.elf);
 
-pub const ELFType = enum(u8) { Relocatable = 1, Executable = 2, Shared = 3, Core = 4, _ };
-pub const InstructionSet = enum(u8) { None = 0, Sparc = 0x02, x86 = 0x03, MIPS = 0x08, PowerPC = 0x14, ARM = 0x28, SuperH = 0x2A, IA_64 = 0x32, x86_64 = 0x3E, AArch64 = 0xB7, RISC_V = 0xF3, _ };
+pub const ELFType = enum(u16) { Relocatable = 1, Executable = 2, Shared = 3, Core = 4, _ };
+pub const InstructionSet = enum(u16) { None = 0, Sparc = 0x02, x86 = 0x03, MIPS = 0x08, PowerPC = 0x14, ARM = 0x28, SuperH = 0x2A, IA_64 = 0x32, x86_64 = 0x3E, AArch64 = 0xB7, RISC_V = 0xF3, _ };
 
 pub const SegmentType = enum(u32) {
     Null = 0, // Program header table entry unused.
@@ -178,8 +178,8 @@ pub fn string(self: *@This(), index: u64) []const u8 {
 
 fn _init(comptime endianness: std.builtin.Endian, comptime word_type: type, allocator: std.mem.Allocator, file_reader: *std.Io.File.Reader) !@This() {
     const reader = &file_reader.interface;
-    const elf_type: ELFType = @enumFromInt(try reader.takeInt(u16, endianness));
-    const instruction_set: InstructionSet = @enumFromInt(try reader.takeInt(u16, endianness));
+    const elf_type: ELFType = @fromBackingInt(try reader.takeInt(u16, endianness));
+    const instruction_set: InstructionSet = @fromBackingInt(try reader.takeInt(u16, endianness));
     const version = try reader.takeInt(u32, endianness);
     const program_entry_offset = try reader.takeInt(word_type, endianness);
     const program_header_table_offset = try reader.takeInt(word_type, endianness);

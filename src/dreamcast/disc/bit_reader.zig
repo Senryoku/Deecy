@@ -34,7 +34,7 @@ pub inline fn readBitsNoEof(self: *@This(), comptime T: type, num: u32) !T {
     std.debug.assert(self.count <= 8);
     std.debug.assert(num <= @bitSizeOf(T));
 
-    const U = if (@bitSizeOf(T) < 8) u8 else std.meta.Int(.unsigned, @bitSizeOf(T));
+    const U = if (@bitSizeOf(T) < 8) u8 else @Int(.unsigned, @bitSizeOf(T));
 
     if (num <= self.count) return @intCast(self.removeBits(@intCast(num)));
 

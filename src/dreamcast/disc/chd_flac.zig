@@ -109,7 +109,7 @@ const BlockSize = enum(u4) {
     _,
 
     pub fn value(self: @This()) u16 {
-        return switch (@intFromEnum(self)) {
+        return switch (@backingInt(self)) {
             0b0001 => 192,
             0b0010...0b0101 => |b| 144 * std.math.pow(u16, 2, b),
             0b1000...0b1111 => |b| std.math.pow(u16, 2, b),
@@ -143,7 +143,7 @@ const SubframeHeader = packed struct {
 /// Reads a signed integer with a runtime known bit depth
 inline fn read_signed_integer(comptime T: type, bit_reader: *BitReader, bit_depth: u6) !T {
     std.debug.assert(bit_depth > 0 and bit_depth <= @bitSizeOf(T));
-    const ContainerType = std.meta.Int(.unsigned, @bitSizeOf(T));
+    const ContainerType = @Int(.unsigned, @bitSizeOf(T));
     var r = try bit_reader.readBitsNoEof(ContainerType, bit_depth);
     // Sign extend from bit_depth to container_type size
     const shift = @bitSizeOf(ContainerType) - @as(usize, bit_depth);
@@ -152,7 +152,7 @@ inline fn read_signed_integer(comptime T: type, bit_reader: *BitReader, bit_dept
 }
 
 inline fn read_unencoded_sample(comptime SampleType: type, bit_reader: *BitReader, wasted_bits: u6, bits_per_sample: u6) !SampleType {
-    const InterType = std.meta.Int(.signed, try std.math.ceilPowerOfTwo(u32, @bitSizeOf(SampleType) + 1));
+    const InterType = @Int(.signed, try std.math.ceilPowerOfTwo(u32, @bitSizeOf(SampleType) + 1));
     return @intCast(try read_signed_integer(InterType, bit_reader, bits_per_sample - wasted_bits));
 }
 
@@ -183,19 +183,19 @@ fn decode_residuals(comptime ResidualType: type, residuals: []ResidualType, bloc
         var count = (block_size >> partition_order);
         if (partition == 0) count -= order;
         switch (coding_method) {
-            inline 0b00, 0b01 => |comptime_coding_method| try decode_residual_partition(ResidualType, @enumFromInt(comptime_coding_method), residuals[partition_start_idx..][0..count], bit_reader),
+            inline 0b00, 0b01 => |comptime_coding_method| try decode_residual_partition(ResidualType, @fromBackingInt(comptime_coding_method), residuals[partition_start_idx..][0..count], bit_reader),
             else => unreachable,
         }
         partition_start_idx += count;
     }
 }
 
-inline fn decode_zigzag(comptime Type: type, encoded: Type) std.meta.Int(.signed, @bitSizeOf(Type)) {
-    return @bitCast((encoded >> 1) ^ @as(Type, @bitCast(-@as(std.meta.Int(.signed, @bitSizeOf(Type)), @intCast(encoded & 1)))));
+inline fn decode_zigzag(comptime Type: type, encoded: Type) @Int(.signed, @bitSizeOf(Type)) {
+    return @bitCast((encoded >> 1) ^ @as(Type, @bitCast(-@as(@Int(.signed, @bitSizeOf(Type)), @intCast(encoded & 1)))));
 }
 
 fn decode_residual_partition(comptime ResidualType: type, comptime coding_method: enum(u2) { Rice = 0, Rice2 = 1 }, residuals: []ResidualType, bit_reader: *BitReader) !void {
-    const UnsignedResidualType = std.meta.Int(.unsigned, @bitSizeOf(ResidualType));
+    const UnsignedResidualType = @Int(.unsigned, @bitSizeOf(ResidualType));
     const RiceParameterType = switch (coding_method) {
         .Rice => u4,
         .Rice2 => u5,

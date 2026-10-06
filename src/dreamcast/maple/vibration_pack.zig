@@ -138,10 +138,10 @@ const Settings = VibrationSourceSettings{
 const AutoStopTimer = enum(u8) {
     _,
     pub fn to_seconds(self: @This()) f32 {
-        return @as(f32, @floatFromInt(@intFromEnum(self))) * 0.25 + 0.25;
+        return @as(f32, @floatFromInt(@backingInt(self))) * 0.25 + 0.25;
     }
     pub fn from_seconds(seconds: f32) @This() {
-        return @enumFromInt(std.math.clamp(@as(u8, @intFromFloat((seconds - 0.25) / 0.25)), 0, 0xFF));
+        return @fromBackingInt(std.math.clamp(@as(u8, @intFromFloat((seconds - 0.25) / 0.25)), 0, 0xFF));
     }
 };
 
@@ -213,7 +213,7 @@ pub fn block_write(self: *@This(), function: u32, vn: u8, block_num: u16, phase:
                 // One AST per vibration source: We only support one.
                 if (asr & 1 == 1) {
                     const ast0: u8 = @truncate(data[0] >> 16);
-                    self.auto_stop_timer = @enumFromInt(ast0);
+                    self.auto_stop_timer = @fromBackingInt(ast0);
                 }
             } else {
                 // Arbitrary waveform data

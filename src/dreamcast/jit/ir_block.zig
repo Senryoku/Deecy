@@ -57,8 +57,8 @@ pub const IRBlock = struct {
         const T = @TypeOf(func);
         const typeInfo = @typeInfo(T);
         if (typeInfo != .@"fn") @compileError("Expected function, got: " ++ @typeName(T));
-        if (!(comptime typeInfo.@"fn".calling_convention.eql(Architecture.CallingConvention)))
-            @compileError("Expected " ++ @tagName(Architecture.CallingConvention) ++ " calling convention, got: " ++ @tagName(typeInfo.@"fn".calling_convention));
+        if (!(comptime typeInfo.@"fn".attrs.@"callconv".eql(Architecture.CallingConvention)))
+            @compileError("Expected " ++ @tagName(Architecture.CallingConvention) ++ " calling convention, got: " ++ @tagName(typeInfo.@"fn".attrs.@"callconv"));
         try self.instructions.append(self._allocator, .{ .FunctionCall = func });
     }
 
@@ -176,11 +176,11 @@ pub const IRBlock = struct {
     pub const Label = enum(u64) { _ };
 
     pub fn label(self: *const @This()) Label {
-        return @enumFromInt(self.instructions.items.len);
+        return @fromBackingInt(self.instructions.items.len);
     }
 
     pub fn back_jmp(self: *@This(), condition: Condition, dest: Label) !void {
-        const dest_index = @intFromEnum(dest);
+        const dest_index = @backingInt(dest);
         std.debug.assert(dest_index < self.instructions.items.len);
         try self.instructions.append(self._allocator, .{ .Jmp = .{
             .condition = condition,

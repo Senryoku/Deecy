@@ -6,12 +6,12 @@
     .paths = .{""},
     .dependencies = .{
         .zgpu = .{
-            .url = "git+https://github.com/Senryoku/zgpu.git#fe66378b9d38cd8c5084fd7a7da1824614abb5f9",
-            .hash = "zgpu-0.17.0-dev-nqFT5JQozAWqfiokaLLoW2lecahh-ogjlsz0qcLSoGjy",
+            .url = "git+https://github.com/Senryoku/zgpu#801b47a8ac6f77b2566f9a72c8c2953db452af93",
+            .hash = "zgpu-0.17.0-dev-nqFT5A1IzAUWIeXIwCcPnqpW5ZZBiirVkLHtDSVmMvg-",
         },
         .zgui = .{
-            .url = "git+https://github.com/Senryoku/zgui.git#7c8dde223767fa425c05ed17d7dcf6d1ba93a0d4",
-            .hash = "zgui-0.6.0-dev--L6sZMlUbQC8gp9ZqYnG-pLhw-GZhcWpBMCxml1TbORw",
+            .url = "git+https://github.com/Senryoku/zgui#5f32c44f342de6a9def55dc9508cafb2c98326bf",
+            .hash = "zgui-0.6.0-dev--L6sZNBUbQBnXCJ2GjG96_zT_aTO77rKODNNYb3tboO4",
         },
         .zaudio = .{
             .url = "git+https://github.com/Senryoku/zaudio.git#170f2188a7a7893f87bcd4811e911cffe2b3d30f",
@@ -26,12 +26,12 @@
             .hash = "arm7-0.1.0-al93rOFtAQCINe3e6-mbkt7UU-wSRCCh4GBlErzRVXV2",
         },
         .ziglz4 = .{
-            .url = "git+https://github.com/Senryoku/zig-lz4.git#3354f02f372dda25389a56604f7a02d1784a07d5",
-            .hash = "ziglz4-0.1.1-HIQ640dgAAB1EuGk_7jRQKdq117DXx_pNKONjMST5m7e",
+            .url = "git+https://github.com/Senryoku/zig-lz4#026179957bb214284984531b2c4b0360bac7e44c",
+            .hash = "ziglz4-0.1.1-HIQ641VaAABClcZPAiNgm1jkK0c35GuErRrreF5Nr00m",
         },
         .zglfw = .{
-            .url = "git+https://github.com/Senryoku/zglfw.git#a7c3d8211508011d763f9ce0a89dc4bb94570c61",
-            .hash = "zglfw-0.10.0-dev-zgVDNGLCJQB9btONr2qOYtMnK0PJx5zyn8ZbfJGh10ap",
+            .url = "git+https://github.com/Senryoku/zglfw#ef6faee6586b7db14b62f0abd7f31f9aacf35da6",
+            .hash = "zglfw-0.10.0-dev-zgVDNDjDJQCUy7GFg_D49bKPs8jwJF8DPH0K1qeW0hLE",
         },
         .known_folders = .{
             .url = "git+https://github.com/ziglibs/known-folders.git#6da0d0c41b78b9ed2d34fa364fcb81b5ebece6c4",

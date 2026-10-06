@@ -69,7 +69,7 @@ pub fn decode_tex(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFor
                 for (0..u_size) |x| {
                     const pixel_index: usize = y * u_size + x;
                     const texel_index: usize = if (twiddled) untwiddle(@intCast(x), @intCast(y), u_size, v_size) else pixel_index;
-                    dest_bgra[pixel_index] = texels[texel_index].bgra(@enumFromInt(@intFromEnum(format)), twiddled);
+                    dest_bgra[pixel_index] = texels[texel_index].bgra(@fromBackingInt(@backingInt(format)), twiddled);
                 }
             }
         },

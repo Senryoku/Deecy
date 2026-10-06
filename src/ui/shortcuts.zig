@@ -247,7 +247,6 @@ fn deserialize(self: *@This(), allocator: std.mem.Allocator, io: std.Io) !void {
     const data = try host_paths.root().readFileAllocOptions(io, config_path, arena_allocator, .limited(32 * 1024 * 1024), .@"8", 0);
 
     var diagnostics: std.zon.parse.Diagnostics = undefined;
-    // NOTE: The parsed zon structure lifetime is confined to this function anyway, using the arena_allocator as the gpa here on purpose.
     const zon = std.zon.parse.fromSlice([]const SerializedShortcut, .{ .gpa = arena_allocator, .arena = arena_allocator, .source = data, .diagnostics = &diagnostics, .ignore_unknown_fields = true }) catch |err| {
         log.err("Failed to parse shortcuts file: {t}.", .{err});
         diagnostics.log(config_path);
@@ -265,7 +264,7 @@ fn get_config_path(allocator: std.mem.Allocator) ![]const u8 {
 }
 
 fn get_action(name: Action.Name) Action {
-    return Actions[@intFromEnum(name)];
+    return Actions[@backingInt(name)];
 }
 
 pub fn load_default_shortcuts(self: *@This()) !void {

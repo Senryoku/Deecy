@@ -321,18 +321,18 @@ pub const Dreamcast = struct {
 
         // Adjust factory settings (read-only partition). Two identical copies of the settings.
         // Region
-        self.flash.data[0x1A002] = '0' + @intFromEnum(region);
-        self.flash.data[0x1A0A2] = '0' + @intFromEnum(region);
+        self.flash.data[0x1A002] = '0' + @backingInt(region);
+        self.flash.data[0x1A0A2] = '0' + @backingInt(region);
         // Default language
-        self.flash.data[0x1A003] = '0' + @intFromEnum(bios_config.language);
-        self.flash.data[0x1A0A3] = '0' + @intFromEnum(bios_config.language);
+        self.flash.data[0x1A003] = '0' + @backingInt(bios_config.language);
+        self.flash.data[0x1A0A3] = '0' + @backingInt(bios_config.language);
         // Broadcast format
         const broadcast: enum(u8) { NTSC = 0, PAL = 1, @"PAL-M" = 2, @"PAL-N" = 3 } = switch (region) {
             .Europe => .PAL,
             else => .NTSC,
         };
-        self.flash.data[0x1A004] = '0' + @intFromEnum(broadcast);
-        self.flash.data[0x1A0A4] = '0' + @intFromEnum(broadcast);
+        self.flash.data[0x1A004] = '0' + @backingInt(broadcast);
+        self.flash.data[0x1A0A4] = '0' + @backingInt(broadcast);
 
         // Search system config block, or allocate it, and fill it with user preferences.
         const system_block = self.flash.get_or_allocate_logical_block(Flash.SystemConfigPayload, Flash.SystemSettings, Flash.SystemConfigPayload.LogicalBlockNumber);
@@ -513,11 +513,11 @@ pub const Dreamcast = struct {
         _,
 
         pub fn cycles_per_frame(s: @This()) u64 {
-            return @as(u64, 100) * SH4Clock / @intFromEnum(s);
+            return @as(u64, 100) * SH4Clock / @backingInt(s);
         }
 
         pub fn ns_per_frame(s: @This()) u64 {
-            return @as(u64, 100) * std.time.ns_per_s / @intFromEnum(s);
+            return @as(u64, 100) * std.time.ns_per_s / @backingInt(s);
         }
     };
 
@@ -529,7 +529,7 @@ pub const Dreamcast = struct {
         const pixel_clock: u64 = 100 * 27_000_000; // 100 * MHz
         var hz = pixel_clock / ((@as(u64, spg_load.hcount) + 1) * (@as(u64, spg_load.vcount) + 1)); // 100 * Hz
         if (!spg_control.interlace) hz /= 2;
-        const refresh_rate: RefreshRate = @enumFromInt(hz);
+        const refresh_rate: RefreshRate = @fromBackingInt(@intCast(hz));
         switch (refresh_rate) {
             else => return refresh_rate,
             _ => {
@@ -541,7 +541,7 @@ pub const Dreamcast = struct {
     }
 
     pub inline fn hw_register(self: *const @This(), comptime T: type, r: HardwareRegister) *T {
-        return self.hw_register_addr(T, @intFromEnum(r));
+        return self.hw_register_addr(T, @backingInt(r));
     }
     pub inline fn hw_register_addr(self: *const @This(), comptime T: type, addr: u32) *T {
         std.debug.assert(addr >= 0x005F6800 and addr < 0x005F6800 + self.hardware_registers.len);
@@ -576,7 +576,7 @@ pub const Dreamcast = struct {
     }
     /// Intended be called from write handlers. May have side effects.
     pub fn write_hw_register(self: *@This(), comptime T: type, addr: u32, value: T) void {
-        const reg: HardwareRegister = @enumFromInt(addr);
+        const reg: HardwareRegister = @fromBackingInt(addr);
         if (addr >= 0x005F7000 and addr <= 0x005F709C) {
             if (T != u8 and T != u16) return log.err("Invalid Write({any}) to 0x{X:0>8} (GDROM)\n", .{ T, addr });
             return self.gdrom.write_register(T, addr, value);
@@ -741,16 +741,16 @@ pub const Dreamcast = struct {
                             },
                             else => {
                                 // Too spammy even for debugging.
-                                if (addr != @intFromEnum(HardwareRegister.SB_ISTNRM) and addr != @intFromEnum(HardwareRegister.SB_FFST))
+                                if (addr != @backingInt(HardwareRegister.SB_ISTNRM) and addr != @backingInt(HardwareRegister.SB_FFST))
                                     log.debug("  Read({any}) to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{
                                         T, addr, HardwareRegisters.getRegisterName(addr), @constCast(self).hw_register_addr(T, addr).*,
                                     });
-                                return self.read_hw_register(T, @enumFromInt(addr));
+                                return self.read_hw_register(T, @fromBackingInt(addr));
                             },
                         }
                     },
                     0x005F8000...0x005F9FFF => {
-                        return self.gpu.read_register(T, @enumFromInt(addr));
+                        return self.gpu.read_register(T, @fromBackingInt(addr));
                     },
                     0x00600000...0x006007FF => return @constCast(self).modem.read(T, addr),
                     // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF

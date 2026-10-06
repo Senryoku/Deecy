@@ -15,11 +15,11 @@ pub const FrameTimestamp = enum(u32) {
     _,
 
     pub fn begin(self: @This()) u32 {
-        return @intFromEnum(self);
+        return @backingInt(self);
     }
 
     pub fn end(self: @This()) u32 {
-        return @intFromEnum(self) + 1;
+        return @backingInt(self) + 1;
     }
 };
 pub const RenderPassTimestamp = enum(u32) {
@@ -43,11 +43,11 @@ pub const RenderPassTimestamp = enum(u32) {
     _,
 
     pub fn begin(self: @This()) u32 {
-        return @intFromEnum(self);
+        return @backingInt(self);
     }
 
     pub fn end(self: @This()) u32 {
-        return @intFromEnum(self) + 1;
+        return @backingInt(self) + 1;
     }
 
     pub fn @"type"(idx: u32) @This() {
@@ -61,7 +61,7 @@ pub const RenderPassTimestamp = enum(u32) {
             64...95 => .@"Translucent Merge Modifier Volumes",
             96...127 => .@"Translucent Pass",
             128...159 => .@"Translucent Blend Pass",
-            else => @enumFromInt(idx),
+            else => @fromBackingInt(idx),
         };
     }
 
@@ -80,10 +80,10 @@ pub const RenderPassTimestamp = enum(u32) {
         blend: RenderPassTimestamp,
     } {
         return .{
-            .modifier_volumes = @enumFromInt(@intFromEnum(@This().@"Translucent Modifier Volumes") + 2 * slice),
-            .merge_modifier_volumes = @enumFromInt(@intFromEnum(@This().@"Translucent Merge Modifier Volumes") + 2 * slice),
-            .fragments = @enumFromInt(@intFromEnum(@This().@"Translucent Pass") + 2 * slice),
-            .blend = @enumFromInt(@intFromEnum(@This().@"Translucent Blend Pass") + 2 * slice),
+            .modifier_volumes = @fromBackingInt(@backingInt(@This().@"Translucent Modifier Volumes") + 2 * slice),
+            .merge_modifier_volumes = @fromBackingInt(@backingInt(@This().@"Translucent Merge Modifier Volumes") + 2 * slice),
+            .fragments = @fromBackingInt(@backingInt(@This().@"Translucent Pass") + 2 * slice),
+            .blend = @fromBackingInt(@backingInt(@This().@"Translucent Blend Pass") + 2 * slice),
         };
     }
 

@@ -40,7 +40,7 @@ _next_command_id: u32 = 1,
 _current_command_id: u32 = 0,
 
 pub fn reset(self: *@This()) void {
-    self.command = @enumFromInt(0);
+    self.command = @fromBackingInt(0);
     @memset(&self.params, 0);
     @memset(&self.result, 0);
     self._next_command_id = 1;
@@ -55,7 +55,7 @@ pub fn send_command(dc: *Dreamcast, command_code: u32, params: [4]u32) u32 {
     if (dc.gdrom_hle._next_command_id == 0) dc.gdrom_hle._next_command_id = 1;
 
     dc.gdrom.state = .Busy;
-    dc.gdrom_hle.command = @enumFromInt(command_code);
+    dc.gdrom_hle.command = @fromBackingInt(command_code);
     dc.gdrom_hle.params = params;
     @memset(&dc.gdrom_hle.result, 0);
 

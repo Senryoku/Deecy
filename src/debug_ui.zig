@@ -141,27 +141,26 @@ fn display(self: anytype) void {
 
     const info = @typeInfo(@TypeOf(self));
     comptime var max_length = 0;
-    inline for (info.@"struct".fields) |field| {
-        max_length = @max(max_length, field.name.len);
-    }
-    inline for (info.@"struct".fields) |field| {
+    inline for (info.@"struct".field_names) |field_name|
+        max_length = @max(max_length, field_name.len);
+    inline for (info.@"struct".field_names, info.@"struct".field_types) |field_name, field_type| {
         // Hide "private" (or hidden) fields - Meaning those starting with an underscore.
-        if (!std.mem.startsWith(u8, field.name, "_")) {
-            const value = @field(self, field.name);
-            switch (@typeInfo(field.type)) {
-                .@"enum" => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {t}", .{ field.name, value }),
+        if (!std.mem.startsWith(u8, field_name, "_")) {
+            const value = @field(self, field_name);
+            switch (@typeInfo(field_type)) {
+                .@"enum" => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {t}", .{ field_name, value }),
                 .@"struct" => {
-                    if (zgui.collapsingHeader(field.name ++ " (" ++ @typeName(field.type) ++ ")", .{})) {
+                    if (zgui.collapsingHeader(field_name ++ " (" ++ @typeName(field_type) ++ ")", .{})) {
                         display(value);
                     }
                 },
                 .pointer => |p| {
                     switch (p.size) {
-                        .slice => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} [{d}]{any}", .{ field.name, value.len, value[0..@min(8, value.len)] }),
-                        else => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {any}", .{ field.name, value }),
+                        .slice => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} [{d}]{any}", .{ field_name, value.len, value[0..@min(8, value.len)] }),
+                        else => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {any}", .{ field_name, value }),
                     }
                 },
-                else => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {any}", .{ field.name, value }),
+                else => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {any}", .{ field_name, value }),
             }
         }
     }
@@ -374,10 +373,10 @@ fn display_packed_color(comptime label: [:0]const u8, packed_color: Colors.Packe
 
 fn display_non_zero(comptime label: [:0]const u8, value: anytype) void {
     zgui.textUnformatted(label);
-    inline for (@typeInfo(@TypeOf(value)).@"struct".fields) |f| {
-        if (@field(value, f.name) != 0) {
+    inline for (@typeInfo(@TypeOf(value)).@"struct".field_names) |field_name| {
+        if (@field(value, field_name) != 0) {
             zgui.sameLine(.{});
-            zgui.text("{s}", .{f.name});
+            zgui.text("{s}", .{field_name});
         }
     }
 }
@@ -407,11 +406,11 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.separator();
 
             if (zgui.beginCombo("##SB_ISTNRM", .{ .preview_value = static.istnrm.c_str() })) {
-                inline for (@typeInfo(HardwareRegisters.SB_ISTNRM).@"struct".fields) |field| {
-                    if (!std.mem.startsWith(u8, field.name, "_")) {
-                        if (zgui.selectable(field.name, .{ .selected = @field(static.istnrm, field.name) != 0 })) {
+                inline for (@typeInfo(HardwareRegisters.SB_ISTNRM).@"struct".field_names) |field_name| {
+                    if (!std.mem.startsWith(u8, field_name, "_")) {
+                        if (zgui.selectable(field_name, .{ .selected = @field(static.istnrm, field_name) != 0 })) {
                             comptime var val: HardwareRegisters.SB_ISTNRM = .{};
-                            @field(val, field.name) = 1;
+                            @field(val, field_name) = 1;
                             static.istnrm = val;
                         }
                     }
@@ -423,11 +422,11 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 dc.raise_normal_interrupt(static.istnrm);
 
             if (zgui.beginCombo("##SB_ISTEXT", .{ .preview_value = static.istext.c_str() })) {
-                inline for (@typeInfo(HardwareRegisters.SB_ISTEXT).@"struct".fields) |field| {
-                    if (!std.mem.startsWith(u8, field.name, "_")) {
-                        if (zgui.selectable(field.name, .{ .selected = @field(static.istext, field.name) != 0 })) {
+                inline for (@typeInfo(HardwareRegisters.SB_ISTEXT).@"struct".field_names) |field_name| {
+                    if (!std.mem.startsWith(u8, field_name, "_")) {
+                        if (zgui.selectable(field_name, .{ .selected = @field(static.istext, field_name) != 0 })) {
                             comptime var val: HardwareRegisters.SB_ISTEXT = .{};
-                            @field(val, field.name) = 1;
+                            @field(val, field_name) = 1;
                             static.istext = val;
                         }
                     }
@@ -1315,21 +1314,21 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 inline for ([_]Holly.ListType{ .Opaque, .Translucent, .PunchThrough }) |list_type| {
                     const list = d.renderer.ta_lists.items[pass_idx].get_list(list_type);
                     const name = @tagName(list_type);
-                    const header = try std.fmt.bufPrintZ(&buffer, name ++ " ({d})###" ++ name, .{list.vertex_strips.items.len});
+                    const header = try std.fmt.bufPrintSentinel(&buffer, name ++ " ({d})###" ++ name, .{list.vertex_strips.items.len}, 0);
 
                     const is_list_selected = self.selected_strip_focus and self.selected_strip_list == list_type;
                     if (is_list_selected) zgui.setNextItemOpen(.{ .is_open = true });
                     if (zgui.collapsingHeader(header, .{})) {
-                        zgui.pushIntId(@intFromEnum(list_type));
+                        zgui.pushIntId(@backingInt(list_type));
                         defer zgui.popId();
                         zgui.text("Strips: {d}, Vertices: {d}", .{ list.vertex_strips.items.len, list.vertex_parameters.items.len });
                         for (list.vertex_strips.items, 0..) |strip, idx| {
-                            const strip_header = try std.fmt.bufPrintZ(&buffer, "  {t} ({d}) - {t}###strip_{d}", .{
+                            const strip_header = try std.fmt.bufPrintSentinel(&buffer, "  {t} ({d}) - {t}###strip_{d}", .{
                                 strip.global_parameters.polygon.tag(),
                                 strip.vertex_parameter_count,
                                 strip.global_parameters.polygon.tsp_instruction().texture_shading_instruction,
                                 idx,
-                            });
+                            }, 0);
                             {
                                 zgui.beginGroup();
 
@@ -1387,7 +1386,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 // NOTE: By the time we get there, the renderer took the volumes for itself (rather than copying them).
                 {
                     const list = d.renderer.ta_lists.items[pass_idx].opaque_modifier_volumes;
-                    const header = try std.fmt.bufPrintZ(&buffer, "Opaque ({d})###OMV", .{list.items.len});
+                    const header = try std.fmt.bufPrintSentinel(&buffer, "Opaque ({d})###OMV", .{list.items.len}, 0);
                     if (zgui.collapsingHeader(header, .{})) {
                         zgui.indent(.{});
                         defer zgui.unindent(.{});
@@ -1414,7 +1413,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 }
                 {
                     const list = d.renderer.ta_lists.items[pass_idx].translucent_modifier_volumes;
-                    const header = try std.fmt.bufPrintZ(&buffer, "Translucent ({d})###TMV", .{list.items.len});
+                    const header = try std.fmt.bufPrintSentinel(&buffer, "Translucent ({d})###TMV", .{list.items.len}, 0);
                     if (zgui.collapsingHeader(header, .{})) {
                         zgui.indent(.{});
                         defer zgui.unindent(.{});
@@ -1512,7 +1511,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             );
             const tex_id = d.gctx.lookupResource(self.vram_texture_view).?;
 
-            zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(tex_id)) }, .{ .w = vram_width, .h = vram_height });
+            zgui.image(.{ .tex_data = null, .tex_id = @fromBackingInt(@intFromPtr(tex_id)) }, .{ .w = vram_width, .h = vram_height });
         }
     }
     zgui.end();
@@ -1522,9 +1521,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         defer d.gctx_queue_mutex.unlock(d.io);
 
         // Lower values won't always be functional for higher resolutions
-        var oit_horizontal_slices: enum(u32) { @"1" = 1, @"2" = 2, @"3" = 3, @"4" = 4, @"5" = 5, @"6" = 6, @"7" = 7, @"8" = 8, @"9" = 9, @"10" = 10, @"11" = 11, @"12" = 12, @"13" = 13, @"14" = 14, @"15" = 15, @"16" = 16, @"17" = 17, @"18" = 18, @"19" = 19, @"20" = 20, @"21" = 21, @"22" = 22, @"23" = 23, @"24" = 24 } = @enumFromInt(d.renderer.oit_horizontal_slices);
+        var oit_horizontal_slices: enum(u32) { @"1" = 1, @"2" = 2, @"3" = 3, @"4" = 4, @"5" = 5, @"6" = 6, @"7" = 7, @"8" = 8, @"9" = 9, @"10" = 10, @"11" = 11, @"12" = 12, @"13" = 13, @"14" = 14, @"15" = 15, @"16" = 16, @"17" = 17, @"18" = 18, @"19" = 19, @"20" = 20, @"21" = 21, @"22" = 22, @"23" = 23, @"24" = 24 } = @fromBackingInt(d.renderer.oit_horizontal_slices);
         if (zgui.comboFromEnum("OIT Slices", &oit_horizontal_slices)) {
-            d.renderer.oit_horizontal_slices = @intFromEnum(oit_horizontal_slices);
+            d.renderer.oit_horizontal_slices = @backingInt(oit_horizontal_slices);
             // Makes sure oit_horizontal_slices is a divisor of the vertical resolution
             while (d.renderer.oit_horizontal_slices > 1 and d.renderer.resolution.height % (8 * d.renderer.oit_horizontal_slices) != 0) {
                 d.renderer.oit_horizontal_slices -= 1;
@@ -1561,9 +1560,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 }
             }
 
-            var size: enum(i32) { @"8x8" = 0, @"16x16" = 1, @"32x32" = 2, @"64x64" = 3, @"128x128" = 4, @"256x256" = 5, @"512x512" = 6, @"1024x1024" = 7 } = @enumFromInt(self.selected_texture.size);
+            var size: enum(i32) { @"8x8" = 0, @"16x16" = 1, @"32x32" = 2, @"64x64" = 3, @"128x128" = 4, @"256x256" = 5, @"512x512" = 6, @"1024x1024" = 7 } = @fromBackingInt(self.selected_texture.size);
             if (zgui.comboFromEnum("Size", &size)) {
-                self.selected_texture.size = std.math.clamp(@intFromEnum(size), 0, @as(i32, @intCast(self.renderer_texture_views.len - 1)));
+                self.selected_texture.size = std.math.clamp(@backingInt(size), 0, @as(i32, @intCast(self.renderer_texture_views.len - 1)));
                 self.selected_texture.scale = @as(f32, 512) / @as(f32, @floatFromInt((@as(u32, 8) << @intCast(self.selected_texture.size))));
                 self.selected_texture.index = std.math.clamp(self.selected_texture.index, 0, @as(i32, @intCast(d.renderer.texture_metadata[@intCast(self.selected_texture.size)].len - 1)));
             }
@@ -1575,7 +1574,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             }
             const tex_id = d.gctx.lookupResource(self.renderer_texture_views[@intCast(self.selected_texture.size)][@intCast(self.selected_texture.index)]).?;
             const tex_size = self.selected_texture.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(self.selected_texture.size)));
-            zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(tex_id)) }, .{ .w = tex_size, .h = tex_size });
+            zgui.image(.{ .tex_data = null, .tex_id = @fromBackingInt(@intFromPtr(tex_id)) }, .{ .w = tex_size, .h = tex_size });
 
             const metadata = d.renderer.texture_metadata[@intCast(self.selected_texture.size)][@intCast(self.selected_texture.index)];
             zgui.text("Status: {t: <8}  Age: {d: >3}  Hash: {X:0>16}", .{ metadata.status, metadata.age, metadata.hash });
@@ -1593,19 +1592,19 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         }
         if (zgui.collapsingHeader("Framebuffer Texture", .{})) {
             const fb_tex_id = d.gctx.lookupResource(d.renderer.framebuffer.view).?;
-            zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(fb_tex_id)) }, .{ .w = 640, .h = 480 });
+            zgui.image(.{ .tex_data = null, .tex_id = @fromBackingInt(@intFromPtr(fb_tex_id)) }, .{ .w = 640, .h = 480 });
         }
         if (zgui.collapsingHeader("Resized Framebuffer Texture", .{})) {
             const fb_tex_id = d.gctx.lookupResource(d.renderer.resized_framebuffer.view).?;
-            zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(fb_tex_id)) }, .{ .w = @floatFromInt(d.renderer.resolution.width), .h = @floatFromInt(d.renderer.resolution.height) });
+            zgui.image(.{ .tex_data = null, .tex_id = @fromBackingInt(@intFromPtr(fb_tex_id)) }, .{ .w = @floatFromInt(d.renderer.resolution.width), .h = @floatFromInt(d.renderer.resolution.height) });
         }
         if (zgui.collapsingHeader("Render to Texture Target", .{})) {
             const fb_tex_id = d.gctx.lookupResource(d.renderer.render_to_texture_target.view).?;
-            zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(fb_tex_id)) }, .{ .w = 640, .h = 480 });
+            zgui.image(.{ .tex_data = null, .tex_id = @fromBackingInt(@intFromPtr(fb_tex_id)) }, .{ .w = 640, .h = 480 });
         }
         if (zgui.collapsingHeader("Resized Render to Texture Target", .{})) {
             const fb_tex_id = d.gctx.lookupResource(d.renderer.resized_render_to_texture_target.view).?;
-            zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(fb_tex_id)) }, .{ .w = @floatFromInt(d.renderer.resolution.width), .h = @floatFromInt(d.renderer.resolution.height) });
+            zgui.image(.{ .tex_data = null, .tex_id = @fromBackingInt(@intFromPtr(fb_tex_id)) }, .{ .w = @floatFromInt(d.renderer.resolution.width), .h = @floatFromInt(d.renderer.resolution.height) });
         }
     }
     zgui.end();
@@ -1793,15 +1792,15 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
     const tsp = strip.global_parameters.polygon.tsp_instruction();
     // TODO: Display some actually useful information :)
     {
-        const header = std.fmt.bufPrintZ(&buffer, "Control Word:    {X:0>8}##ControlWord", .{@as(u32, @bitCast(control_word))}) catch unreachable;
+        const header = std.fmt.bufPrintSentinel(&buffer, "Control Word:    {X:0>8}##ControlWord", .{@as(u32, @bitCast(control_word))}, 0) catch unreachable;
         if (zgui.collapsingHeader(header, .{})) display(control_word);
     }
     {
-        const header = std.fmt.bufPrintZ(&buffer, "ISP TSP:         {X:0>8}##ISPTSP", .{@as(u32, @bitCast(isp_tsp))}) catch unreachable;
+        const header = std.fmt.bufPrintSentinel(&buffer, "ISP TSP:         {X:0>8}##ISPTSP", .{@as(u32, @bitCast(isp_tsp))}, 0) catch unreachable;
         if (zgui.collapsingHeader(header, .{})) display(isp_tsp);
     }
     {
-        const header = std.fmt.bufPrintZ(&buffer, "TSP:             {X:0>8}##TSP", .{@as(u32, @bitCast(tsp))}) catch unreachable;
+        const header = std.fmt.bufPrintSentinel(&buffer, "TSP:             {X:0>8}##TSP", .{@as(u32, @bitCast(tsp))}, 0) catch unreachable;
         if (zgui.collapsingHeader(header, .{})) {
             zgui.indent(.{});
             defer zgui.unindent(.{});
@@ -1820,7 +1819,7 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
                 const size = [2]f32{ @floatFromInt(tsp.get_u_size()), @floatFromInt(tsp.get_v_size()) };
                 // Adjust UVs from the internal square texture.
                 const uv_scale = [2]f32{ if (size[0] >= size[1]) 1.0 else size[0] / size[1], if (size[1] >= size[0]) 1.0 else size[1] / size[0] };
-                zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(view)) }, .{
+                zgui.image(.{ .tex_data = null, .tex_id = @fromBackingInt(@intFromPtr(view)) }, .{
                     .w = size[0],
                     .h = size[1],
                     .uv0 = .{ 0.0, 0.0 },
@@ -1871,7 +1870,7 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
             display_texture_control_word(area1_texture_control);
             if (renderer.get_texture_view(area1_texture_control, tsp)) |texture| {
                 const view = renderer._gctx.lookupResource(self.renderer_texture_views[texture.size_index][texture.index]).?;
-                zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(view)) }, .{
+                zgui.image(.{ .tex_data = null, .tex_id = @fromBackingInt(@intFromPtr(view)) }, .{
                     .w = @floatFromInt(tsp.get_u_size()),
                     .h = @floatFromInt(tsp.get_v_size()),
                 });
@@ -1883,7 +1882,7 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
         }
     }
     if (strip.global_parameters.polygon.area1_tsp_instruction()) |area1_tsp| {
-        const header = std.fmt.bufPrintZ(&buffer, "Area1 TSP:       {X:0>8}##TSP1", .{@as(u32, @bitCast(tsp))}) catch unreachable;
+        const header = std.fmt.bufPrintSentinel(&buffer, "Area1 TSP:       {X:0>8}##TSP1", .{@as(u32, @bitCast(tsp))}, 0) catch unreachable;
         if (zgui.collapsingHeader(header, .{})) {
             zgui.indent(.{});
             defer zgui.unindent(.{});

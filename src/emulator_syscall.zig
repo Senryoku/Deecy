@@ -19,7 +19,7 @@ const Command = enum(u32) {
 
 fn deecy_syscall(d: *Deecy, cpu: *Dreamcast.SH4, instr: Dreamcast.SH4Module.Instr) void {
     _ = instr;
-    const command: Command = @enumFromInt(cpu.R(4).*);
+    const command: Command = @fromBackingInt(cpu.R(4).*);
     handle_syscall(d, cpu, command) catch |err| {
         log.err("Error handling syscall '{t}': {t}", .{ command, err });
         cpu.R(0).* = 0xFFFFFFFF;

@@ -1258,8 +1258,8 @@ pub const SH4JIT = struct {
 
         sh4_jit_log.debug("Compiled: {X}", .{self.block_cache.buffer[block.offset..][0..block_size]});
 
-        self.block_cache.put(start_ctx.entry_point_physical_address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)), block);
-        return self.block_cache.get(start_ctx.entry_point_physical_address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)));
+        self.block_cache.put(start_ctx.entry_point_physical_address, @truncate(@backingInt(start_ctx.fpscr_sz)), @truncate(@backingInt(start_ctx.fpscr_pr)), block);
+        return self.block_cache.get(start_ctx.entry_point_physical_address, @truncate(@backingInt(start_ctx.fpscr_sz)), @truncate(@backingInt(start_ctx.fpscr_pr)));
     }
 
     // Try to match some common division patterns and replace them with a "single" instruction.
@@ -1666,31 +1666,32 @@ fn set_t(block: *IRBlock, _: *JITContext, condition: JIT.Condition) !void {
 // floating point saved registers, we need to save/restore all of them unconditionally here to be safe :(
 inline fn fast_call_prologue() void {
     if (FastMem and Architecture.CallingConvention == .x86_64_sysv) {
+        // FIXME: Doesn't compile with the x86 zig selfhosted backend as of 0.17.0 (but there are other issues preventing it use for now anyway).
         asm volatile (
-            \\ subq    $128, %rsp
-            \\ movaps  %xmm6, 0(%rsp)
-            \\ movaps  %xmm7, 16(%rsp)
-            \\ movaps  %xmm8, 32(%rsp)
-            \\ movaps  %xmm9, 48(%rsp)
-            \\ movaps  %xmm10, 64(%rsp)
-            \\ movaps  %xmm11, 80(%rsp)
-            \\ movaps  %xmm12, 96(%rsp)
-            \\ movaps  %xmm13, 112(%rsp)
+            \\ subq    $128, %%rsp
+            \\ movaps  %%xmm6, 0(%%rsp)
+            \\ movaps  %%xmm7, 16(%rsp)
+            \\ movaps  %%xmm8, 32(%rsp)
+            \\ movaps  %%xmm9, 48(%rsp)
+            \\ movaps  %%xmm10, 64(%rsp)
+            \\ movaps  %%xmm11, 80(%rsp)
+            \\ movaps  %%xmm12, 96(%rsp)
+            \\ movaps  %%xmm13, 112(%rsp)
             ::: .{ .rsp = true, .memory = true });
     }
 }
 inline fn fast_call_epilogue() void {
     if (FastMem and Architecture.CallingConvention == .x86_64_sysv) {
         asm volatile (
-            \\ movaps  0(%rsp), %xmm6
-            \\ movaps  16(%rsp), %xmm7
-            \\ movaps  32(%rsp), %xmm8
-            \\ movaps  48(%rsp), %xmm9
-            \\ movaps  64(%rsp), %xmm10
-            \\ movaps  80(%rsp), %xmm11
-            \\ movaps  96(%rsp), %xmm12
-            \\ movaps  112(%rsp), %xmm13
-            \\ addq    $128, %rsp
+            \\ movaps  0(%rsp), %%xmm6
+            \\ movaps  16(%rsp), %%xmm7
+            \\ movaps  32(%rsp), %%xmm8
+            \\ movaps  48(%rsp), %%xmm9
+            \\ movaps  64(%rsp), %%xmm10
+            \\ movaps  80(%rsp), %%xmm11
+            \\ movaps  96(%rsp), %%xmm12
+            \\ movaps  112(%rsp), %%xmm13
+            \\ addq    $128, %%rsp
             ::: .{ .rsp = true, .xmm6 = true, .xmm7 = true, .xmm8 = true, .xmm9 = true, .xmm10 = true, .xmm11 = true, .xmm12 = true, .xmm13 = true });
     }
 }

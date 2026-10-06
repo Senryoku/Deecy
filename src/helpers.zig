@@ -107,3 +107,69 @@ pub fn title_case_enum(enum_value: anytype) []const u8 {
         inline else => |value| return title_case(@tagName(value)),
     }
 }
+
+/// Walks through the provided value type and frees all pointers and slices recursively, using the provided allocator.
+pub fn free(gpa: std.mem.Allocator, value: anytype) void {
+    const Value = @TypeOf(value);
+
+    switch (@typeInfo(Value)) {
+        .bool, .int, .float, .@"enum" => {},
+        .pointer => |pointer| {
+            switch (pointer.size) {
+                .one => {
+                    free(gpa, value.*);
+                    gpa.destroy(value);
+                },
+                .slice => {
+                    for (value) |item| {
+                        free(gpa, item);
+                    }
+                    gpa.free(value);
+                },
+                .many, .c => comptime unreachable,
+            }
+        },
+        .array => {
+            for (value) |elem| free(gpa, elem);
+        },
+        .vector => |vector| {
+            const array: [vector.len]vector.child = value;
+            for (array) |elem| free(gpa, elem);
+        },
+        .@"struct" => |@"struct"| inline for (@"struct".field_names) |field_name| {
+            free(gpa, @field(value, field_name));
+        },
+        .@"union" => |@"union"| if (@"union".tag_type == null) {
+            if (comptime requiresAllocator(Value)) unreachable;
+        } else switch (value) {
+            inline else => |_, tag| {
+                free(gpa, @field(value, @tagName(tag)));
+            },
+        },
+        .optional => if (value) |some| {
+            free(gpa, some);
+        },
+        .void => {},
+        else => comptime unreachable,
+    }
+}
+
+fn requiresAllocator(T: type) bool {
+    return switch (@typeInfo(T)) {
+        .pointer => true,
+        .array => |array| return array.len > 0 and requiresAllocator(array.child),
+        .@"struct" => |@"struct"| inline for (@"struct".field_types) |field_type| {
+            if (requiresAllocator(field_type)) {
+                break true;
+            }
+        } else false,
+        .@"union" => |@"union"| inline for (@"union".field_types) |field_type| {
+            if (requiresAllocator(field_type)) {
+                break true;
+            }
+        } else false,
+        .optional => |optional| requiresAllocator(optional.child),
+        .vector => |vector| return vector.len > 0 and requiresAllocator(vector.child),
+        else => false,
+    };
+}

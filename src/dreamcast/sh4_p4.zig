@@ -170,7 +170,7 @@ pub const P4Register = enum(u32) {
 };
 
 pub fn getP4RegisterName(addr: u32) []const u8 {
-    return std.enums.tagName(P4Register, @as(P4Register, @enumFromInt(addr))) orelse "Unknown";
+    return std.enums.tagName(P4Register, @as(P4Register, @fromBackingInt(addr))) orelse "Unknown";
 }
 
 pub const CCR = packed struct(u32) {

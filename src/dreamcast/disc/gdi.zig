@@ -57,7 +57,7 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
             .num = num,
             .fad = offset,
             .end_fad = @intCast(offset + self._files.items[self._files.items.len - 1].size / format),
-            .track_type = @enumFromInt(track_type_int),
+            .track_type = @fromBackingInt(track_type_int),
             .format = format,
             .pregap = pregap,
             .data = self._files.items[self._files.items.len - 1].view(),

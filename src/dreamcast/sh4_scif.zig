@@ -72,7 +72,7 @@ pub fn deinit(io: std.Io) void {
 }
 
 pub fn read(self: *const SH4, comptime T: type, virtual_addr: u32) T {
-    const p4_reg: SH4Module.P4Register = @enumFromInt(virtual_addr);
+    const p4_reg: SH4Module.P4Register = @fromBackingInt(virtual_addr);
     switch (p4_reg) {
         .SCFSR2 => {
             SH4Module.check_type(&[_]type{u16}, T, "Invalid P4 Write({}) to SCFSR2\n", .{T});
@@ -99,7 +99,7 @@ pub fn read(self: *const SH4, comptime T: type, virtual_addr: u32) T {
 }
 
 pub fn write(self: *SH4, comptime T: type, virtual_addr: u32, value: T) void {
-    const p4_reg: SH4Module.P4Register = @enumFromInt(virtual_addr);
+    const p4_reg: SH4Module.P4Register = @fromBackingInt(virtual_addr);
     log.debug("Write to {t}: {any}", .{ p4_reg, value });
     switch (p4_reg) {
         .SCFTDR2 => {

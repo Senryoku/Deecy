@@ -61,7 +61,7 @@ fn toss_whitespace(reader: *std.Io.Reader) !void {
     while (std.ascii.isWhitespace((try reader.peek(1))[0])) reader.toss(1);
 }
 
-// Caller owns returned slice
+/// Caller owns returned slice
 pub fn parse(allocator: std.mem.Allocator, reader: *std.Io.Reader) ![]Code {
     var codes: std.ArrayList(Code) = .empty;
     defer codes.deinit(allocator);
@@ -69,11 +69,10 @@ pub fn parse(allocator: std.mem.Allocator, reader: *std.Io.Reader) ![]Code {
         toss_whitespace(reader) catch break;
         const c_str = reader.take(8) catch break;
         if (c_str.len < 8) break;
-        const control = try std.fmt.parseUnsigned(u32, c_str, 16);
-        const t: Type = @enumFromInt(control >> 24);
-        switch (t) {
+        const control: packed struct(u32) { address: u24, type: Type } = @bitCast(try std.fmt.parseUnsigned(u32, c_str, 16));
+        const address = 0x0C000000 | @as(u32, control.address);
+        switch (control.type) {
             inline .u8, .u16, .u32 => |u| {
-                const address = 0x0C000000 | control & 0x00FFFFFF;
                 try toss_whitespace(reader);
                 const value = try std.fmt.parseUnsigned(switch (u) {
                     .u8 => u8,
@@ -84,13 +83,12 @@ pub fn parse(allocator: std.mem.Allocator, reader: *std.Io.Reader) ![]Code {
                 try codes.append(allocator, @unionInit(Code, @tagName(u), .{ .address = address, .value = value }));
             },
             .Condition => {
-                const address = 0x0C000000 | control & 0x00FFFFFF;
                 try toss_whitespace(reader);
-                const data = try std.fmt.parseUnsigned(u32, try reader.take(8), 16);
+                const data: packed struct(u32) { value: u16, condition: Condition, _: u12 } = @bitCast(try std.fmt.parseUnsigned(u32, try reader.take(8), 16));
                 try codes.append(allocator, .{ .Condition = .{
-                    .condition = @enumFromInt((control >> 16) & 0x0F),
+                    .condition = data.condition,
                     .address = address,
-                    .value = @truncate(data),
+                    .value = data.value,
                 } });
             },
             else => return error.UnsupportedType,

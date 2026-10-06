@@ -35,13 +35,13 @@ fn sector_addresses(addr: u32) !struct { start: u32, end: u32 } {
 
 mode: enum { Normal, Program, Fast, FastProgram, FastReset } = .Normal,
 write_cycle: u8 = 0,
-data: []u8 align(4),
+data: []align(4) u8,
 
 _allocator: std.mem.Allocator,
 
 pub fn init(allocator: std.mem.Allocator) !@This() {
     return @This(){
-        .data = try allocator.alloc(u8, 0x20000),
+        .data = try allocator.allocWithOptions(u8, 0x20000, .@"4", null),
         ._allocator = allocator,
     };
 }

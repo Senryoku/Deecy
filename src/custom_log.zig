@@ -50,8 +50,7 @@ pub fn log(
     defer file.unlock();
 
     const output_to_console = output == .Console or output == .Both;
-    const output_to_file = output == .File or output == .Both;
-    if (output_to_file) std.debug.assert(file.opened());
+    const output_to_file = (output == .File or output == .Both) and file.opened();
 
     const args_hash = std.hash.CityHash64.hash(std.mem.asBytes(&args));
 

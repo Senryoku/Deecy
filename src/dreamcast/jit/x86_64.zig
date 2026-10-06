@@ -263,7 +263,7 @@ pub const OperandSize = enum(u8) {
     _64 = 64,
 
     pub fn fromInt(size: u8) OperandSize {
-        return @enumFromInt(size);
+        return @fromBackingInt(size);
     }
 };
 
@@ -853,7 +853,7 @@ pub const Emitter = struct {
 
         if (@sizeOf(T) == 1) {
             if (@typeInfo(T) == .@"enum") {
-                try self.emit_byte(@intFromEnum(value));
+                try self.emit_byte(@backingInt(value));
             } else {
                 try self.emit_byte(@bitCast(value));
             }
@@ -883,8 +883,8 @@ pub const Emitter = struct {
 
     fn encode(reg: anytype) u3 {
         return switch (@TypeOf(reg)) {
-            Register => @truncate(@intFromEnum(reg)),
-            FPRegister => @truncate(@intFromEnum(reg)),
+            Register => @truncate(@backingInt(reg)),
+            FPRegister => @truncate(@backingInt(reg)),
             Operand => switch (reg) {
                 .reg8, .reg16, .reg, .reg64 => |r| encode(r),
                 .freg32, .freg64 => |r| encode(r),
@@ -896,8 +896,8 @@ pub const Emitter = struct {
 
     fn need_rex(reg: anytype) bool {
         return switch (comptime @TypeOf(reg)) {
-            Register => @intFromEnum(reg) >= 8,
-            FPRegister => @intFromEnum(reg) >= 8,
+            Register => @backingInt(reg) >= 8,
+            FPRegister => @backingInt(reg) >= 8,
             Operand => switch (reg) {
                 .reg8, .reg16, .reg, .reg64 => |r| need_rex(r),
                 .freg32, .freg64 => |r| need_rex(r),
@@ -990,7 +990,7 @@ pub const Emitter = struct {
             else => @compileError("Unsupported operand size"),
         });
         switch (src) {
-            .freg32, .freg64 => |src_reg| try self.binary_freg_freg(size, &[_]u8{ 0x0F, @intFromEnum(opcode) }, dst_reg, src_reg),
+            .freg32, .freg64 => |src_reg| try self.binary_freg_freg(size, &[_]u8{ 0x0F, @backingInt(opcode) }, dst_reg, src_reg),
             .mem => |src_mem| {
                 log.warn(termcolor.yellow("Untested <{t}>ss xmm1, xmm2/m32 with a memory operand. Be careful :)"), .{opcode});
 
@@ -1275,7 +1275,7 @@ pub const Emitter = struct {
         // 0x83: OP r/m32, imm8 - Sign-extended imm8 - Shorter encoding
         try self.emit(u8, if (use_imm8) 0x83 else 0x81);
 
-        try self.emit_mem_addressing(@intFromEnum(reg_opcode), dst_m);
+        try self.emit_mem_addressing(@backingInt(reg_opcode), dst_m);
 
         if (use_imm8) {
             try self.emit(u8, @intCast(imm));
@@ -1340,11 +1340,11 @@ pub const Emitter = struct {
                             try self.emit_rex_if_needed(.{ .w = b64, .b = need_rex(dst_reg) });
                             if (imm < 0x80) { // We can use the imm8 sign extended version for a shorter encoding.
                                 try self.emit(u8, 0x83); // OP r/m32, imm8
-                                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(rm_imm_opcode), .r_m = encode(dst_reg) });
+                                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @backingInt(rm_imm_opcode), .r_m = encode(dst_reg) });
                                 try self.emit(u8, @truncate(imm));
                             } else {
                                 try self.emit(u8, 0x81); // OP r/m32, imm32
-                                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(rm_imm_opcode), .r_m = encode(dst_reg) });
+                                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @backingInt(rm_imm_opcode), .r_m = encode(dst_reg) });
                                 try self.emit(u32, imm);
                             }
                         }
@@ -1365,7 +1365,7 @@ pub const Emitter = struct {
                                     .b = need_rex(dst_m.base),
                                 });
                                 try self.emit(u8, 0x80);
-                                try self.emit_mem_addressing(@intFromEnum(rm_imm_opcode), dst_m);
+                                try self.emit_mem_addressing(@backingInt(rm_imm_opcode), dst_m);
                                 try self.emit(u8, imm);
                             },
                             else => {
@@ -1381,7 +1381,7 @@ pub const Emitter = struct {
                                     .b = need_rex(dst_m.base),
                                 });
                                 try self.emit(u8, 0x83);
-                                try self.emit_mem_addressing(@intFromEnum(rm_imm_opcode), dst_m);
+                                try self.emit_mem_addressing(@backingInt(rm_imm_opcode), dst_m);
                                 try self.emit(u8, imm);
                             },
                         }
@@ -1530,7 +1530,7 @@ pub const Emitter = struct {
                         .not_b = !need_rex(src2_reg),
                         .m = .x0F38,
                         .w = false,
-                        .not_v = ~@intFromEnum(src1),
+                        .not_v = ~@backingInt(src1),
                         .l = 0,
                         .p = .x66,
                     });
@@ -1590,10 +1590,10 @@ pub const Emitter = struct {
                     .imm8 => |imm8| {
                         if (imm8 == 1) {
                             try self.emit(u8, 0xD0 + opcode_offset);
-                            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
+                            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @backingInt(reg_opcode), .r_m = encode(dst_reg) });
                         } else {
                             try self.emit(u8, 0xC0 + opcode_offset);
-                            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
+                            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @backingInt(reg_opcode), .r_m = encode(dst_reg) });
                             try self.emit(u8, imm8);
                         }
                     },
@@ -1601,7 +1601,7 @@ pub const Emitter = struct {
                         if (src_reg != .rcx)
                             return error.InvalidShiftRegister; // Only rcx is supported as a source for the shift amount in x86!
                         try self.emit(u8, 0xD2 + opcode_offset);
-                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @backingInt(reg_opcode), .r_m = encode(dst_reg) });
                     },
                     else => return error.InvalidShiftAmount,
                 }
@@ -1621,7 +1621,7 @@ pub const Emitter = struct {
                         .not_b = !need_rex(src_reg),
                         .m = .x0F38,
                         .w = false,
-                        .not_v = ~@intFromEnum(amount),
+                        .not_v = ~@backingInt(amount),
                         .l = 0,
                         .p = switch (reg_opcode) {
                             .Sar => .xF3,
@@ -1655,12 +1655,12 @@ pub const Emitter = struct {
                     .{ .w = false, .b = need_rex(reg) },
                 );
                 try self.emit(u8, 0xF6);
-                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(opcode), .r_m = encode(operand) });
+                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @backingInt(opcode), .r_m = encode(operand) });
             },
             .reg, .reg64 => |reg| {
                 try self.emit_rex_if_needed(.{ .w = operand == .reg64, .b = need_rex(reg) });
                 try self.emit(u8, 0xF7);
-                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(opcode), .r_m = encode(operand) });
+                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @backingInt(opcode), .r_m = encode(operand) });
             },
             .mem => |mem| {
                 try self.emit_rex_if_needed(.{
@@ -1669,7 +1669,7 @@ pub const Emitter = struct {
                     .b = need_rex(mem.base),
                 });
                 try self.emit(u8, if (mem.size == 8) 0xF6 else 0xF7);
-                try self.emit_mem_addressing(@intFromEnum(opcode), mem);
+                try self.emit_mem_addressing(@backingInt(opcode), mem);
             },
             else => return error.InvalidUG3Destination,
         }
@@ -1763,12 +1763,12 @@ pub const Emitter = struct {
                     .reg => |reg| {
                         try self.emit(MODRM, .{
                             .mod = .reg,
-                            .reg_opcode = @intFromEnum(Group8RegOpcode.BT),
+                            .reg_opcode = @backingInt(Group8RegOpcode.BT),
                             .r_m = encode(reg),
                         });
                     },
                     .mem => |mem| {
-                        try self.emit_mem_addressing(@intFromEnum(Group8RegOpcode.BT), mem);
+                        try self.emit_mem_addressing(@backingInt(Group8RegOpcode.BT), mem);
                     },
                     else => return error.UnsupportedBitTestSource,
                 }
@@ -1931,7 +1931,7 @@ pub const Emitter = struct {
             .not_r = !need_rex(op1.reg),
             .not_x = true,
             .not_b = !need_rex(op3.reg),
-            .not_v = ~@intFromEnum(op2.reg),
+            .not_v = ~@backingInt(op2.reg),
             .l = 0,
             .p = prefix,
             .m = opcode_map,

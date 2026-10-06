@@ -185,7 +185,7 @@ pub fn draw_controller_settings(d: *Deecy, comptime port: u8) !void {
             gamepad_id = j.id.asGamepad();
     }
 
-    const bg_color = zgui.colorConvertFloat4ToU32(zgui.getStyle().colors[@intFromEnum(zgui.StyleCol.window_bg)]);
+    const bg_color = zgui.colorConvertFloat4ToU32(zgui.getStyle().colors[@backingInt(zgui.StyleCol.window_bg)]);
     const draw_list = zgui.getWindowDrawList();
     const s: f32 = 1.58; // Scaling factor
     const x = zgui.getCursorScreenPos()[0];
@@ -345,24 +345,24 @@ pub fn draw_controller_settings(d: *Deecy, comptime port: u8) !void {
                 zgui.tableSetupColumn("Guest", .{});
                 zgui.tableSetupColumn("Host", .{});
                 zgui.tableHeadersRow();
-                inline for (std.meta.fields(Deecy.ControllerBindings)) |field| {
+                inline for (@typeInfo(Deecy.ControllerBindings).@"struct".field_names, @typeInfo(Deecy.ControllerBindings).@"struct".field_types) |field_name, field_type| {
                     zgui.tableNextRow(.{});
                     _ = zgui.tableNextColumn();
-                    zgui.text(helpers.title_case(field.name), .{});
+                    zgui.text(helpers.title_case(field_name), .{});
                     _ = zgui.tableNextColumn();
-                    if (zgui.button(Icons.Pen ++ "##" ++ field.name, .{})) {
-                        const maybe_button = switch (field.type) {
+                    if (zgui.button(Icons.Pen ++ "##" ++ field_name, .{})) {
+                        const maybe_button = switch (field_type) {
                             ?zglfw.Gamepad.Button => wait_for.controller_button(d, gamepad),
                             ?zglfw.Gamepad.Axis => wait_for.controller_axis(d, gamepad),
                             else => @compileError("Unexpected field type"),
                         };
                         if (maybe_button) |button|
-                            @field(d.config.controllers_bindings[port], field.name) = button;
+                            @field(d.config.controllers_bindings[port], field_name) = button;
                     }
                     zgui.sameLine(.{});
-                    if (@field(d.config.controllers_bindings[port], field.name)) |key| {
-                        if (common.red_button(Icons.Trash ++ "##" ++ field.name, .{}))
-                            @field(d.config.controllers_bindings[port], field.name) = null;
+                    if (@field(d.config.controllers_bindings[port], field_name)) |key| {
+                        if (common.red_button(Icons.Trash ++ "##" ++ field_name, .{}))
+                            @field(d.config.controllers_bindings[port], field_name) = null;
                         zgui.sameLine(.{});
                         zgui.text("{s}", .{helpers.title_case_enum(key)});
                     } else {
@@ -382,17 +382,17 @@ pub fn draw_controller_settings(d: *Deecy, comptime port: u8) !void {
             zgui.tableSetupColumn("Guest", .{});
             zgui.tableSetupColumn("Host", .{});
             zgui.tableHeadersRow();
-            inline for (std.meta.fields(Deecy.KeyboardBindings)) |field| {
+            inline for (@typeInfo(Deecy.KeyboardBindings).@"struct".field_names) |field_name| {
                 zgui.tableNextRow(.{});
                 _ = zgui.tableNextColumn();
-                zgui.text(helpers.title_case(field.name), .{});
+                zgui.text(helpers.title_case(field_name), .{});
                 _ = zgui.tableNextColumn();
-                if (zgui.button(Icons.Pen ++ "##" ++ field.name, .{}))
-                    @field(d.config.keyboard_bindings[port], field.name) = wait_for.keyboard(d);
+                if (zgui.button(Icons.Pen ++ "##" ++ field_name, .{}))
+                    @field(d.config.keyboard_bindings[port], field_name) = wait_for.keyboard(d);
                 zgui.sameLine(.{});
-                if (@field(d.config.keyboard_bindings[port], field.name)) |key| {
-                    if (common.red_button(Icons.Trash ++ "##" ++ field.name, .{}))
-                        @field(d.config.keyboard_bindings[port], field.name) = null;
+                if (@field(d.config.keyboard_bindings[port], field_name)) |key| {
+                    if (common.red_button(Icons.Trash ++ "##" ++ field_name, .{}))
+                        @field(d.config.keyboard_bindings[port], field_name) = null;
                     zgui.sameLine(.{});
                     zgui.text("{s}", .{helpers.title_case_enum(key)});
                 } else {
