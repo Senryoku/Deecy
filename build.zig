@@ -100,17 +100,6 @@ pub fn build(b: *std.Build) !void {
     deecy_module.addOptions("config", deecy_options);
     deecy_module.addOptions("path_config", path_options);
 
-    if (target.result.os.tag == .windows) {
-        const c_dwmapi: Translator = .init(translate_c, .{
-            .c_source_file = b.addWriteFiles().add("c_dwmapi.h",
-                \\#include <dwmapi.h>
-            ),
-            .target = target,
-            .optimize = optimize,
-        });
-        deecy_module.addImport("c_dwmapi", c_dwmapi.mod);
-    }
-
     if (use_appdata_dir) {
         if (b.lazyDependency("known_folders", .{
             .target = target,
@@ -150,6 +139,14 @@ pub fn build(b: *std.Build) !void {
     switch (target.result.os.tag) {
         .windows => {
             // DwmSetWindowAttribute
+            const c_dwmapi: Translator = .init(translate_c, .{
+                .c_source_file = b.addWriteFiles().add("c_dwmapi.h",
+                    \\#include <dwmapi.h>
+                ),
+                .target = target,
+                .optimize = optimize,
+            });
+            deecy_module.addImport("c_dwmapi", c_dwmapi.mod);
             deecy_module.linkSystemLibrary("dwmapi", .{});
             // Windows Multimedia API for timeBeginPeriod
             deecy_module.linkSystemLibrary("winmm", .{});
