@@ -101,12 +101,14 @@ pub fn build(b: *std.Build) !void {
     deecy_module.addOptions("path_config", path_options);
 
     if (target.result.os.tag == .windows) {
-        const c_dmwapi: Translator = .init(translate_c, .{
-            .c_source_file = b.path("c_dmwapi.h"),
+        const c_dwmapi: Translator = .init(translate_c, .{
+            .c_source_file = b.addWriteFiles().add("c_dwmapi.h",
+                \\#include <dwmapi.h>
+            ),
             .target = target,
             .optimize = optimize,
         });
-        deecy_module.addImport("c_dmwapi", c_dmwapi.mod);
+        deecy_module.addImport("c_dwmapi", c_dwmapi.mod);
     }
 
     if (use_appdata_dir) {

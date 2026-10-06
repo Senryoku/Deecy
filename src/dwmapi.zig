@@ -5,7 +5,7 @@ const dwmapi_log = std.log.scoped(.deecy);
 const zglfw = @import("zglfw");
 extern fn glfwGetWin32Window(window: *zglfw.Window) u32;
 
-const dwmapi = @import("c_dmwapi");
+const dwmapi = @import("c_dwmapi");
 
 const HResult = packed struct(u32) {
     code: u16,
