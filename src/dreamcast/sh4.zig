@@ -232,7 +232,7 @@ pub const SH4 = struct {
     } = undefined,
 
     store_queues: [2][8]u32 align(32) = undefined,
-    _operand_cache: []u8 align(4),
+    _operand_cache: []align(4) u8,
     // P4 registers are remapped on this smaller range. See p4_register_addr.
     //   Addresses starts with FF/1F, this can be ignored.
     //   Then, there are 5 bits that separate registers into different functions.
@@ -244,7 +244,7 @@ pub const SH4 = struct {
     // + Operand cache RAM mode also clashes with this, it's also dealt with in read/write functions.
     // + Two performance registers (PMCR1/2, exclusive to SH7091 afaik) also screw this pattern,
     //   I ignore them in read16/write16.
-    p4_registers: []u8 align(4),
+    p4_registers: []align(4) u8,
     itlb: []mmu.TLBEntry,
     utlb: []mmu.TLBEntry,
 
@@ -281,8 +281,8 @@ pub const SH4 = struct {
         instructions.init_table();
 
         var sh4: SH4 = .{
-            ._operand_cache = if (dc) |d| d.ocram else try allocator.alloc(u8, OCRAMSize), // NOTE: Actual Operand cache is 16k, but we're only emulating the RAM accessible part, which is 8k.
-            .p4_registers = try allocator.alloc(u8, 0x1000),
+            ._operand_cache = if (dc) |d| d.ocram else try allocator.allocWithOptions(u8, OCRAMSize, .@"4", null), // NOTE: Actual Operand cache is 16k, but we're only emulating the RAM accessible part, which is 8k.
+            .p4_registers = try allocator.allocWithOptions(u8, 0x1000, .@"4", null),
             .itlb = try allocator.alloc(mmu.TLBEntry, 4),
             .utlb = try allocator.alloc(mmu.TLBEntry, 64),
             ._allocator = allocator,
@@ -338,7 +338,7 @@ pub const SH4 = struct {
         self.p4_register(u32, .TEA).* = 0;
         self.p4_register(u32, .MMUCR).* = 0;
 
-        self.p4_register(u32, @enumFromInt(0xFF000030)).* = 0x040205C1;
+        self.p4_register(u32, @fromBackingInt(0xFF000030)).* = 0x040205C1;
 
         self.p4_register(u8, .BASRA).* = undefined;
         self.p4_register(u8, .BASRB).* = undefined;
@@ -560,7 +560,7 @@ pub const SH4 = struct {
     }
 
     inline fn operand_cache(self: *@This(), comptime T: type, virtual_addr: u32) *T {
-        if ((comptime builtin.mode == .Debug) and self.read_p4_register(P4.CCR, .CCR).ora == 0)
+        if ((comptime builtin.mode == .debug) and self.read_p4_register(P4.CCR, .CCR).ora == 0)
             sh4_log.err(termcolor.red("Read to operand cache with RAM mode disabled: @{X:0>8}"), .{virtual_addr});
 
         // Half of the operand cache can be used as RAM when CCR.ORA == 1, and some games do.
@@ -573,7 +573,7 @@ pub const SH4 = struct {
         //       Assuming this gives us a really nice performance boost for games that use the operand cache in this way.
         if (comptime true) {
             // These are seemingly not automatically optimized away, not sure why.
-            if (comptime builtin.mode == .Debug) {
+            if (comptime builtin.mode == .debug) {
                 // We can't easily assert for the CCR.OIX == 0 case since there are many contiguous ranges, and in practice most adresses can be
                 // used in a contiguous manner. Only the first and last 4K area cannot.
                 // Ranges like 0x7C003000-0x7C004FFF (Area 2 then Area 1) are not contiguous, but won't repeat, so they **might** be fine?...
@@ -605,11 +605,11 @@ pub const SH4 = struct {
     }
 
     pub inline fn read_p4_register(self: *const @This(), comptime T: type, r: P4Register) T {
-        return @constCast(self).p4_register_addr(T, @intFromEnum(r)).*;
+        return @constCast(self).p4_register_addr(T, @backingInt(r)).*;
     }
 
     pub inline fn p4_register(self: *const @This(), comptime T: type, r: P4Register) *T {
-        return self.p4_register_addr(T, @intFromEnum(r));
+        return self.p4_register_addr(T, @backingInt(r));
     }
 
     pub inline fn p4_register_addr(self: *const @This(), comptime T: type, addr: u32) *T {
@@ -717,8 +717,8 @@ pub const SH4 = struct {
                 const int_index = @ctz(self.interrupt_requests);
                 const interrupt = self._sorted_interrupts[int_index];
                 // Check it against the cpu interrupt mask
-                if (self._interrupt_levels[@intFromEnum(interrupt)] > self.sr.imask) {
-                    self.p4_register(u32, .INTEVT).* = Interrupts.InterruptINTEVTCodes[@intFromEnum(interrupt)];
+                if (self._interrupt_levels[@backingInt(interrupt)] > self.sr.imask) {
+                    self.p4_register(u32, .INTEVT).* = Interrupts.InterruptINTEVTCodes[@backingInt(interrupt)];
                     self.jump_to_interrupt();
                 }
             }
@@ -730,18 +730,18 @@ pub const SH4 = struct {
     }
 
     pub inline fn clear_interrupt(self: *@This(), int: Interrupt) void {
-        self.interrupt_requests &= ~(@as(u64, 1) << @intCast(self._interrupts_indices[@intFromEnum(int)]));
+        self.interrupt_requests &= ~(@as(u64, 1) << @intCast(self._interrupts_indices[@backingInt(int)]));
     }
 
     pub inline fn request_interrupt(self: *@This(), int: Interrupt) void {
         sh4_log.debug(" (Interrupt request! {s})", .{std.enums.tagName(Interrupt, int) orelse "Unknown"});
-        self.interrupt_requests |= @as(u64, 1) << @intCast(self._interrupts_indices[@intFromEnum(int)]);
+        self.interrupt_requests |= @as(u64, 1) << @intCast(self._interrupts_indices[@backingInt(int)]);
     }
 
     pub fn order_interrupt(ctx: *const @This(), lhs: Interrupt, rhs: Interrupt) bool {
-        if (ctx._interrupt_levels[@intFromEnum(lhs)] == ctx._interrupt_levels[@intFromEnum(rhs)])
-            return @intFromEnum(lhs) < @intFromEnum(rhs);
-        return ctx._interrupt_levels[@intFromEnum(lhs)] > ctx._interrupt_levels[@intFromEnum(rhs)];
+        if (ctx._interrupt_levels[@backingInt(lhs)] == ctx._interrupt_levels[@backingInt(rhs)])
+            return @backingInt(lhs) < @backingInt(rhs);
+        return ctx._interrupt_levels[@backingInt(lhs)] > ctx._interrupt_levels[@backingInt(rhs)];
     }
 
     pub fn compute_interrupt_priorities(self: *@This()) void {
@@ -751,7 +751,7 @@ pub const SH4 = struct {
             // Convert priority indices to the base enum
             for (0..self._sorted_interrupts.len) |i| {
                 if ((self.interrupt_requests >> @intCast(i)) & 1 == 1) {
-                    saved_requests |= (@as(u64, 1) << @intFromEnum(self._sorted_interrupts[i]));
+                    saved_requests |= (@as(u64, 1) << @backingInt(self._sorted_interrupts[i]));
                 }
             }
         }
@@ -760,36 +760,36 @@ pub const SH4 = struct {
         const IPRB = self.read_p4_register(P4.IPRB, .IPRB);
         const IPRC = self.read_p4_register(P4.IPRC, .IPRC);
 
-        self._interrupt_levels[@intFromEnum(Interrupt.HitachiUDI)] = IPRC.hitachiudi;
-        self._interrupt_levels[@intFromEnum(Interrupt.GPIO)] = IPRC.gpio;
-        self._interrupt_levels[@intFromEnum(Interrupt.DMTE0)] = IPRC.dmac;
-        self._interrupt_levels[@intFromEnum(Interrupt.DMTE1)] = IPRC.dmac;
-        self._interrupt_levels[@intFromEnum(Interrupt.DMTE2)] = IPRC.dmac;
-        self._interrupt_levels[@intFromEnum(Interrupt.DMTE3)] = IPRC.dmac;
-        self._interrupt_levels[@intFromEnum(Interrupt.DMAE)] = IPRC.dmac;
-        self._interrupt_levels[@intFromEnum(Interrupt.TUNI0)] = IPRA.tmu0;
-        self._interrupt_levels[@intFromEnum(Interrupt.TUNI1)] = IPRA.tmu1;
-        self._interrupt_levels[@intFromEnum(Interrupt.TUNI2)] = IPRA.tmu2;
-        self._interrupt_levels[@intFromEnum(Interrupt.TICPI2)] = IPRA.tmu2;
-        self._interrupt_levels[@intFromEnum(Interrupt.ATI)] = IPRA.rtc;
-        self._interrupt_levels[@intFromEnum(Interrupt.PRI)] = IPRA.rtc;
-        self._interrupt_levels[@intFromEnum(Interrupt.CUI)] = IPRA.rtc;
-        self._interrupt_levels[@intFromEnum(Interrupt.SCI1_ERI)] = IPRB.sci1;
-        self._interrupt_levels[@intFromEnum(Interrupt.SCI1_RXI)] = IPRB.sci1;
-        self._interrupt_levels[@intFromEnum(Interrupt.SCI1_TXI)] = IPRB.sci1;
-        self._interrupt_levels[@intFromEnum(Interrupt.SCI1_TEI)] = IPRB.sci1;
-        self._interrupt_levels[@intFromEnum(Interrupt.SCIF_ERI)] = IPRC.scif;
-        self._interrupt_levels[@intFromEnum(Interrupt.SCIF_RXI)] = IPRC.scif;
-        self._interrupt_levels[@intFromEnum(Interrupt.SCIF_BRI)] = IPRC.scif;
-        self._interrupt_levels[@intFromEnum(Interrupt.SCIF_TXI)] = IPRC.scif;
-        self._interrupt_levels[@intFromEnum(Interrupt.ITI)] = IPRB.wdt;
-        self._interrupt_levels[@intFromEnum(Interrupt.RCMI)] = IPRB.ref;
-        self._interrupt_levels[@intFromEnum(Interrupt.ROVI)] = IPRB.ref;
+        self._interrupt_levels[@backingInt(Interrupt.HitachiUDI)] = IPRC.hitachiudi;
+        self._interrupt_levels[@backingInt(Interrupt.GPIO)] = IPRC.gpio;
+        self._interrupt_levels[@backingInt(Interrupt.DMTE0)] = IPRC.dmac;
+        self._interrupt_levels[@backingInt(Interrupt.DMTE1)] = IPRC.dmac;
+        self._interrupt_levels[@backingInt(Interrupt.DMTE2)] = IPRC.dmac;
+        self._interrupt_levels[@backingInt(Interrupt.DMTE3)] = IPRC.dmac;
+        self._interrupt_levels[@backingInt(Interrupt.DMAE)] = IPRC.dmac;
+        self._interrupt_levels[@backingInt(Interrupt.TUNI0)] = IPRA.tmu0;
+        self._interrupt_levels[@backingInt(Interrupt.TUNI1)] = IPRA.tmu1;
+        self._interrupt_levels[@backingInt(Interrupt.TUNI2)] = IPRA.tmu2;
+        self._interrupt_levels[@backingInt(Interrupt.TICPI2)] = IPRA.tmu2;
+        self._interrupt_levels[@backingInt(Interrupt.ATI)] = IPRA.rtc;
+        self._interrupt_levels[@backingInt(Interrupt.PRI)] = IPRA.rtc;
+        self._interrupt_levels[@backingInt(Interrupt.CUI)] = IPRA.rtc;
+        self._interrupt_levels[@backingInt(Interrupt.SCI1_ERI)] = IPRB.sci1;
+        self._interrupt_levels[@backingInt(Interrupt.SCI1_RXI)] = IPRB.sci1;
+        self._interrupt_levels[@backingInt(Interrupt.SCI1_TXI)] = IPRB.sci1;
+        self._interrupt_levels[@backingInt(Interrupt.SCI1_TEI)] = IPRB.sci1;
+        self._interrupt_levels[@backingInt(Interrupt.SCIF_ERI)] = IPRC.scif;
+        self._interrupt_levels[@backingInt(Interrupt.SCIF_RXI)] = IPRC.scif;
+        self._interrupt_levels[@backingInt(Interrupt.SCIF_BRI)] = IPRC.scif;
+        self._interrupt_levels[@backingInt(Interrupt.SCIF_TXI)] = IPRC.scif;
+        self._interrupt_levels[@backingInt(Interrupt.ITI)] = IPRB.wdt;
+        self._interrupt_levels[@backingInt(Interrupt.RCMI)] = IPRB.ref;
+        self._interrupt_levels[@backingInt(Interrupt.ROVI)] = IPRB.ref;
 
         std.sort.insertion(Interrupt, &self._sorted_interrupts, self, order_interrupt);
         // Update reverse mapping (Interrupt enum to its index in the interrupt_requests bitfield)
         for (0..self._sorted_interrupts.len) |i| {
-            self._interrupts_indices[@intFromEnum(self._sorted_interrupts[i])] = @intCast(i);
+            self._interrupts_indices[@backingInt(self._sorted_interrupts[i])] = @intCast(i);
         }
 
         if (saved_requests != 0) {
@@ -1298,7 +1298,7 @@ pub const SH4 = struct {
                     if (virtual_addr >= 0xFFE80000 and virtual_addr <= 0xFFE80026)
                         return SCIF.read(self, T, virtual_addr);
 
-                    const p4_reg: P4Register = @enumFromInt(virtual_addr);
+                    const p4_reg: P4Register = @fromBackingInt(virtual_addr);
                     switch (p4_reg) {
                         .RFCR => {
                             check_type(&[_]type{u16}, T, "Invalid P4 Write({}) to RFCR\n", .{T});
@@ -1318,7 +1318,7 @@ pub const SH4 = struct {
                             // an input, the external pin value sampled on the external bus clock is read. When a bit is set as an
                             // output, the value written to the PDTRA register is read.
 
-                            var out: u16 = @intFromEnum(self._dc.?.cable_type) << 8;
+                            var out: u16 = @backingInt(self._dc.?.cable_type) << 8;
 
                             const ctrl: u32 = self.read_p4_register(u32, .PCTRA) & 0xF;
                             const data: u16 = self.read_p4_register(u16, .PDTRA) & 0xF;
@@ -1352,7 +1352,7 @@ pub const SH4 = struct {
                             });
                             return @constCast(self).p4_register_addr(T, virtual_addr).*;
                         },
-                        @enumFromInt(0xFFEB0000) => {
+                        @fromBackingInt(0xFFEB0000) => {
                             sh4_log.warn("Read to unknown P4 register: {X:0>8}.", .{virtual_addr});
                             return 0;
                         },
@@ -1564,7 +1564,7 @@ pub const SH4 = struct {
                 // Control register area
                 if (virtual_addr >= 0xFF000000) {
                     switch (virtual_addr) {
-                        @intFromEnum(P4Register.MMUCR) => {
+                        @backingInt(P4Register.MMUCR) => {
                             if (T == u32) {
                                 var val: mmu.MMUCR = @bitCast(value);
                                 sh4_log.debug("Write({}) to MMUCR: {X:0>8}: {}", .{ T, value, val });
@@ -1586,7 +1586,7 @@ pub const SH4 = struct {
                                 sh4_log.warn("Write({}) to MMUCR: {X}", .{ T, value });
                             }
                         },
-                        @intFromEnum(P4Register.PTEH) => {
+                        @backingInt(P4Register.PTEH) => {
                             // NOTE/FIXME: This make some sense with the current implementation of the cache that doesn't check ASID.
                             //             However, I wrote some versions of the cache that did check ASID and it still didn't work properly without this.
                             //             This makes me think that this mostly happens to work by reseting the cache often enough to hide
@@ -1600,25 +1600,25 @@ pub const SH4 = struct {
                             // Ignore it, it's not implemented but it also doesn't fit in our P4 register remapping.
                             return;
                         },
-                        @intFromEnum(P4Register.RTCSR), @intFromEnum(P4Register.RTCNT), @intFromEnum(P4Register.RTCOR) => {
+                        @backingInt(P4Register.RTCSR), @backingInt(P4Register.RTCNT), @backingInt(P4Register.RTCOR) => {
                             check_type(&[_]type{u16}, T, "Invalid P4 Write({}) to RTCSR\n", .{T});
                             std.debug.assert(value & 0xFF00 == 0b10100101_00000000);
                             self.p4_register_addr(u16, virtual_addr).* = (value & 0xFF);
                             return;
                         },
-                        @intFromEnum(P4Register.RFCR) => {
+                        @backingInt(P4Register.RFCR) => {
                             check_type(&[_]type{u16}, T, "Invalid P4 Write({}) to RFCR\n", .{T});
                             std.debug.assert(value & 0b11111100_00000000 == 0b10100100_00000000);
                             self.p4_register_addr(u16, virtual_addr).* = (value & 0b11_11111111);
                             return;
                         },
                         // FIXME: Not emulated at all, these clash with my P4 access pattern :(
-                        @intFromEnum(P4Register.PMCR1), @intFromEnum(P4Register.PMCR2) => {
+                        @backingInt(P4Register.PMCR1), @backingInt(P4Register.PMCR2) => {
                             const pmcr: P4.PMCR = @bitCast(@as(u16, @intCast(value)));
                             if (pmcr.pmen) {
-                                if (Once(@src())) sh4_log.warn("Write({}) to non implemented P4 register {t}: {X:0>4}, {}.", .{ T, @as(P4Register, @enumFromInt(virtual_addr)), value, pmcr });
+                                if (Once(@src())) sh4_log.warn("Write({}) to non implemented P4 register {t}: {X:0>4}, {}.", .{ T, @as(P4Register, @fromBackingInt(virtual_addr)), value, pmcr });
                             } else {
-                                if (Once(@src())) sh4_log.warn("Write({}) to non implemented P4 register {t}: {X:0>4}, {}.", .{ T, @as(P4Register, @enumFromInt(virtual_addr)), value, pmcr });
+                                if (Once(@src())) sh4_log.warn("Write({}) to non implemented P4 register {t}: {X:0>4}, {}.", .{ T, @as(P4Register, @fromBackingInt(virtual_addr)), value, pmcr });
                             }
                             return;
                         },
@@ -1630,7 +1630,7 @@ pub const SH4 = struct {
                             sh4_log.warn("Write to unknown P4 register: {X:0>8} = {X:0>4}.", .{ virtual_addr, value });
                             return;
                         },
-                        @intFromEnum(P4Register.CCR) => {
+                        @backingInt(P4Register.CCR) => {
                             check_type(&[_]type{u32}, T, "Invalid P4 Write({}) to CCR\n", .{T});
                             var ccr: P4.CCR = @bitCast(value);
                             sh4_log.debug("Write to CCR: {}", .{ccr});
@@ -1652,10 +1652,10 @@ pub const SH4 = struct {
                             self.p4_register_addr(T, virtual_addr).* = @bitCast(ccr);
                             return;
                         },
-                        @intFromEnum(P4Register.CHCR0), @intFromEnum(P4Register.CHCR1), @intFromEnum(P4Register.CHCR2) => |chcr_addr| {
+                        @backingInt(P4Register.CHCR0), @backingInt(P4Register.CHCR1), @backingInt(P4Register.CHCR2) => |chcr_addr| {
                             check_type(&[_]type{u32}, T, "Invalid P4 Write({}) to 0x{X:0>8}\n", .{ T, chcr_addr });
                             const chcr: P4.CHCR = @bitCast(value);
-                            const p4_reg: P4Register = @enumFromInt(chcr_addr);
+                            const p4_reg: P4Register = @fromBackingInt(chcr_addr);
 
                             const channel: u8 = switch (p4_reg) {
                                 .CHCR0 => 0,
@@ -1673,8 +1673,8 @@ pub const SH4 = struct {
                             }
                             return;
                         },
-                        @intFromEnum(P4Register.WTCNT), @intFromEnum(P4Register.WTCSR) => |va| {
-                            const p4_reg: P4Register = @enumFromInt(va);
+                        @backingInt(P4Register.WTCNT), @backingInt(P4Register.WTCSR) => |va| {
+                            const p4_reg: P4Register = @fromBackingInt(va);
                             if (T != u16)
                                 return sh4_log.warn("Invalid Write({}) to P4 register {t}: {X:0>4}.", .{ T, p4_reg, value });
 
@@ -1696,7 +1696,7 @@ pub const SH4 = struct {
                             }
                             return;
                         },
-                        @intFromEnum(P4Register.IPRA), @intFromEnum(P4Register.IPRB), @intFromEnum(P4Register.IPRC) => {
+                        @backingInt(P4Register.IPRA), @backingInt(P4Register.IPRB), @backingInt(P4Register.IPRC) => {
                             self.p4_register_addr(T, virtual_addr).* = value;
                             self.compute_interrupt_priorities();
                             return;
@@ -1708,16 +1708,16 @@ pub const SH4 = struct {
                                 self.update_timer_registers(i);
                             }
                             switch (virtual_addr) {
-                                @intFromEnum(P4Register.TCR0), @intFromEnum(P4Register.TCR1), @intFromEnum(P4Register.TCR2) => |tcr_addr| {
+                                @backingInt(P4Register.TCR0), @backingInt(P4Register.TCR1), @backingInt(P4Register.TCR2) => |tcr_addr| {
                                     const dest = self.p4_register_addr(T, tcr_addr);
                                     if (T != u8) {
                                         // "Writing 1 [to UNF] does not change the value."
                                         dest.* = value & (dest.* | ~(@as(T, 1) << @bitOffsetOf(P4.TCR, "unf")));
                                     } else dest.* = value;
                                     const channel: u8 = switch (tcr_addr) {
-                                        @intFromEnum(P4Register.TCR0) => 0,
-                                        @intFromEnum(P4Register.TCR1) => 1,
-                                        @intFromEnum(P4Register.TCR2) => 2,
+                                        @backingInt(P4Register.TCR0) => 0,
+                                        @backingInt(P4Register.TCR1) => 1,
+                                        @backingInt(P4Register.TCR2) => 2,
                                         else => unreachable,
                                     };
                                     const tcr = self.p4_register(P4.TCR, TimerRegisters[channel].control);
@@ -1880,7 +1880,7 @@ pub const SH4 = struct {
                 .sa = e.sa,
                 .wt = e.wt,
                 .d = e.d,
-                .pr = @intFromEnum(e.pr),
+                .pr = @backingInt(e.pr),
                 .c = e.c,
                 .sh = e.sh,
                 .sz = e.sz,
@@ -1895,7 +1895,7 @@ pub const SH4 = struct {
                 .sa = e.sa,
                 .wt = e.wt,
                 .d = e.d,
-                .pr = @intFromEnum(e.pr),
+                .pr = @backingInt(e.pr),
                 .c = e.c,
                 .sh = e.sh,
                 .sz = e.sz,
@@ -1947,7 +1947,7 @@ pub const SH4 = struct {
                 .sa = @truncate(e.sa),
                 .wt = e.wt,
                 .d = e.d,
-                .pr = @enumFromInt(@as(u2, @truncate(e.pr))),
+                .pr = @fromBackingInt(@as(u2, @truncate(e.pr))),
                 .c = e.c,
                 .sh = e.sh,
                 .sz = @truncate(e.sz),
@@ -1963,7 +1963,7 @@ pub const SH4 = struct {
                 .sa = @truncate(e.sa),
                 .wt = e.wt,
                 .d = e.d,
-                .pr = @enumFromInt(@as(u2, @truncate(e.pr))),
+                .pr = @fromBackingInt(@as(u2, @truncate(e.pr))),
                 .c = e.c,
                 .sh = e.sh,
                 .sz = @truncate(e.sz),

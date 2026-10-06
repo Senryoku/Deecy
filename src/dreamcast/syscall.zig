@@ -28,7 +28,7 @@ fn unhandled_function(comptime syscall_name: []const u8, dc: *Dreamcast, functio
 }
 
 pub fn syscall_sysinfo(dc: *Dreamcast) void {
-    const function: enum(u32) { Init = 0, GetIcon = 2, GetId = 3, _ } = @enumFromInt(dc.cpu.R(7).*);
+    const function: enum(u32) { Init = 0, GetIcon = 2, GetId = 3, _ } = @fromBackingInt(dc.cpu.R(7).*);
     switch (function) {
         .Init => {
             // Prepares the other two SYSINFO calls for use by copying the relevant data from the system flashrom into 8C000068-8C00007F. Always call this function before using the other two calls.
@@ -49,7 +49,7 @@ pub fn syscall_sysinfo(dc: *Dreamcast) void {
 }
 
 pub fn syscall_romfont(dc: *Dreamcast) void {
-    const function: enum(u32) { Address = 0, Lock = 1, Unlock = 2, _ } = @enumFromInt(dc.cpu.R(1).*);
+    const function: enum(u32) { Address = 0, Lock = 1, Unlock = 2, _ } = @fromBackingInt(dc.cpu.R(1).*);
     switch (function) {
         .Address => dc.cpu.R(0).* = 0xA0100020, // NOTE: Just an informed guess from stepping through the boot ROM.
         .Lock => dc.cpu.R(0).* = 0, // Returns: 0 if you got the mutex (unlock it with ROMFONT_UNLOCK when you're done), -1 if it was already taken by someone else.
@@ -71,7 +71,7 @@ pub fn syscall_flashrom(dc: *Dreamcast) void {
             switch (dc.cpu.R(4).*) {
                 0, 1, 2, 3, 4 => |partition_number| {
                     const dest = dc.cpu.R(5).*;
-                    const partition = DreamcastModule.Flash.get_dc_partition(@enumFromInt(partition_number));
+                    const partition = DreamcastModule.Flash.get_dc_partition(@fromBackingInt(@intCast(partition_number)));
                     dc.cpu.write_physical(u32, dest, partition.offset);
                     dc.cpu.write_physical(u32, dest + 4, partition.size);
                     dc.cpu.R(0).* = 0;
@@ -142,7 +142,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
         return;
     }
 
-    const function: GDFunction = @enumFromInt(dc.cpu.R(7).*);
+    const function: GDFunction = @fromBackingInt(dc.cpu.R(7).*);
     switch (function) {
         .SendCommand => {
             // Enqueue a command for the GDROM subsystem to execute.
@@ -166,7 +166,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             // Check if an enqueued command has completed.
             // Args: r4 = request id
             //       r5 = pointer to four 32 bit integers to receive extended status information. The first is a generic error code.
-            dc.cpu.R(0).* = @intFromEnum(gdrom_hle.check_command(dc, dc.cpu.R(4).*));
+            dc.cpu.R(0).* = @backingInt(gdrom_hle.check_command(dc, dc.cpu.R(4).*));
             for (0..4) |i|
                 dc.cpu.write_physical(u32, @intCast(dc.cpu.R(5).* + 4 * i), dc.gdrom_hle.result[i]);
             log.info("GDROM {t} R4={d} R5={X:0>8} | Ret : {X:0>8}, Result: {X:0>8} {X:0>8} {X:0>8} {X:0>8}", .{
@@ -199,8 +199,8 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             // Returns: zero if successful, nonzero if failure
             const dest = dc.cpu.R(4).*;
             log.debug("GDROM {t}: dest={X:0>8}", .{ function, dest });
-            dc.cpu.write_physical(u32, dest, @intFromEnum(dc.gdrom.state));
-            const disc_type: u8 = if (dc.gdrom.disc) |disc| @intFromEnum(disc.get_format()) else 0;
+            dc.cpu.write_physical(u32, dest, @backingInt(dc.gdrom.state));
+            const disc_type: u8 = if (dc.gdrom.disc) |disc| @backingInt(disc.get_format()) else 0;
             dc.cpu.write_physical(u32, dest + 4, disc_type << 4);
             dc.cpu.R(0).* = 0;
         },
@@ -256,7 +256,7 @@ pub fn syscall_misc(dc: *Dreamcast) void {
             // Normal Init
             // Looking at the disassembly, it does a bunch of stuff related to the GDROM, security checks and status check, but we probably don't care about it.
             dc.cpu.sr.imask = 0;
-            dc.cpu.write_physical(u32, @intFromEnum(HardwareRegister.SB_IML2NRM), 0);
+            dc.cpu.write_physical(u32, @backingInt(HardwareRegister.SB_IML2NRM), 0);
             dc.gpu._get_register(u32, .VO_BORDER_COL).* = 0x00C0BEBC; // Set border color to light grey
         },
         1 => {

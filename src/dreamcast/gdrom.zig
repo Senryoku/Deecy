@@ -413,8 +413,8 @@ fn schedule_event(self: *@This(), event: ScheduledEvent) void {
     if (event.state) |state|
         self.state = state;
 
-    inline for (std.meta.fields(@TypeOf(event.status))) |f| {
-        if (@field(event.status, f.name)) |v| @field(self.status_register, f.name) = v;
+    inline for (@typeInfo(@TypeOf(event.status)).@"struct".field_names) |field_name| {
+        if (@field(event.status, field_name)) |v| @field(self.status_register, field_name) = v;
     }
 
     if (event.interrupt_reason) |reason| {
@@ -426,7 +426,7 @@ fn schedule_event(self: *@This(), event: ScheduledEvent) void {
 
 pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
     std.debug.assert(addr >= 0x005F7000 and addr <= 0x005F709C);
-    switch (@as(HardwareRegister, @enumFromInt(addr))) {
+    switch (@as(HardwareRegister, @fromBackingInt(addr))) {
         .GD_AlternateStatus_DeviceControl => {
             gdrom_log.debug("Read Alternate Status @{X:0>8} = {}", .{ addr, self.status_register });
             // NOTE: Alternate status reads do NOT clear the pending interrupt signal.
@@ -478,7 +478,7 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
             //  Disc Format |   Status
             var status = self.state;
             if (status != GDROMStatus.Open and self.disc == null) status = .Empty;
-            const val = (if (self.disc) |d| @as(u8, @intFromEnum(d.get_format())) << 4 else 0) | @intFromEnum(status);
+            const val = (if (self.disc) |d| @as(u8, @backingInt(d.get_format())) << 4 else 0) | @backingInt(status);
             gdrom_log.debug("Read to SectorNumber @{X:0>8} = {X:0>2}", .{ addr, val });
             return val;
         },
@@ -533,13 +533,13 @@ fn spi_non_data_command(self: *@This()) void {
 
 pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) void {
     std.debug.assert(addr >= 0x005F7000 and addr <= 0x005F709C);
-    switch (@as(HardwareRegister, @enumFromInt(addr))) {
+    switch (@as(HardwareRegister, @fromBackingInt(addr))) {
         .GD_Status_Command => {
             self.status_register.check = 0;
             self.error_register.ili = 0;
             self.error_register.abrt = 0;
 
-            switch (@as(ATACommand, @enumFromInt(value))) {
+            switch (@as(ATACommand, @fromBackingInt(value))) {
                 .SoftReset => {
                     gdrom_log.info("ATA Command: SoftReset", .{});
                     self.reset();
@@ -571,7 +571,7 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
                         0x0, // 0x02 Version ID
                     }) catch |err| gdrom_log.err("Error writing to PIO data queue: {}\n", .{err});
                     // 0x03 - 0x0F Reserved
-                    self.pio_data_queue.write(&([1]u8{0x0} ** (0x10 - 0x03))) catch |err| gdrom_log.err("Error writing to PIO data queue: {}\n", .{err});
+                    self.pio_data_queue.write(&@as([0x10 - 0x03]u8, @splat(0))) catch |err| gdrom_log.err("Error writing to PIO data queue: {}\n", .{err});
                     // 0x10 - 0x1F Manufacturer's name (16 ASCII characters)
                     self.pio_data_queue.write("            SEGA") catch |err| gdrom_log.err("Error writing to PIO data queue: {}\n", .{err});
                     // 0x20 - 0x2F Model name (16 ASCII characters)
@@ -659,7 +659,7 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
                     gdrom_log.debug("      {X:0>2} {X:0>2}", .{ self.packet_command[2 * i + 0], self.packet_command[2 * i + 1] });
                 }
 
-                (switch (@as(SPIPacketCommand, @enumFromInt(self.packet_command[0]))) {
+                (switch (@as(SPIPacketCommand, @fromBackingInt(self.packet_command[0]))) {
                     .TestUnit => self.test_unit(),
                     .ReqStat => self.req_stat(),
                     .ReqMode => self.req_mode(),
@@ -836,8 +836,8 @@ fn req_stat(self: *@This()) !void {
         }
 
         try self.pio_data_queue.write(&[_]u8{
-            if (self.disc == null) @intFromEnum(GDROMStatus.Empty) else @intFromEnum(self.state), // 0000 | Status
-            (if (self.disc) |d| @as(u8, @intFromEnum(d.get_format())) << 4 else 0) | self.audio_state.repetitions, // Disc Format | Repeat Count
+            if (self.disc == null) @backingInt(GDROMStatus.Empty) else @backingInt(self.state), // 0000 | Status
+            (if (self.disc) |d| @as(u8, @backingInt(d.get_format())) << 4 else 0) | self.audio_state.repetitions, // Disc Format | Repeat Count
             control_addr,
             track_number, // TNO (Subcode Q track number)
             0x01, // X (Subcode Q index number) - 00: Pause area?
@@ -899,7 +899,7 @@ fn req_error(self: *@This()) !void {
     const response = [_]u8{
         0xF0,
         0x00,
-        @intFromEnum(self.error_register.sense_key),
+        @backingInt(self.error_register.sense_key),
         0x00,
         0x00, 0x00, 0x00, // Command Specific Information (If not defined by a command, the FAD where the error occurred is reported)
         self.asc, // Additional Sense Code (ASC)
@@ -955,7 +955,7 @@ fn get_toc(self: *@This()) !void {
 }
 
 fn req_ses(self: *@This()) !void {
-    std.debug.assert(self.packet_command[0] == @intFromEnum(SPIPacketCommand.ReqSes));
+    std.debug.assert(self.packet_command[0] == @backingInt(SPIPacketCommand.ReqSes));
 
     const session_number = self.packet_command[2];
     const alloc_length = self.packet_command[4];
@@ -963,7 +963,7 @@ fn req_ses(self: *@This()) !void {
     gdrom_log.warn("SPI Packet ReqSes - Session Number: {d} (alloc_length: 0x{X:0>4})", .{ session_number, alloc_length });
 
     if (self.disc) |disc| {
-        try self.pio_data_queue.writeItem(@intFromEnum(self.state));
+        try self.pio_data_queue.writeItem(@backingInt(self.state));
         try self.pio_data_queue.writeItem(0);
 
         const track_number_or_session_count: u8 = @intCast(if (session_number > 0) disc.get_session(session_number).first_track + 1 else disc.get_session_count());
@@ -972,7 +972,7 @@ fn req_ses(self: *@This()) !void {
         try self.pio_data_queue.writeItem(track_number_or_session_count);
         try self.pio_data_queue.write(&[_]u8{ @truncate(fad >> 16), @truncate(fad >> 8), @truncate(fad >> 0) });
     } else {
-        try self.pio_data_queue.writeItem(@intFromEnum(GDROMStatus.Empty));
+        try self.pio_data_queue.writeItem(@backingInt(GDROMStatus.Empty));
         try self.pio_data_queue.writeItem(0);
         try self.pio_data_queue.writeItem(0); // Number of Session
         try self.pio_data_queue.write(&[_]u8{ 0x00, 0x00, 0x00 }); // End FAD
@@ -1120,7 +1120,7 @@ fn cd_read(self: *@This()) !void {
         .fad = start_addr,
         .remaining_sectors = transfer_length,
         .data_select = @bitCast(data_select),
-        .expected_data_type = @enumFromInt(expected_data_type),
+        .expected_data_type = @fromBackingInt(expected_data_type),
     };
     if (transfer_type == .PIO) {
         gdrom_log.debug("SPI Packet CDRead PIO mode: start_addr: {X:0>8}, transfer_length: {X:0>4}", .{ start_addr, transfer_length });
@@ -1134,7 +1134,7 @@ fn get_subcode(self: *@This()) !void {
     const data_format = self.packet_command[1] & 0xF;
     const alloc_length = @as(u16, self.packet_command[3]) << 8 | self.packet_command[4];
     try self.pio_data_queue.writeItem(0); // Reserved
-    try self.pio_data_queue.writeItem(@intFromEnum(self.audio_state.status)); // Audio Status
+    try self.pio_data_queue.writeItem(@backingInt(self.audio_state.status)); // Audio Status
     switch (data_format) {
         1 => {
             gdrom_log.debug("SPI Packet GetSCD - Format: {X:0>1}, AllocLength: {X:0>4}", .{ data_format, alloc_length });

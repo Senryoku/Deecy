@@ -36,8 +36,14 @@ pub fn load(io: std.Io, allocator: std.mem.Allocator, product_uid: Default.Produ
     };
     defer allocator.free(settings_str);
 
-    const zon = std.zon.parse.fromSlice(Partial(@This()), allocator, settings_str, null, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
+    var diagnostics: std.zon.parse.Diagnostics = undefined;
+    defer helpers.free(allocator, diagnostics);
+    const zon = std.zon.parse.fromSliceNoAlloc(Partial(@This()), .{ .gpa = allocator, .arena = allocator, .source = settings_str, .diagnostics = &diagnostics, .ignore_unknown_fields = true }) catch |err| {
         log.err("Failed to parse game settings file for {f}: {t}.", .{ product_uid, err });
+        switch (err) {
+            error.ParseZon => diagnostics.log(SettingsFileName),
+            else => {},
+        }
         return .{};
     };
     return helpers.to_complete(@This(), zon);

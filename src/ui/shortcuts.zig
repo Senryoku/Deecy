@@ -180,7 +180,7 @@ pub fn remove(self: *@This(), key: Key) void {
 }
 
 const Actions = actions_table: {
-    var table: [@typeInfo(Action.Name).@"enum".fields.len]Action = undefined;
+    var table: [@typeInfo(Action.Name).@"enum".field_names.len]Action = undefined;
     for ([_]Action{
         // zig fmt: off
         .{ .name = .Screenshot,                    .callback = Deecy.save_screenshot   },
@@ -205,7 +205,7 @@ const Actions = actions_table: {
         .{ .name = .@"Next VBlank In",             .callback = Deecy.next_vblankin,     .allow_repeat = true  },
         // zig fmt: on
     }) |entry| {
-        table[@intFromEnum(entry.name)] = entry;
+        table[@backingInt(entry.name)] = entry;
     }
     break :actions_table table;
 };
@@ -239,20 +239,20 @@ fn serialize(self: @This(), allocator: std.mem.Allocator, io: std.Io) !void {
 }
 
 fn deserialize(self: *@This(), allocator: std.mem.Allocator, io: std.Io) !void {
-    const config_path = try get_config_path(allocator);
-    defer allocator.free(config_path);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const arena_allocator = arena.allocator();
 
-    const data = try host_paths.root().readFileAllocOptions(io, config_path, allocator, .limited(32 * 1024 * 1024), .@"8", 0);
-    defer allocator.free(data);
+    const config_path = try get_config_path(arena_allocator);
+    const data = try host_paths.root().readFileAllocOptions(io, config_path, arena_allocator, .limited(32 * 1024 * 1024), .@"8", 0);
 
-    var diagnostics: std.zon.parse.Diagnostics = .{};
-    defer diagnostics.deinit(allocator);
-    const zon = std.zon.parse.fromSliceAlloc([]const SerializedShortcut, allocator, data, &diagnostics, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
-        log.err(termcolor.red("Failed to parse shortcuts file: {t}."), .{err});
-        log.err("{f}", .{diagnostics});
+    var diagnostics: std.zon.parse.Diagnostics = undefined;
+    const zon = std.zon.parse.fromSlice([]const SerializedShortcut, .{ .gpa = arena_allocator, .arena = arena_allocator, .source = data, .diagnostics = &diagnostics, .ignore_unknown_fields = true }) catch |err| {
+        log.err("Failed to parse shortcuts file: {t}.", .{err});
+        diagnostics.log(config_path);
         return err;
     };
-    defer std.zon.parse.free(allocator, zon);
+
     self.shortcuts.clearRetainingCapacity();
     for (zon) |shortcut|
         try self.shortcuts.put(shortcut.key, get_action(shortcut.action));
@@ -264,7 +264,7 @@ fn get_config_path(allocator: std.mem.Allocator) ![]const u8 {
 }
 
 fn get_action(name: Action.Name) Action {
-    return Actions[@intFromEnum(name)];
+    return Actions[@backingInt(name)];
 }
 
 pub fn load_default_shortcuts(self: *@This()) !void {

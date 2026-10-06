@@ -104,8 +104,8 @@ pub const FunctionCodesMask = packed struct(u32) {
 
     pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         if (@popCount(self.as_u32()) == 1) {
-            inline for (@typeInfo(FunctionCodesMask).@"struct".fields) |field| {
-                if (@field(self, field.name) == 1) try writer.writeAll(field.name);
+            inline for (@typeInfo(FunctionCodesMask).@"struct".field_names) |field_name| {
+                if (@field(self, field_name) == 1) try writer.writeAll(field_name);
             }
         } else {
             try writer.print("{X}", .{self.as_u32()});

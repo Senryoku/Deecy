@@ -3,7 +3,7 @@ const std = @import("std");
 /// Combines multiple WGSL shader files into a single string.
 /// Comptime in release builds, loads from disc at runtime in debug, assuming CWD is the root of the source tree.
 pub fn load(comptime options: []const u8, comptime names: anytype) []const u8 {
-    if (@import("builtin").mode == .Debug) {
+    if (@import("builtin").mode == .debug) {
         var threaded: std.Io.Threaded = .init_single_threaded;
         const io = threaded.io();
         // Load from disc at runtime in debug.

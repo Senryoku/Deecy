@@ -120,7 +120,7 @@ pub fn draw_vmu_screens(self: *@This(), editable: bool) void {
             if (vmu.valid and vmu.display) {
                 if (vmu.dirty)
                     vmu.upload_vmu_texture(self.deecy);
-                zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr((self.deecy.gctx.lookupResource(vmu.view).?))) }, .{ .w = win_width, .h = win_width * 32.0 / 48.0 });
+                zgui.image(.{ .tex_data = null, .tex_id = @fromBackingInt(@intFromPtr((self.deecy.gctx.lookupResource(vmu.view).?))) }, .{ .w = win_width, .h = win_width * 32.0 / 48.0 });
                 zgui.dummy(.{ .w = 0, .h = 12.0 });
             }
         }
@@ -246,7 +246,7 @@ pub fn refresh_games(self: *@This()) !void {
                 if (entry.kind == .file and (std.mem.endsWith(u8, entry.path, ".gdi") or std.mem.endsWith(u8, entry.path, ".cdi") or std.mem.endsWith(u8, entry.path, ".chd") or std.mem.endsWith(u8, entry.path, ".cue"))) {
                     const path = try std.fs.path.joinZ(self.allocator, &[_][]const u8{ dir_path, entry.path });
                     errdefer self.allocator.free(path);
-                    const name = try self.allocator.dupeZ(u8, entry.basename);
+                    const name = try self.allocator.dupeSentinel(u8, entry.basename, 0);
                     errdefer self.allocator.free(name);
                     try tmp_disc_files.append(self.allocator, .{
                         .path = path,
@@ -527,7 +527,7 @@ pub fn draw(self: *@This()) !void {
                     _ = common.toggle("Start in Game Launcher", .{ .v = &d.config.auto_start_launcher });
                     zgui.setItemTooltip("When enabled, Deecy will start automatically in the game launcher, allowing you to select games using your configured DC controller.", .{});
                     {
-                        zgui.beginDisabled(.{ .disabled = d.running and builtin.mode != .Debug });
+                        zgui.beginDisabled(.{ .disabled = d.running and builtin.mode != .debug });
                         defer zgui.endDisabled();
                         var flash_updated = false;
                         zgui.separatorText("Dreamcast Configuration");
@@ -596,11 +596,11 @@ pub fn draw(self: *@This()) !void {
                     }
                     zgui.text("Current Resolution: {d}x{d}", .{ d.renderer.resolution.width, d.renderer.resolution.height });
                     var resolution_update = false;
-                    var resolution: enum(u8) { Native = 1, x2 = 2, x3 = 3, x4 = 4, x5 = 5, x6 = 6 } = @enumFromInt(d.renderer.resolution.width / d.renderer.game_settings.aspect_ratio.width());
+                    var resolution: enum(u8) { Native = 1, x2 = 2, x3 = 3, x4 = 4, x5 = 5, x6 = 6 } = @fromBackingInt(@intCast(d.renderer.resolution.width / d.renderer.game_settings.aspect_ratio.width()));
                     zgui.setNextItemWidth(dropdown_size);
                     if (zgui.comboFromEnum("Resolution", &resolution)) {
                         resolution_update = true;
-                        d.config.renderer.internal_resolution_factor = @intFromEnum(resolution);
+                        d.config.renderer.internal_resolution_factor = @backingInt(resolution);
                     }
                     zgui.setNextItemWidth(dropdown_size);
                     _ = zgui.comboFromEnum("Display Mode", &d.config.renderer.display_mode);
@@ -627,7 +627,7 @@ pub fn draw(self: *@This()) !void {
                             break :blk table;
                         };
                         const static = struct {
-                            var available_modes_buffer: [@typeInfo(zgpu.wgpu.PresentMode).@"enum".fields.len]zgpu.wgpu.PresentMode = @splat(.undefined);
+                            var available_modes_buffer: [@typeInfo(zgpu.wgpu.PresentMode).@"enum".field_names.len]zgpu.wgpu.PresentMode = @splat(.undefined);
                             var available_modes_count: u32 = 0;
                             var present_modes: []const zgpu.wgpu.PresentMode = &.{};
                             var fragment_buffer_size_options_count: usize = 1;
@@ -687,7 +687,7 @@ pub fn draw(self: *@This()) !void {
 
                         _ = common.toggle("Use Pipeline Cache", .{ .v = &d.config.enable_dawn_pipeline_cache });
                         zgui.setItemTooltip(Icons.TriangleExclamation ++ " Restart Required.\nReduces 'pop-in' due to pipeline creation delay (shader compilation).", .{});
-                        if (builtin.mode == .Debug) {
+                        if (builtin.mode == .debug) {
                             zgui.sameLine(.{});
                             if (zgui.button("Reset", .{}))
                                 try @import("pipeline_cache.zig").clear(d._allocator);
@@ -757,7 +757,7 @@ pub fn draw(self: *@This()) !void {
                     available_controllers.appendAssumeCapacity(.{ .id = null, .name = "None" });
 
                     for (0..zglfw.Joystick.maximum_supported) |idx| {
-                        const joystick: zglfw.Joystick = @enumFromInt(idx);
+                        const joystick: zglfw.Joystick = @fromBackingInt(@intCast(idx));
                         if (joystick.isPresent()) {
                             if (joystick.asGamepad()) |gamepad| {
                                 available_controllers.appendAssumeCapacity(.{ .id = joystick, .name = gamepad.getName() });
@@ -859,8 +859,8 @@ pub fn draw(self: *@This()) !void {
                                                         defer zgui.unindent(.{});
                                                         const status = keyboard.read();
                                                         zgui.text("Modifier keys:", .{});
-                                                        inline for (std.meta.fields(@TypeOf(status.change_key_bits))) |field| {
-                                                            zgui.textColored(if (@field(status.change_key_bits, field.name)) common.Green else common.Red, "  {s}", .{field.name});
+                                                        inline for (@typeInfo(@TypeOf(status.change_key_bits)).@"struct".field_names) |field_name| {
+                                                            zgui.textColored(if (@field(status.change_key_bits, field_name)) common.Green else common.Red, "  {s}", .{field_name});
                                                         }
                                                         zgui.text("Key scan code array:", .{});
                                                         for (status.key_scan_code_array) |key| {
@@ -927,9 +927,9 @@ pub fn draw(self: *@This()) !void {
                                         }
                                     },
                                     .physical => |*p| {
-                                        var physical_port: enum(u8) { A = 0, B = 1, C = 2, D = 3 } = @enumFromInt(p.physical_port);
+                                        var physical_port: enum(u8) { A = 0, B = 1, C = 2, D = 3 } = @fromBackingInt(p.physical_port);
                                         if (zgui.comboFromEnum("Physical port", &physical_port)) {
-                                            p.physical_port = @intFromEnum(physical_port);
+                                            p.physical_port = @backingInt(physical_port);
                                         }
                                     },
                                     .none => {},
@@ -969,9 +969,9 @@ pub fn draw(self: *@This()) !void {
                     if (zgui.beginTable("Shortcuts##Table", .{ .column = 4, .flags = .{ .sortable = true, .sort_multi = true, .sizing = .fixed_fit } })) {
                         const Column = enum(u32) { Type = 0, Key, Action };
 
-                        zgui.tableSetupColumn("Type", .{ .user_id = @intFromEnum(Column.Type) });
-                        zgui.tableSetupColumn("Key/Button", .{ .user_id = @intFromEnum(Column.Key) });
-                        zgui.tableSetupColumn("Action", .{ .user_id = @intFromEnum(Column.Action) });
+                        zgui.tableSetupColumn("Type", .{ .user_id = @backingInt(Column.Type) });
+                        zgui.tableSetupColumn("Key/Button", .{ .user_id = @backingInt(Column.Key) });
+                        zgui.tableSetupColumn("Action", .{ .user_id = @backingInt(Column.Action) });
                         zgui.tableSetupColumn("", .{ .user_id = 4, .flags = .{ .no_sort = true } });
                         zgui.tableHeadersRow();
 
@@ -999,7 +999,7 @@ pub fn draw(self: *@This()) !void {
                                     for (0..@intCast(s.count)) |sort_order| {
                                         for (s.specs[0..@intCast(s.count)]) |spec| {
                                             if (spec.sort_direction != .none and spec.sort_order == sort_order) {
-                                                const ord = column_order(@enumFromInt(spec.user_id), a, b);
+                                                const ord = column_order(@fromBackingInt(spec.user_id), a, b);
                                                 if (ord != .eq) return switch (spec.sort_direction) {
                                                     .ascending => ord,
                                                     .descending => ord.invert(),
@@ -1208,7 +1208,7 @@ const GameColors = [_]u32{ 0xFF222B55, 0xFF553D22, 0xFF2D3D2D, 0xFF4D334D, 0xFF4
 
 pub fn draw_game_library(self: *@This()) !void {
     const d = self.deecy;
-    const bg_color = zgui.colorConvertFloat4ToU32(zgui.getStyle().colors[@intFromEnum(zgui.StyleCol.window_bg)]);
+    const bg_color = zgui.colorConvertFloat4ToU32(zgui.getStyle().colors[@backingInt(zgui.StyleCol.window_bg)]);
     const title_height = 24;
     const text_padding = .{ 16, 8 };
     const target_width = 4 * 256 + 64;
@@ -1344,7 +1344,7 @@ pub fn draw_game_library(self: *@This()) !void {
                                 if (entry.view) |view| {
                                     const uv = 0.25 * RowHeight / ImageWidth;
                                     if (self.deecy.gctx.lookupResource(view)) |v|
-                                        zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(v)) }, .{ .w = ImageWidth, .h = RowHeight, .uv0 = .{ 0.5, 0.5 - uv }, .uv1 = .{ 1.0, 0.5 + uv } });
+                                        zgui.image(.{ .tex_data = null, .tex_id = @fromBackingInt(@intFromPtr(v)) }, .{ .w = ImageWidth, .h = RowHeight, .uv0 = .{ 0.5, 0.5 - uv }, .uv1 = .{ 1.0, 0.5 + uv } });
                                 }
                                 _ = zgui.tableNextColumn();
                                 zgui.alignTextToFramePadding();
@@ -1401,7 +1401,7 @@ pub fn draw_game_library(self: *@This()) !void {
                                     zgui.text("{s}", .{truncated_name});
                                     zgui.setCursorScreenPos(.{ cursor_pos[0], cursor_pos[1] + text_padding[1] + title_height });
                                     if (self.deecy.gctx.lookupResource(view)) |v|
-                                        zgui.image(.{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(v)) }, .{ .w = 256, .h = 256 });
+                                        zgui.image(.{ .tex_data = null, .tex_id = @fromBackingInt(@intFromPtr(v)) }, .{ .w = 256, .h = 256 });
                                 } else {
                                     const p = .{ cursor_pos[0] + 128.0, cursor_pos[1] + text_padding[1] + title_height + 128.0 };
                                     draw_list.addCircleFilled(.{ .p = p, .r = 96.0, .col = 0x80FFFFFF, .num_segments = 0 });

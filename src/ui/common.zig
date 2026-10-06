@@ -61,7 +61,7 @@ pub fn word_filter_score(query: []const u8, value: []const u8) i32 {
 }
 
 pub fn optional_bool(label: []const u8, value: *?bool) bool {
-    zgui.pushItemFlag(@enumFromInt(1 << 12), true);
+    zgui.pushItemFlag(@fromBackingInt(1 << 12), true);
     defer zgui.popItemFlag();
     zgui.checkbox(label, .{ .v = value });
 }
@@ -72,9 +72,9 @@ pub fn menu_from_enum(comptime name: [:0]const u8, value: anytype, options: stru
     const T = @TypeOf(value.*);
     var changed = false;
     if (zgui.beginMenu(name, options.enabled)) {
-        inline for (@typeInfo(T).@"enum".fields) |field| {
-            const v: T = @enumFromInt(field.value);
-            if (zgui.menuItem(field.name, .{ .selected = value.* == v })) {
+        inline for (@typeInfo(T).@"enum".field_names, @typeInfo(T).@"enum".field_values) |field_name, field_value| {
+            const v: T = @fromBackingInt(field_value);
+            if (zgui.menuItem(field_name, .{ .selected = value.* == v })) {
                 value.* = v;
                 changed = true;
             }

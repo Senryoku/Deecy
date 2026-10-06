@@ -124,8 +124,8 @@ const SectorType = enum {
     AUDIO,
 
     pub fn parse(s: []const u8) ?@This() {
-        inline for (std.meta.fields(@This())) |t| {
-            if (std.mem.eql(u8, s, t.name)) return @enumFromInt(t.value);
+        inline for (@typeInfo(@This()).@"enum".field_names, @typeInfo(@This()).@"enum".field_values) |field_names, field_values| {
+            if (std.mem.eql(u8, s, field_names)) return @fromBackingInt(field_values);
         }
         return null;
     }
@@ -160,10 +160,10 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !@Th
         5 => {
             if (header_length != 124) return error.InvalidCHDv5;
             self.compressors = [4]Compression{
-                @enumFromInt(try reader.takeInt(u32, .big)),
-                @enumFromInt(try reader.takeInt(u32, .big)),
-                @enumFromInt(try reader.takeInt(u32, .big)),
-                @enumFromInt(try reader.takeInt(u32, .big)),
+                @fromBackingInt(try reader.takeInt(u32, .big)),
+                @fromBackingInt(try reader.takeInt(u32, .big)),
+                @fromBackingInt(try reader.takeInt(u32, .big)),
+                @fromBackingInt(try reader.takeInt(u32, .big)),
             };
             self.logical_bytes = try reader.takeInt(u64, .big);
             self.map_offset = try reader.takeInt(u64, .big);
@@ -485,7 +485,7 @@ fn decode_map_v5(self: *@This()) !void {
             entry.compression = last_comp;
             rep_count -= 1;
         } else {
-            const val: CompressionType = @enumFromInt(try decoder.next(&bit_reader));
+            const val: CompressionType = @fromBackingInt(try decoder.next(&bit_reader));
             switch (val) {
                 .RLESmall => {
                     entry.compression = last_comp;
@@ -549,7 +549,7 @@ fn decode_map_v5(self: *@This()) !void {
         self.map[i].crc = crc;
         self.map[i].loaded = false;
 
-        raw_map[12 * i] = @intFromEnum(self.map[i].compression);
+        raw_map[12 * i] = @backingInt(self.map[i].compression);
         std.mem.bytesAsValue(u24, raw_map[12 * i + 1 ..]).* = @byteSwap(length);
         std.mem.bytesAsValue(u48, raw_map[12 * i + 4 ..]).* = @byteSwap(offset);
         std.mem.bytesAsValue(u16, raw_map[12 * i + 10 ..]).* = @byteSwap(crc);
@@ -565,7 +565,7 @@ fn search_metadata(self: *@This(), offset: ?u64, tag: MetadataTag, index: u32) !
     while (current_offset != 0) {
         var entry: MetadataEntry = undefined;
         var reader = std.Io.Reader.fixed(self._file.view()[current_offset..]);
-        entry.tag = @enumFromInt(try reader.takeInt(u32, .big));
+        entry.tag = @fromBackingInt(try reader.takeInt(u32, .big));
         entry.length = try reader.takeInt(u32, .big);
         entry.next = try reader.takeInt(u64, .big);
 

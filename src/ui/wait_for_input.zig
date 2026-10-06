@@ -40,7 +40,7 @@ pub fn controller_button(d: *Deecy, gamepad_id: zglfw.Gamepad) ?zglfw.Gamepad.Bu
         const gamepad_state = gamepad_id.getState() catch return null;
         for (gamepad_state.buttons, 0..) |button, i| {
             if (button == .press)
-                return @enumFromInt(i);
+                return @fromBackingInt(@intCast(i));
         }
         std.Io.sleep(d.io, .fromMilliseconds(1), .awake) catch {};
     }
@@ -57,7 +57,7 @@ pub fn controller_axis(d: *Deecy, gamepad_id: zglfw.Gamepad) ?zglfw.Gamepad.Axis
         const gamepad_state = gamepad_id.getState() catch return null;
         for (gamepad_state.axes, 0..) |value, i| {
             if (@abs(initial_state.axes[i] - value) > Threshold) {
-                return @enumFromInt(i);
+                return @fromBackingInt(@intCast(i));
             }
         }
         std.Io.sleep(d.io, .fromMilliseconds(1), .awake) catch {};
@@ -85,7 +85,7 @@ pub fn any_button(d: *Deecy) ?union(enum) { controller: zglfw.Gamepad.Button, ke
                         const gamepad_state = gamepad_id.getState() catch continue;
                         for (gamepad_state.buttons, 0..) |button, i| {
                             if (button == .press)
-                                return .{ .controller = @enumFromInt(i) };
+                                return .{ .controller = @fromBackingInt(@intCast(i)) };
                         }
                     }
                 }

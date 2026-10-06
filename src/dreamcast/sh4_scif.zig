@@ -72,7 +72,7 @@ pub fn deinit(io: std.Io) void {
 }
 
 pub fn read(self: *const SH4, comptime T: type, virtual_addr: u32) T {
-    const p4_reg: SH4Module.P4Register = @enumFromInt(virtual_addr);
+    const p4_reg: SH4Module.P4Register = @fromBackingInt(virtual_addr);
     switch (p4_reg) {
         .SCFSR2 => {
             SH4Module.check_type(&[_]type{u16}, T, "Invalid P4 Write({}) to SCFSR2\n", .{T});
@@ -99,7 +99,7 @@ pub fn read(self: *const SH4, comptime T: type, virtual_addr: u32) T {
 }
 
 pub fn write(self: *SH4, comptime T: type, virtual_addr: u32, value: T) void {
-    const p4_reg: SH4Module.P4Register = @enumFromInt(virtual_addr);
+    const p4_reg: SH4Module.P4Register = @fromBackingInt(virtual_addr);
     log.debug("Write to {t}: {any}", .{ p4_reg, value });
     switch (p4_reg) {
         .SCFTDR2 => {
@@ -227,10 +227,7 @@ fn update_interrupts(self: *SH4) void {
     self.set_interrupt(SH4Module.Interrupt.SCIF_ERI, status_register.er and (control_register.rie or control_register.reie));
 }
 
-const c = @cImport({
-    @cDefine("_XOPEN_SOURCE", "500");
-    @cInclude("stdlib.h");
-});
+const c = @import("c_stdlib");
 
 const builtin = @import("builtin");
 const std = @import("std");

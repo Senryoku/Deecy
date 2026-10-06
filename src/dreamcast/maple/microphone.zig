@@ -42,7 +42,7 @@ pub fn audio_input_command(self: *@This(), command: []const u32, dest: [*]u32) s
     if (command.len == 0) return .{ .UnknownCommand, 0 };
 
     const bytes = std.mem.asBytes(&command[0]);
-    const subcommand: Subcommand = @enumFromInt(bytes[0]);
+    const subcommand: Subcommand = @fromBackingInt(bytes[0]);
     const dt = bytes[1..4];
     log.debug("Audio Input Command: {}, {X}", .{ subcommand, dt });
     switch (subcommand) {
@@ -52,7 +52,7 @@ pub fn audio_input_command(self: *@This(), command: []const u32, dest: [*]u32) s
                     .frequency = .@"11.025 kHz",
                     .uLaw = .@"14bit Linear",
                     .sbfov = .Normal,
-                    .sample_expansion = @truncate(@intFromEnum(self.sample_expansion)),
+                    .sample_expansion = @truncate(@backingInt(self.sample_expansion)),
                     .sampling = self.control.sampling,
                 },
                 .amp = self.amp_gain,
@@ -88,7 +88,7 @@ pub fn audio_input_command(self: *@This(), command: []const u32, dest: [*]u32) s
             return .{ .Acknowledge, 0 };
         },
         .ExtuBit => {
-            const extu_bit: ExtuBit = @enumFromInt(dt[0]);
+            const extu_bit: ExtuBit = @fromBackingInt(dt[0]);
             switch (extu_bit) {
                 else => {
                     self.sample_expansion = extu_bit;
@@ -98,7 +98,7 @@ pub fn audio_input_command(self: *@This(), command: []const u32, dest: [*]u32) s
             }
         },
         .VolumeMode => {
-            const mode: enum(u8) { @"+30dB" = 0, @"+12dB" = 1, _ } = @enumFromInt(dt[0]);
+            const mode: enum(u8) { @"+30dB" = 0, @"+12dB" = 1, _ } = @fromBackingInt(dt[0]);
             log.warn("Unimplemented Volume Mode command: {}", .{mode});
             return .{ .Acknowledge, 0 };
         },

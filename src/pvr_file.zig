@@ -110,9 +110,9 @@ pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !Image {
         }
 
         if (header.image_data_type.vq_compressed()) {
-            Texture.decode_vq(@ptrCast(@alignCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), buffer[code_book_offset..], buffer[8 * 256 + texels_offset ..], image.width, image.height, header.image_data_type.twiddled());
+            Texture.decode_vq(@ptrCast(@alignCast(image.bgra.ptr)), @fromBackingInt(@intCast(@backingInt(header.pixel_format))), buffer[code_book_offset..], buffer[8 * 256 + texels_offset ..], image.width, image.height, header.image_data_type.twiddled());
         } else {
-            Texture.decode_tex(@ptrCast(@alignCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), buffer[texels_offset..], image.width, image.height, header.image_data_type.twiddled());
+            Texture.decode_tex(@ptrCast(@alignCast(image.bgra.ptr)), @fromBackingInt(@intCast(@backingInt(header.pixel_format))), buffer[texels_offset..], image.width, image.height, header.image_data_type.twiddled());
         }
 
         return image;

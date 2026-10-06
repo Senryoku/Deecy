@@ -313,10 +313,10 @@ pub const AICARegister = enum(u32) {
 fn bitfield_format(self: anytype, writer: *std.Io.Writer) !void {
     var first = true;
     try writer.writeAll("(");
-    inline for (@typeInfo(InterruptBits).@"struct".fields) |field| {
-        if (@field(self, field.name) == 1) {
+    inline for (@typeInfo(InterruptBits).@"struct".field_names) |field_name| {
+        if (@field(self, field_name) == 1) {
             if (!first) try writer.writeAll(" | ");
-            try writer.writeAll(field.name);
+            try writer.writeAll(field_name);
             first = false;
         }
     }
@@ -683,7 +683,7 @@ pub const AICA = struct {
     dsp_emulation: DSPEmulation = .JIT,
 
     regs: []u32, // All registers are 32-bit afaik
-    wave_memory: []u8 align(64), // Not owned.
+    wave_memory: []align(64) u8, // Not owned.
 
     channel_states: []AICAChannelState,
 
@@ -704,7 +704,7 @@ pub const AICA = struct {
     _allocator: std.mem.Allocator,
 
     /// NOTE: Call setup_arm after!
-    pub fn init(allocator: std.mem.Allocator, memory: []u8) !AICA {
+    pub fn init(allocator: std.mem.Allocator, memory: []align(64) u8) !AICA {
         var r = AICA{
             .regs = try allocator.alloc(u32, 0x8000 / 4),
             .wave_memory = memory,
@@ -802,7 +802,7 @@ pub const AICA = struct {
     }
 
     pub inline fn get_reg(self: *const AICA, comptime T: type, reg: AICARegister) *T {
-        return @as(*T, @ptrCast(@alignCast(&self.regs[@intFromEnum(reg) / 4])));
+        return @as(*T, @ptrCast(@alignCast(&self.regs[@backingInt(reg) / 4])));
     }
 
     pub inline fn get_dsp_mix_register(self: *const AICA, channel: u4) *DSPOutputMixer {
@@ -810,7 +810,7 @@ pub const AICA = struct {
     }
 
     pub inline fn debug_read_reg(self: *const AICA, comptime T: type, reg: AICARegister) T {
-        return @as(*T, @ptrCast(@alignCast(&self.regs[@intFromEnum(reg) / 4]))).*;
+        return @as(*T, @ptrCast(@alignCast(&self.regs[@backingInt(reg) / 4]))).*;
     }
 
     pub fn read_register(self: *const AICA, comptime T: type, addr: u32) T {
@@ -830,7 +830,7 @@ pub const AICA = struct {
         const reg_addr = local_addr - (local_addr % 4);
         const high_byte = T == u8 and local_addr % 4 == 1;
 
-        switch (@as(AICARegister, @enumFromInt(reg_addr))) {
+        switch (@as(AICARegister, @fromBackingInt(reg_addr))) {
             //.MasterVolume => return if (!high_byte) 0x10 else 0,
             .MIDIInput => {
                 self.get_reg(MIDIInput, .MIDIInput).* = .{
@@ -935,7 +935,7 @@ pub const AICA = struct {
             std.debug.assert(local_addr % 4 == 0 or T == u8);
             const reg_addr = local_addr - (local_addr % 4);
             const high_byte = T == u8 and local_addr % 4 == 1;
-            switch (@as(AICARegister, @enumFromInt(reg_addr))) {
+            switch (@as(AICARegister, @fromBackingInt(reg_addr))) {
                 .MasterVolume => {
                     aica_log.debug("Write({}) to Master Volume (0x{X:0>8}) = 0x{X:0>8}", .{ T, addr, value });
                 },
