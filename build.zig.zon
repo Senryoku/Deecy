@@ -6,12 +6,12 @@
     .paths = .{""},
     .dependencies = .{
         .zgpu = .{
-            .url = "git+https://github.com/Senryoku/zgpu#32178aebe1423a76ca19a40b388a8bf19009f310",
-            .hash = "zgpu-0.17.0-dev-nqFT5BpIzAUUSIfyZ67z7y7K6kqHF4azMUMMtobKZS-C",
+            .url = "git+https://github.com/Senryoku/zgpu#47230a348cf24d6c3f1eb92aaa80b1687e9d7d3a",
+            .hash = "zgpu-0.17.0-dev-nqFT5BpIzAXEWlQtpawvgQkPwEwPu-UP299ESIKuaL-B",
         },
         .zgui = .{
-            .url = "git+https://github.com/Senryoku/zgui#5f32c44f342de6a9def55dc9508cafb2c98326bf",
-            .hash = "zgui-0.6.0-dev--L6sZNBUbQBnXCJ2GjG96_zT_aTO77rKODNNYb3tboO4",
+            .url = "git+https://github.com/Senryoku/zgui#c70832322cdf5efe8f53ba77890691d326e4c50a",
+            .hash = "zgui-0.6.0-dev--L6sZNBUbQB4y5uMveUUxapeFpDKA5H46FoAvhLSREF-",
         },
         .zaudio = .{
             .url = "git+https://github.com/Senryoku/zaudio.git#170f2188a7a7893f87bcd4811e911cffe2b3d30f",
@@ -30,8 +30,8 @@
             .hash = "ziglz4-0.1.1-HIQ641VaAABClcZPAiNgm1jkK0c35GuErRrreF5Nr00m",
         },
         .zglfw = .{
-            .url = "git+https://github.com/Senryoku/zglfw#ef6faee6586b7db14b62f0abd7f31f9aacf35da6",
-            .hash = "zglfw-0.10.0-dev-zgVDNDjDJQCUy7GFg_D49bKPs8jwJF8DPH0K1qeW0hLE",
+            .url = "git+https://github.com/Senryoku/zglfw#3a7278d22d334856542c055987c530b5602d835f",
+            .hash = "zglfw-0.10.0-dev-zgVDNDjDJQCRZi0w2BQo7oGs6WOQf036QsgBlTNoxNsG",
         },
         .known_folders = .{
             .url = "git+https://github.com/ziglibs/known-folders.git#6da0d0c41b78b9ed2d34fa364fcb81b5ebece6c4",
