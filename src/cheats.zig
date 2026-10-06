@@ -88,8 +88,14 @@ pub fn load(allocator: std.mem.Allocator, io: std.Io, uid: Default.ProductUID) !
     };
     defer allocator.free(cheats_str);
 
-    const zon = std.zon.parse.fromSliceAlloc([]Cheat, allocator, cheats_str, null, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
+    var diagnostics: std.zon.parse.Diagnostics = undefined;
+    defer helpers.free(allocator, diagnostics);
+    const zon = std.zon.parse.fromSlice([]Cheat, .{ .gpa = allocator, .arena = allocator, .source = cheats_str, .diagnostics = &diagnostics, .ignore_unknown_fields = true }) catch |err| {
         log.err("Failed to parse cheats file for {f}: {t}.", .{ uid, err });
+        switch (err) {
+            error.ParseZon => diagnostics.log(CheatsFileName),
+            else => {},
+        }
         return &.{};
     };
     return zon;
@@ -99,6 +105,7 @@ const CheatsFileName = "cheats.zon";
 
 const std = @import("std");
 const log = std.log.scoped(.cheats);
+const helpers = @import("helpers");
 
 const host_paths = @import("host_paths.zig");
 const Default = @import("default_game_settings.zig");

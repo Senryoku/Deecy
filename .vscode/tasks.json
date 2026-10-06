@@ -11,14 +11,14 @@
 		{
 			"label": "build-release-safe",
 			"type": "shell",
-			"command": "zig build -Doptimize=ReleaseSafe",
+			"command": "zig build -Doptimize=safe",
 			"group": "build",
 			"problemMatcher": ["$gcc"]
 		},
 		{
 			"label": "build-release-fast",
 			"type": "shell",
-			"command": "zig build -Doptimize=ReleaseFast",
+			"command": "zig build -Doptimize=fast",
 			"group": "build",
 			"problemMatcher": ["$gcc"]
 		}

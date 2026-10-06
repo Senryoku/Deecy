@@ -9,7 +9,7 @@ const Register = enum(u32) {
     ModemID1 = 0x60_0004,
 
     pub fn as_u32(self: @This()) u32 {
-        return @intFromEnum(self);
+        return @backingInt(self);
     }
 };
 
@@ -673,7 +673,7 @@ pub fn read(self: *@This(), comptime T: type, addr: u32) T {
     std.debug.assert(addr >= 0x00600000 and addr <= 0x006007FF);
     log.debug("Read({any}): {X}", .{ T, addr });
     switch (addr & 0x7FF) {
-        0x000 => return @intFromEnum(self.modemID0),
+        0x000 => return @backingInt(self.modemID0),
         0x004 => return @as(u8, @bitCast(self.modemID1)),
         0x400...0x47F => return self.read_register((addr & 0x7F) >> 2),
         0x480 => return 0,
@@ -777,7 +777,7 @@ pub fn write(self: *@This(), comptime T: type, addr: u32, value: T) void {
     std.debug.assert(addr >= 0x00600000 and addr <= 0x006007FF);
     log.debug("Write({any}): {X} = {X}", .{ T, addr, value });
     switch (addr & 0x7FF) {
-        0x000 => self.modemID0 = @enumFromInt(@as(u8, @truncate(value))),
+        0x000 => self.modemID0 = @fromBackingInt(@as(u8, @truncate(value))),
         0x004 => self.modemID1 = @bitCast(@as(u8, @truncate(value))),
         0x400...0x47F => self.write_register((addr & 0x7F) >> 2, @truncate(value)),
         0x480 => {

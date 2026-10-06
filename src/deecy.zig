@@ -280,17 +280,17 @@ const ControllerSettings = struct {
 };
 
 pub const PresentMode = enum(u32) {
-    Fifo = @intFromEnum(zgpu.wgpu.PresentMode.fifo),
-    FifoRelaxed = @intFromEnum(zgpu.wgpu.PresentMode.fifo_relaxed),
-    Immediate = @intFromEnum(zgpu.wgpu.PresentMode.immediate),
-    Mailbox = @intFromEnum(zgpu.wgpu.PresentMode.mailbox),
+    Fifo = @backingInt(zgpu.wgpu.PresentMode.fifo),
+    FifoRelaxed = @backingInt(zgpu.wgpu.PresentMode.fifo_relaxed),
+    Immediate = @backingInt(zgpu.wgpu.PresentMode.immediate),
+    Mailbox = @backingInt(zgpu.wgpu.PresentMode.mailbox),
 
     pub fn toWGPU(self: PresentMode) zgpu.wgpu.PresentMode {
-        return @enumFromInt(@intFromEnum(self));
+        return @fromBackingInt(@backingInt(self));
     }
 
     pub fn fromWGPU(self: zgpu.wgpu.PresentMode) PresentMode {
-        return @enumFromInt(@intFromEnum(self));
+        return @fromBackingInt(@backingInt(self));
     }
 };
 
@@ -339,9 +339,9 @@ pub const Configuration = struct {
     pub const Region = enum(u8) {
         /// USA by default and auto detect when using a disc.
         Auto = std.math.maxInt(u8),
-        Japan = @intFromEnum(DreamcastModule.Region.Japan),
-        USA = @intFromEnum(DreamcastModule.Region.USA),
-        Europe = @intFromEnum(DreamcastModule.Region.Europe),
+        Japan = @backingInt(DreamcastModule.Region.Japan),
+        USA = @backingInt(DreamcastModule.Region.USA),
+        Europe = @backingInt(DreamcastModule.Region.Europe),
         pub fn to_dreamcast(self: @This()) DreamcastModule.Region {
             return switch (self) {
                 .Auto => .USA,
@@ -354,9 +354,9 @@ pub const Configuration = struct {
     pub const VideoCable = enum(u16) {
         /// VGA by default but can be automatically overridden when using a non-compatible disc.
         Auto = std.math.maxInt(u16),
-        VGA = @intFromEnum(DreamcastModule.CableType.VGA),
-        RGB = @intFromEnum(DreamcastModule.CableType.RGB),
-        Composite = @intFromEnum(DreamcastModule.CableType.Composite),
+        VGA = @backingInt(DreamcastModule.CableType.VGA),
+        RGB = @backingInt(DreamcastModule.CableType.RGB),
+        Composite = @backingInt(DreamcastModule.CableType.Composite),
         pub fn to_dreamcast(self: @This()) DreamcastModule.CableType {
             return switch (self) {
                 .Auto => .VGA,
@@ -367,6 +367,10 @@ pub const Configuration = struct {
         }
     };
     pub const BiosEmulation = enum { Original, @"HLE Replacement" };
+
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        helpers.free(allocator, self.*);
+    }
 };
 
 pub const ConfigFile = "config.zon";
@@ -489,8 +493,14 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, flags: packed struct { w
         if (host_paths.root().readFileAllocOptions(io, config_path, allocator, .limited(1024 * 1024), .@"8", 0)) |conf_str| {
             defer allocator.free(conf_str);
             @setEvalBranchQuota(2000);
-            const zon = std.zon.parse.fromSliceAlloc(helpers.Partial(Configuration), allocator, conf_str, null, .{ .ignore_unknown_fields = true, .free_on_error = true }) catch |err| {
+            var diag: std.zon.parse.Diagnostics = undefined;
+            defer helpers.free(allocator, diag);
+            const zon = std.zon.parse.fromSlice(helpers.Partial(Configuration), .{ .gpa = allocator, .arena = allocator, .diagnostics = &diag, .source = conf_str, .ignore_unknown_fields = true }) catch |err| {
                 deecy_log.err("Failed to parse config file: {t}.", .{err});
+                switch (err) {
+                    error.ParseZon => diag.log(config_path),
+                    else => {},
+                }
                 break :config .{};
             };
             break :config helpers.to_complete(Configuration, zon);
@@ -722,7 +732,7 @@ pub fn destroy(self: *@This()) void {
     self.deinit_enabled_cheats();
 
     self.save_config() catch |err| deecy_log.err("Error writing config: {t}", .{err});
-    std.zon.parse.free(self._allocator, self.config);
+    self.config.deinit(self._allocator);
 
     self.shortcuts.deinit(self._allocator, self.io);
 
@@ -766,7 +776,7 @@ fn auto_populate_joysticks(self: *@This()) !void {
     defer deecy_log.info("Joysticks initialized in {f}", .{start_time.durationTo(std.Io.Clock.awake.now(self.io))});
     var curr_pad: usize = 0;
     for (0..zglfw.Joystick.maximum_supported) |idx| {
-        const joystick: zglfw.Joystick = @enumFromInt(idx);
+        const joystick: zglfw.Joystick = @fromBackingInt(@intCast(idx));
         if (joystick.isPresent()) {
             if (joystick.asGamepad()) |_| {
                 self.controllers[curr_pad] = .{ .id = joystick };
@@ -907,8 +917,8 @@ fn ui_init(self: *@This()) !void {
     zgui.backend.init(
         self.window,
         self.gctx.device,
-        @intFromEnum(zgpu.GraphicsContext.surface_texture_format),
-        @intFromEnum(zgpu.wgpu.TextureFormat.undefined),
+        @backingInt(zgpu.GraphicsContext.surface_texture_format),
+        @backingInt(zgpu.wgpu.TextureFormat.undefined),
     );
 
     zgui.plot.init();
@@ -1234,12 +1244,12 @@ pub fn poll_controllers(self: *@This()) void {
                                         const gamepad_state = gamepad.getState() catch continue;
                                         defer host_controller.last_state = gamepad_state;
 
-                                        inline for (std.meta.fields(zglfw.Gamepad.Button)) |button| {
-                                            if (gamepad_state.buttons[button.value] == .press) {
-                                                if (host_controller.last_state.buttons[button.value] == .release) {
-                                                    self.shortcuts.on_press(.{ .controller = @enumFromInt(button.value) });
+                                        inline for (@typeInfo(zglfw.Gamepad.Button).@"enum".field_values) |button| {
+                                            if (gamepad_state.buttons[button] == .press) {
+                                                if (host_controller.last_state.buttons[button] == .release) {
+                                                    self.shortcuts.on_press(.{ .controller = @fromBackingInt(button) });
                                                 } else {
-                                                    self.shortcuts.on_hold(.{ .controller = @enumFromInt(button.value) });
+                                                    self.shortcuts.on_hold(.{ .controller = @fromBackingInt(button) });
                                                 }
                                             }
                                         }
@@ -1258,7 +1268,7 @@ pub fn poll_controllers(self: *@This()) void {
                                         };
                                         for (gamepad_binds) |keybind| {
                                             if (keybind[0]) |button| {
-                                                const key_status = gamepad_state.buttons[@intFromEnum(button)];
+                                                const key_status = gamepad_state.buttons[@backingInt(button)];
                                                 switch (key_status) {
                                                     .press => c.press_buttons(keybind[1]),
                                                     .release => c.release_buttons(keybind[1]),
@@ -1266,9 +1276,9 @@ pub fn poll_controllers(self: *@This()) void {
                                             }
                                         }
                                         if (config.right_trigger) |axis|
-                                            c.axis[0] = @trunc(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255);
+                                            c.axis[0] = @trunc(std.math.clamp(gamepad_state.axes[@backingInt(axis)], 0.0, 1.0) * 255);
                                         if (config.left_trigger) |axis|
-                                            c.axis[1] = @trunc(std.math.clamp(gamepad_state.axes[@intFromEnum(axis)], 0.0, 1.0) * 255);
+                                            c.axis[1] = @trunc(std.math.clamp(gamepad_state.axes[@backingInt(axis)], 0.0, 1.0) * 255);
 
                                         const capabilities: DreamcastModule.Maple.Controller.InputCapabilities = @bitCast(c.subcapabilities[0]);
                                         inline for ([_]struct { host: ?zglfw.Gamepad.Axis, guest: u8 }{
@@ -1279,7 +1289,7 @@ pub fn poll_controllers(self: *@This()) void {
                                         }, 0..) |binding, idx| {
                                             if (@field(capabilities, ([_][]const u8{ "analogHorizontal", "analogVertical", "analogHorizontal2", "analogVertical2" })[idx]) != 0) {
                                                 if (binding.host) |host_axis| {
-                                                    var value = gamepad_state.axes[@intFromEnum(host_axis)];
+                                                    var value = gamepad_state.axes[@backingInt(host_axis)];
                                                     if (@abs(value) < host_controller.deadzone)
                                                         value = 0.0;
                                                     // TODO: Remap with deadzone?
@@ -1302,7 +1312,7 @@ pub fn poll_controllers(self: *@This()) void {
                                             .{ .host = config.right_stick_right_button, .guest_axis = 4, .value = 255 },
                                         }) |entry| {
                                             if (entry.host) |button| {
-                                                const key_status = gamepad_state.buttons[@intFromEnum(button)];
+                                                const key_status = gamepad_state.buttons[@backingInt(button)];
                                                 switch (key_status) {
                                                     .press => c.axis[entry.guest_axis] = entry.value,
                                                     else => {},
@@ -1488,7 +1498,7 @@ pub fn load_launcher(self: *@This()) !void {
     try self.reset();
     try self.dc.skip_bios();
     try self.dc.install_hle_syscalls();
-    if (builtin.mode == .Debug) {
+    if (builtin.mode == .debug) {
         _ = try std.Io.Dir.cwd().readFile(self.io, "./src/assets/launcher.bin", self.dc.ram[0x10000..]);
     } else {
         const launcher = @embedFile("./assets/launcher.bin");
@@ -2623,7 +2633,7 @@ fn draw_rewind_ui(self: *@This()) !void {
                     const texture_view = if (i < self.rewind.snapshots.items.len) self.rewind.snapshots.items[i].preview.view else self.rewind.current_frame.view;
                     if (self.gctx.lookupResource(texture_view)) |tex_id| {
                         zgui.image(
-                            .{ .tex_data = null, .tex_id = @enumFromInt(@intFromPtr(tex_id)) },
+                            .{ .tex_data = null, .tex_id = @fromBackingInt(@intFromPtr(tex_id)) },
                             .{ .w = PreviewWidth, .h = PreviewHeight, .uv0 = .{ 0.0, 0.0 }, .uv1 = .{ 1.0, 1.0 } },
                         );
                     } else {
@@ -2703,7 +2713,7 @@ fn draw_rewind_ui(self: *@This()) !void {
             if (zgui.button("Cancel", .{})) {
                 self.rewind_cancel();
             }
-            if (builtin.mode == .Debug and self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
+            if (builtin.mode == .debug and self.rewind.selected_snapshot < self.rewind.snapshots.items.len) {
                 zgui.sameLine(.{});
                 zgui.text("Size: {d: >4.1}MB     Available preview texture: {d}", .{
                     @as(f32, @floatFromInt(self.rewind.snapshots.items[@intCast(self.rewind.selected_snapshot)].data.len)) / 1024 / 1024,

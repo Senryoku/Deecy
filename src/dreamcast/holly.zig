@@ -1055,7 +1055,7 @@ const VolumeInstruction = enum(u3) {
     _,
 
     pub fn masked(self: VolumeInstruction) VolumeInstruction {
-        return @enumFromInt(@as(u3, @intFromEnum(self) & 0b11));
+        return @fromBackingInt(@as(u3, @backingInt(self) & 0b11));
     }
 };
 
@@ -1388,12 +1388,12 @@ pub const VertexParameter = packed struct(u512) {
     pub inline fn init_in_place(self: *@This(), cmd: []u32, t: VertexParameterType) void {
         @memcpy(std.mem.asBytes(self)[0..64], std.mem.sliceAsBytes(cmd));
         // Re-purpose unused bits in PCW.obj_control as a union tag.
-        self.parameter_control_word.obj_control._ = @intFromEnum(t);
+        self.parameter_control_word.obj_control._ = @backingInt(t);
         std.debug.assert(self.tag() == t);
     }
 
     pub fn tag(self: *const @This()) VertexParameterType {
-        return @enumFromInt(self.parameter_control_word.obj_control._);
+        return @fromBackingInt(self.parameter_control_word.obj_control._);
     }
 
     pub fn tagged(self: *const @This()) TaggedVertexParameter {
@@ -1917,7 +1917,7 @@ pub const Holly = struct {
     }
 
     pub fn write_register(self: *@This(), addr: u32, v: u32) void {
-        switch (@as(HollyRegister, @enumFromInt(addr))) {
+        switch (@as(HollyRegister, @fromBackingInt(addr))) {
             .ID, .REVISION => return, // Read-only
             .SOFTRESET => {
                 const sr: SOFT_RESET = @bitCast(v);
@@ -2467,11 +2467,11 @@ pub const Holly = struct {
             .SPG_STATUS => self._dc.gpu.update_spg_status(),
             else => {},
         }
-        return @constCast(self)._get_register_from_addr(T, @intFromEnum(r)).*;
+        return @constCast(self)._get_register_from_addr(T, @backingInt(r)).*;
     }
 
     pub inline fn _get_register(self: *@This(), comptime T: type, r: HollyRegister) *T {
-        return self._get_register_from_addr(T, @intFromEnum(r));
+        return self._get_register_from_addr(T, @backingInt(r));
     }
 
     pub inline fn _get_register_from_addr(self: *@This(), comptime T: type, addr: u32) *T {
@@ -2480,11 +2480,11 @@ pub const Holly = struct {
     }
 
     pub inline fn get_palette(self: *const @This()) []const u32 {
-        return @as([*]const u32, @ptrCast(@alignCast(&self.registers[@intFromEnum(HollyRegister.PALETTE_RAM_START) - HollyRegisterStart])))[0..1024];
+        return @as([*]const u32, @ptrCast(@alignCast(&self.registers[@backingInt(HollyRegister.PALETTE_RAM_START) - HollyRegisterStart])))[0..1024];
     }
 
     pub inline fn get_fog_table(self: *const @This()) []const u32 {
-        return @as([*]const u32, @ptrCast(@alignCast(&self.registers[@intFromEnum(HollyRegister.FOG_TABLE_START) - HollyRegisterStart])))[0..0x80];
+        return @as([*]const u32, @ptrCast(@alignCast(&self.registers[@backingInt(HollyRegister.FOG_TABLE_START) - HollyRegisterStart])))[0..0x80];
     }
 
     pub inline fn get_region_header_type(self: *const @This()) FPU_PARAM_CFG.RegionHeaderType {

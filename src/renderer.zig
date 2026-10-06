@@ -52,7 +52,7 @@ fn address_mode_bit(address_mode: wgpu.AddressMode) u8 {
         .repeat => 1,
         .mirror_repeat => 2,
         else => {
-            if (@import("builtin").mode == .Debug)
+            if (@import("builtin").mode == .debug)
                 log.err("Unsupported address mode {t}", .{address_mode});
             return 0;
         },
@@ -64,7 +64,7 @@ fn filter_mode_bit(filter: anytype) u8 {
         .nearest => 0,
         .linear => 1,
         else => {
-            if (@import("builtin").mode == .Debug)
+            if (@import("builtin").mode == .debug)
                 log.err("Unsupported filter mode {t}", .{filter});
             return 0;
         },
@@ -814,7 +814,7 @@ pub const Renderer = struct {
         }
     } else void,
 
-    _scratch_pad: []u8 align(4), // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
+    _scratch_pad: []align(4) u8, // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
 
     _gctx: *zgpu.GraphicsContext,
     _gctx_queue_mutex: *std.Io.Mutex,
@@ -1102,7 +1102,7 @@ pub const Renderer = struct {
         }
 
         // Ensure capacity for pipelines: Async creation needs pointer stability.
-        try renderer.opaque_pipelines.ensureTotalCapacity(4 * 2 * std.meta.fields(wgpu.BlendFactor).len * std.meta.fields(wgpu.BlendFactor).len * std.meta.fields(wgpu.CompareFunction).len * 2);
+        try renderer.opaque_pipelines.ensureTotalCapacity(4 * 2 * @typeInfo(wgpu.BlendFactor).@"enum".field_names.len * @typeInfo(wgpu.BlendFactor).@"enum".field_names.len * @typeInfo(wgpu.CompareFunction).@"enum".field_names.len * 2);
 
         // Asynchronously create some common pipelines ahead of time
         _ = renderer.get_or_put_pipeline(BackgroundPipelineKey, .Async);
@@ -1246,8 +1246,8 @@ pub const Renderer = struct {
         self.game_settings = game_settings;
 
         log.info("Updating game settings:", .{});
-        inline for (@typeInfo(GameSettings).@"struct".fields) |field|
-            log.info("  " ++ field.name ++ ": {}", .{@field(self.game_settings, field.name)});
+        inline for (@typeInfo(GameSettings).@"struct".field_names) |field_name|
+            log.info("  " ++ field_name ++ ": {}", .{@field(self.game_settings, field_name)});
 
         if (previous.aspect_ratio != game_settings.aspect_ratio) {
             self.resolution = .{
@@ -1828,7 +1828,7 @@ pub const Renderer = struct {
         for (0..palette_ram.len) |i| {
             self.palette_bgra[i] = switch (palette_ctrl_ram) {
                 // ARGB1555, RGB565, ARGB4444. These happen to match the values of TexturePixelFormat.
-                0x0, 0x1, 0x2 => std.mem.bytesToValue(u32, &(Color16{ .value = @truncate(palette_ram[i]) }).bgra(@enumFromInt(palette_ctrl_ram), true)),
+                0x0, 0x1, 0x2 => std.mem.bytesToValue(u32, &(Color16{ .value = @truncate(palette_ram[i]) }).bgra(@fromBackingInt(palette_ctrl_ram), true)),
                 // ARGB8888
                 0x3 => @bitCast(palette_ram[i]),
             };

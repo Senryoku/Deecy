@@ -1396,9 +1396,9 @@ fn handle_data_processing(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool
         inline for (0..0x10) |opcode| {
             inline for (0..2) |s| {
                 inline for (0..2) |i| {
-                    if (inst.opcode == @as(arm7.Opcode, @enumFromInt(opcode)) and inst.s == s and inst.i == i) {
+                    if (inst.opcode == @as(arm7.Opcode, @fromBackingInt(opcode)) and inst.s == s and inst.i == i) {
                         try b.mov(.{ .reg = ArgRegisters[0] }, .{ .imm32 = instruction });
-                        try b.call(comptime_handle_data_processing(@enumFromInt(opcode), s, i).handler);
+                        try b.call(comptime_handle_data_processing(@fromBackingInt(opcode), s, i).handler);
                     }
                 }
             }
