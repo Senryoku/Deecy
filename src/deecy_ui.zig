@@ -1103,10 +1103,19 @@ pub fn draw(self: *@This()) !void {
     }
 
     if (try InputEditor.draw(d)) |a| sw: switch (a) {
+        .New => {
+            d.pause();
+            d.input_recording.deinit(d._allocator);
+            d.input_recording = .{};
+            d.input_recording.record.set_game(d.product_uid());
+        },
+        .NewFromState => {
+            self.notifications.push("Unimplemented", .{}, "", .{});
+        },
         .Save => {
             if (d.input_recording.path) |path| {
                 d.pause();
-                try save_dcm(d, path);
+                try self.save_dcm(d, path);
             } else continue :sw .SaveAs;
         },
         .SaveAs => {
@@ -1114,7 +1123,9 @@ pub fn draw(self: *@This()) !void {
             if (open_path) |path| {
                 defer nfd.freePath(path);
                 d.pause();
-                try save_dcm(d, path);
+
+                try self.save_dcm(d, path);
+
                 if (d.input_recording.path) |p| d._allocator.free(p);
                 d.input_recording.path = try d._allocator.dupe(u8, path);
             }
@@ -1132,6 +1143,8 @@ pub fn draw(self: *@This()) !void {
                 var file_reader = file.reader(d.io, &buffer);
                 d.input_recording.record = try Deecy.InputRecord.deserialize(d._allocator, &file_reader.interface);
 
+                self.notifications.push("DCM Loaded", .{}, "From file '{s}'", .{path});
+
                 if (d.input_recording.path) |p| d._allocator.free(p);
                 d.input_recording.path = try d._allocator.dupe(u8, path);
             }
@@ -1139,16 +1152,12 @@ pub fn draw(self: *@This()) !void {
         .StartRecord => {
             d.pause();
             d.input_recording.state = .Recording;
-            d.input_recording.record.set_game(d.product_uid());
-            d.input_recording.record.initial_rtc = DreamcastModule.AICA.timestamp();
-            d.input_recording.cursor = 0;
-            try d.reset();
             d.start();
         },
         .StartReplay => {
             d.pause();
             d.input_recording.state = .Playing;
-            d.input_recording.cursor = 0;
+            d.input_recording.cursors = @splat(0);
             try d.reset();
             d.start();
         },
@@ -1174,13 +1183,14 @@ pub fn draw(self: *@This()) !void {
     }
 }
 
-fn save_dcm(d: *Deecy, path: []const u8) !void {
+fn save_dcm(self: *@This(), d: *Deecy, path: []const u8) !void {
     var file = try std.Io.Dir.cwd().createFile(d.io, path, .{});
     defer file.close(d.io);
     var buffer: [2048]u8 = undefined;
     var file_writer = file.writer(d.io, &buffer);
     try d.input_recording.record.serialize(&file_writer.interface);
     try file_writer.end();
+    self.notifications.push("DCM Saved", .{}, "To file '{s}'", .{path});
 }
 
 /// A few random colors to help differentiate games without images.

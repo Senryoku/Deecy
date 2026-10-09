@@ -476,8 +476,8 @@ input_recording: struct {
     state: enum { Idle, Playing, Recording } = .Idle,
     path: ?[]const u8 = null,
     record: InputRecord = .{},
-    /// Playing head.
-    cursor: usize = 0,
+    /// Playing heads. One per port.
+    cursors: [4]usize = @splat(0),
     mutex: std.Io.Mutex = .init,
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
@@ -1226,11 +1226,16 @@ fn on_get_condition(comptime port: u8) fn (*Self, *DreamcastModule.Maple.Periphe
                     .emulated => |*e| {
                         switch (e.main) {
                             .Controller => |*c| {
-                                if (self.input_recording.cursor < self.input_recording.record.inputs.items.len) {
-                                    const input = self.input_recording.record.inputs.items[self.input_recording.cursor].input;
-                                    self.input_recording.cursor += 1;
-                                    c.axis = input.axis;
-                                    c.buttons = input.buttons;
+                                switch (self.input_recording.record.ports[port]) {
+                                    .controller => |rc| {
+                                        if (self.input_recording.cursors[port] < rc.inputs.items.len) {
+                                            const input = rc.inputs.items[self.input_recording.cursors[port]].input;
+                                            self.input_recording.cursors[port] += 1;
+                                            c.axis = input.axis;
+                                            c.buttons = input.buttons;
+                                        }
+                                    },
+                                    else => {},
                                 }
                             },
                             else => {},
@@ -2559,21 +2564,35 @@ fn rewind_confirm_impl(self: *@This()) !void {
                 .Recording => {
                     self.input_recording.mutex.lock(self.io) catch break :sw;
                     defer self.input_recording.mutex.unlock(self.io);
-                    if (self.input_recording.record.inputs.items.len > 0) {
-                        var idx = self.input_recording.record.inputs.items.len - 1;
-                        while (idx > 0 and self.input_recording.record.inputs.items[idx].cycle > self.dc._global_cycles)
-                            idx -= 1;
-                        self.input_recording.record.inputs.shrinkRetainingCapacity(idx + 1);
+                    for (&self.input_recording.record.ports) |*port| {
+                        switch (port.*) {
+                            .none => {},
+                            inline .controller => |*c| {
+                                if (c.inputs.items.len > 0) {
+                                    var idx = c.inputs.items.len - 1;
+                                    while (idx > 0 and c.inputs.items[idx].cycle > self.dc._global_cycles)
+                                        idx -= 1;
+                                    c.inputs.shrinkRetainingCapacity(idx + 1);
+                                }
+                            },
+                        }
                     }
                 },
                 .Playing => {
                     self.input_recording.mutex.lock(self.io) catch break :sw;
                     defer self.input_recording.mutex.unlock(self.io);
-                    if (self.input_recording.record.inputs.items.len > 0) {
-                        self.input_recording.cursor = @min(self.input_recording.cursor, self.input_recording.record.inputs.items.len - 1);
-                        while (self.input_recording.cursor > 0 and self.input_recording.record.inputs.items[self.input_recording.cursor].cycle > self.dc._global_cycles)
-                            self.input_recording.cursor -= 1;
-                        self.input_recording.cursor += 1;
+                    for (self.input_recording.record.ports, 0..) |port, idx| {
+                        switch (port) {
+                            .none => {},
+                            inline .controller => |c| {
+                                if (c.inputs.items.len > 0) {
+                                    var cursor = @min(self.input_recording.cursors[idx], c.inputs.items.len - 1);
+                                    while (cursor > 0 and c.inputs.items[cursor].cycle > self.dc._global_cycles)
+                                        cursor -= 1;
+                                    self.input_recording.cursors[idx] = cursor + 1;
+                                } else self.input_recording.cursors[idx] = 0;
+                            },
+                        }
                     }
                 },
                 .Idle => {},
