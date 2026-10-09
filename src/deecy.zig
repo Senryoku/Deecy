@@ -1643,14 +1643,7 @@ pub fn next_vblankin(self: *@This()) void {
     if (self.running) {
         self.pause();
     } else {
-        for (self.dc.scheduled_events.items) |event| {
-            if (event.event == .VBlankIn) {
-                const cycles = 1024 + (event.trigger_cycle -| self.dc._global_cycles);
-                self.run_for(cycles);
-                self.rewind_tick() catch |err| deecy_log.err("Error serializing state: {}", .{err});
-                return;
-            }
-        }
+        _ = self.run_until_vblankin();
     }
 }
 pub fn save_state_idx(comptime idx: u8) fn (*Self) void {
@@ -2108,10 +2101,7 @@ pub fn run_for(self: *@This(), sh4_cycles: u64) void {
 // Used for uncapped framerate (no audio output)
 fn dc_thread_loop(self: *@This()) void {
     while (self.running) {
-        const refresh_rate = self.dc.target_refresh_rate();
-        self.run_for(refresh_rate.cycles_per_frame());
-        if (self._stop_request) return;
-        self.rewind_tick() catch |err| deecy_log.err("Error serializing state: {}", .{err});
+        _ = self.run_until_vblankin();
     }
 }
 
@@ -2119,12 +2109,23 @@ fn dc_thread_loop_realtime(self: *@This()) void {
     var precise_sleep: PreciseSleep = .init(self.io);
     defer precise_sleep.deinit();
     while (self.running) {
-        const refresh_rate = self.dc.target_refresh_rate();
-        self.run_for(refresh_rate.cycles_per_frame());
-        if (self._stop_request) return;
-        self.rewind_tick() catch |err| deecy_log.err("Error serializing state: {}", .{err});
-        precise_sleep.wait_for_interval(self.io, refresh_rate.ns_per_frame());
+        const cycles = self.run_until_vblankin();
+        const ns = (cycles * std.time.ns_per_s) / Dreamcast.SH4Clock;
+        precise_sleep.wait_for_interval(self.io, ns);
     }
+}
+
+fn run_until_vblankin(self: *@This()) u64 {
+    const vblankin_cycles = c: {
+        for (self.dc.scheduled_events.items) |event|
+            if (event.event == .VBlankIn)
+                break :c (event.trigger_cycle -| self.dc._global_cycles);
+        break :c 0;
+    };
+    const cycles = @max(1_000_000, vblankin_cycles);
+    self.run_for(cycles);
+    self.rewind_tick() catch |err| deecy_log.err("Error serializing state: {}", .{err});
+    return cycles;
 }
 
 pub fn save_screenshot(self: *const @This()) void {
