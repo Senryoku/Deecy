@@ -3263,19 +3263,14 @@ pub const Renderer = struct {
                                     pass.setPipeline(translucent_modvol_pipeline);
                                     pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
                                     pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_mv_uniform_mem.offset});
+                                    pass.setBindGroup(1, translucent_modvol_bind_group, &.{oit_mv_uniform_mem.offset});
                                     pass.setScissorRect(0, start_y, render_area.width, slice_size);
 
                                     // Close volume pass.
-                                    var volume_index: u32 = 0;
-                                    for (ta_lists.translucent_modifier_volumes.items) |volume| {
+                                    for (ta_lists.translucent_modifier_volumes.items, 0..) |volume, volume_index| {
                                         if (volume.instructions.volume_instruction == .OutsideLastPolygon) if (Once(@src())) log.warn("TODO: Unimplemented Exclusion Translucent Modifier Volume.", .{});
                                         if (volume.closed) {
-                                            const oit_fs_uniform_mem = gctx.uniformsAllocate(struct { volume_index: u32 }, 1);
-                                            oit_fs_uniform_mem.slice[0] = .{ .volume_index = volume_index };
-                                            pass.setBindGroup(1, translucent_modvol_bind_group, &.{ oit_mv_uniform_mem.offset, oit_fs_uniform_mem.offset });
-                                            volume_index += 1;
-
-                                            pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
+                                            pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, @intCast(volume_index));
                                         } else {
                                             if (Once(@src())) log.warn("TODO: Unhandled Open Translucent Modifier Volume! (This will only be reported once)", .{});
                                             // TODO: Almost the same thing, but the compute shader is really simple: Take the smallest
@@ -4291,8 +4286,7 @@ pub const Renderer = struct {
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(OITTMVUniforms) },
             .{ .binding = 1, .buffer_handle = self.translucent_modvol_fragment_counts_buffer, .offset = 0, .size = self.translucent_modvol_dimensions().fragment_counts_buffer_size },
             .{ .binding = 2, .buffer_handle = self.translucent_modvol_fragment_list_buffer, .offset = 0, .size = self.translucent_modvol_dimensions().fragment_list_buffer_size },
-            .{ .binding = 3, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 1 * @sizeOf(u32) },
-            .{ .binding = 4, .texture_view_handle = self.depth.depth_only_view },
+            .{ .binding = 3, .texture_view_handle = self.depth.depth_only_view },
         });
     }
     fn create_translucent_modvol_merge_bind_group(self: *@This()) void {
@@ -4610,8 +4604,7 @@ pub const Renderer = struct {
             zgpu.bufferEntry(0, .{ .fragment = true }, .uniform, true, 0),
             zgpu.bufferEntry(1, .{ .fragment = true }, .storage, false, 0),
             zgpu.bufferEntry(2, .{ .fragment = true }, .storage, false, 0),
-            zgpu.bufferEntry(3, .{ .fragment = true }, .uniform, true, 0),
-            zgpu.textureEntry(4, .{ .fragment = true }, .depth, .tvdim_2d, false),
+            zgpu.textureEntry(3, .{ .fragment = true }, .depth, .tvdim_2d, false),
         }, .{ .label = "Translucent Modifier Volume Bind Group Layout" });
 
         const translucent_modvol_pipeline_layout = self._gctx.createPipelineLayout(&.{
