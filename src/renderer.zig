@@ -3226,13 +3226,14 @@ pub const Renderer = struct {
                         };
 
                         const slice_size = render_area.height / self.oit_horizontal_slices;
-                        for (0..self.oit_horizontal_slices) |i| {
-                            const start_y: u32 = @as(u32, @intCast(i)) * slice_size;
+                        for (0..self.oit_horizontal_slices) |slice| {
+                            const start_y: u32 = @as(u32, @intCast(slice)) * slice_size;
 
-                            const timestamps = Stats.RenderPassTimestamp.per_slice(@intCast(i));
+                            const timestamps = Stats.RenderPassTimestamp.per_slice(@intCast(slice));
 
                             // Render Translucent Modifier Volumes
-                            if (ta_lists.translucent_modifier_volumes.items.len > 0) {
+                            // NOTE: Always ran on the first pass to ensure the output buffer is when TMV aren't used.
+                            if (ta_lists.translucent_modifier_volumes.items.len > 0 or slice == 0) {
                                 const oit_mv_uniform_mem = gctx.uniformsAllocate(OITTMVUniforms, 1);
                                 oit_mv_uniform_mem.slice[0] = .{
                                     .square_size = @intCast(self.translucent_modvol_dimensions().square_size),
@@ -3267,7 +3268,7 @@ pub const Renderer = struct {
                                     // Close volume pass.
                                     var volume_index: u32 = 0;
                                     for (ta_lists.translucent_modifier_volumes.items) |volume| {
-                                        if (volume.instructions.volume_instruction == .OutsideLastPolygon) if (Once(@src())) log.warn(termcolor.yellow("TODO: Unimplemented Exclusion Translucent Modifier Volume."), .{});
+                                        if (volume.instructions.volume_instruction == .OutsideLastPolygon) if (Once(@src())) log.warn("TODO: Unimplemented Exclusion Translucent Modifier Volume.", .{});
                                         if (volume.closed) {
                                             const oit_fs_uniform_mem = gctx.uniformsAllocate(struct { volume_index: u32 }, 1);
                                             oit_fs_uniform_mem.slice[0] = .{ .volume_index = volume_index };
@@ -3276,7 +3277,7 @@ pub const Renderer = struct {
 
                                             pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
                                         } else {
-                                            if (Once(@src())) log.warn(termcolor.yellow("TODO: Unhandled Open Translucent Modifier Volume! (This will only be reported once)"), .{});
+                                            if (Once(@src())) log.warn("TODO: Unhandled Open Translucent Modifier Volume! (This will only be reported once)", .{});
                                             // TODO: Almost the same thing, but the compute shader is really simple: Take the smallest
                                             //       depth value and add a volume from it to "infinity" (1.0+ depth). Or find a more efficient way :)
                                         }
@@ -4156,8 +4157,8 @@ pub const Renderer = struct {
             self.linked_list_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .copy_dst = true, .storage = true },
                 .size = self.get_fragments_list_size(),
+                .label = .init("OIT Linked List Buffer"),
             });
-            self._gctx.lookupResource(self.linked_list_buffer).?.setLabel("OIT Linked List Buffer");
         }
 
         // Mod Vol
