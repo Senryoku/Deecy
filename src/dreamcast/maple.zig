@@ -133,7 +133,7 @@ pub const VMU = @import("maple/vmu.zig");
 pub const VibrationPack = @import("maple/vibration_pack.zig");
 pub const Microphone = @import("maple/microphone.zig");
 
-const Peripheral = union(enum) {
+pub const Peripheral = union(enum) {
     Controller: Controller,
     Keyboard: Keyboard,
     Mouse: Mouse,
@@ -196,6 +196,11 @@ const Peripheral = union(enum) {
 const EmulatedPort = struct {
     main: Peripheral,
     subperipherals: [5]?Peripheral = @splat(null),
+
+    on_get_condition: ?struct {
+        context: *anyopaque,
+        callback: *const fn (context: *anyopaque, peripheral: *Peripheral) void,
+    },
 
     pub fn deinit(self: *@This(), io: std.Io, allocator: std.mem.Allocator) void {
         self.main.deinit(io, allocator);
@@ -264,6 +269,8 @@ const EmulatedPort = struct {
                 switch (target.*) {
                     inline .Controller, .Keyboard, .Mouse, .VibrationPack => |*c| {
                         std.debug.assert(command.payload_length == 1);
+                        if (self.on_get_condition) |cb|
+                            cb.callback(cb.context, target);
                         const condition = c.get_condition(function_type);
                         response_header.command = .DataTransfer;
                         response_header.payload_length = @intCast(condition.len);

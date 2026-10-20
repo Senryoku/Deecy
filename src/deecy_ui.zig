@@ -1,34 +1,3 @@
-const std = @import("std");
-const builtin = @import("builtin");
-const comptime_config = @import("config");
-const custom_log = @import("custom_log.zig");
-const helpers = @import("helpers");
-const Once = helpers.Once;
-const MemSize = @import("MemSize.zig");
-
-const zglfw = @import("zglfw");
-const zgui = @import("zgui");
-const zgpu = @import("zgpu");
-
-const ui_log = std.log.scoped(.ui);
-
-const nfd = @import("nfd");
-
-const Deecy = @import("deecy.zig");
-const host_paths = Deecy.host_paths;
-const DreamcastModule = @import("dreamcast");
-const MapleModule = DreamcastModule.Maple;
-const Disc = DreamcastModule.GDROM.Disc;
-const PVRFile = @import("pvr_file.zig");
-
-const Notifications = @import("./ui/notifications.zig");
-pub const common = @import("./ui/common.zig");
-pub const Icons = common.Icons;
-const wait_for = @import("./ui/wait_for_input.zig");
-const GameInfoCache = @import("ui/GameInfoCache.zig");
-
-const Self = @This();
-
 pub const GameFile = struct {
     path: [:0]const u8,
     name: [:0]const u8,
@@ -500,6 +469,9 @@ pub fn draw(self: *@This()) !void {
             if (zgui.menuItem(Icons.Gear ++ " Settings", .{ .selected = d.config.display_settings })) {
                 d.config.display_settings = !d.config.display_settings;
             }
+            if (zgui.menuItem(Icons.Circle ++ " Input Recorder", .{ .selected = d.config.display_input_recorder })) {
+                d.config.display_input_recorder = !d.config.display_input_recorder;
+            }
             zgui.separator();
             if (zgui.menuItem(Icons.Bug ++ " Debug Menu", .{ .selected = d.config.display_debug_ui, .shortcut = "D" })) {
                 d.config.display_debug_ui = !d.config.display_debug_ui;
@@ -765,7 +737,15 @@ pub fn draw(self: *@This()) !void {
                     zgui.endTabItem();
                 }
 
-                if (zgui.beginTabItem("Controls", .{})) {
+                if (zgui.beginTabItem("Controls", .{})) skip: {
+                    defer zgui.endTabItem();
+                    if (d.input_recorder.record != null) {
+                        // NOTE: This is here to prevent modification to the Maple state, but ideally host controller settings should still be accessible.
+                        zgui.textUnformatted("Disabled.");
+                        zgui.textUnformatted("Controlled by an input record.");
+                        break :skip;
+                    }
+
                     var per_game_vmu = d.config.per_game_vmu;
                     if (common.toggle("Per-Game VMU", .{ .v = &per_game_vmu })) {
                         try d.set_per_game_vmu(per_game_vmu);
@@ -923,7 +903,7 @@ pub fn draw(self: *@This()) !void {
                                                     switch (s.*) {
                                                         .VMU => |vmu| {
                                                             zgui.pushStyleColor1u(.{ .idx = .text, .c = 0xFF808080 });
-                                                            zgui.textWrapped("Loaded: '{s}'", .{vmu.backing_file_path});
+                                                            zgui.textWrapped("Loaded: '{s}'", .{vmu.backing_file_path orelse "None"});
                                                             zgui.popStyleColor(.{});
                                                             if (d.config.controllers[port].subperipherals[slot] == .VMU) {
                                                                 const vmu_config = &d.config.controllers[port].subperipherals[slot].VMU;
@@ -957,8 +937,6 @@ pub fn draw(self: *@This()) !void {
                                 zgui.endTabItem();
                             }
                         }
-
-                        zgui.endTabItem();
                     }
                     zgui.endTabBar();
                 }
@@ -1133,6 +1111,69 @@ pub fn draw(self: *@This()) !void {
         zgui.end();
     }
 
+    if (self.deecy.config.display_input_recorder) {
+        if (try InputRecorder.draw(d)) |a| sw: switch (a) {
+            .New => try d.input_recorder.new(),
+            .NewFromState => {
+                self.notifications.push("Unimplemented", .{}, "", .{});
+            },
+            .Save => {
+                if (d.input_recorder.path) |path| {
+                    try self.save_dcm(d, path);
+                } else continue :sw .SaveAs;
+            },
+            .SaveAs => {
+                const open_path = try nfd.saveFileDialog("dcm", null);
+                if (open_path) |path| {
+                    defer nfd.freePath(path);
+                    try self.save_dcm(d, path);
+                }
+            },
+            .Load => {
+                const open_path = try nfd.openFileDialog("dcm", null);
+                if (open_path) |path| {
+                    defer nfd.freePath(path);
+                    d.input_recorder.load(path) catch |err| {
+                        self.notifications.push("Error loading DCM", .{}, "DCM file '{s}' could not be loaded: {t}", .{ path, err });
+                        break :sw;
+                    };
+                    self.notifications.push("DCM Loaded", .{}, "From file '{s}'", .{path});
+                }
+            },
+            .Close => {
+                d.pause();
+                if (d.input_recorder.record) |*r| r.deinit(d._allocator);
+                d.input_recorder.record = null;
+                d.input_recorder.state = .Idle;
+            },
+            .Stop => {
+                d.pause();
+                d.input_recorder.state = .Idle;
+            },
+            .Record => {
+                if (d.input_recorder.state != .Recording) {
+                    d.pause();
+                    {
+                        d.input_recorder.mutex.lock(d.io) catch break :sw;
+                        defer d.input_recorder.mutex.unlock(d.io);
+                        if (d.input_recorder.record) |*r| r.trim(d.dc._global_cycles);
+                    }
+                    d.input_recorder.state = .Recording;
+                    d.start();
+                }
+            },
+            .Play => {
+                d.pause();
+                if (d.input_recorder.state != .Playing) {
+                    d.input_recorder.state = .Playing;
+                    d.input_recorder.cursors = @splat(0);
+                    try d.reset();
+                }
+                d.start();
+            },
+        };
+    }
+
     // NOTE: Modals have to be in the same ID stack as the openPopup call :(
     //       Hence the weird workaround.
     if (error_popup_to_open.len > 0) {
@@ -1151,6 +1192,15 @@ pub fn draw(self: *@This()) !void {
             zgui.closeCurrentPopup();
         zgui.endPopup();
     }
+}
+
+fn save_dcm(self: *@This(), d: *Deecy, path: []const u8) !void {
+    d.pause();
+    d.input_recorder.save(path) catch |err| {
+        self.notifications.push("Error saving DCM", .{}, "DCM file '{s}' could not be saved: {t}", .{ path, err });
+        return;
+    };
+    self.notifications.push("DCM Saved", .{}, "To file '{s}'", .{path});
 }
 
 /// A few random colors to help differentiate games without images.
@@ -1458,3 +1508,35 @@ fn select_game_directory(self: *@This()) !void {
         try self.deecy.launch_async(refresh_games, .{self});
     }
 }
+
+const std = @import("std");
+const builtin = @import("builtin");
+const comptime_config = @import("config");
+const custom_log = @import("custom_log.zig");
+const helpers = @import("helpers");
+const Once = helpers.Once;
+const MemSize = @import("MemSize.zig");
+
+const zglfw = @import("zglfw");
+const zgui = @import("zgui");
+const zgpu = @import("zgpu");
+
+const ui_log = std.log.scoped(.ui);
+
+const nfd = @import("nfd");
+
+const Deecy = @import("deecy.zig");
+const host_paths = Deecy.host_paths;
+const DreamcastModule = @import("dreamcast");
+const MapleModule = DreamcastModule.Maple;
+const Disc = DreamcastModule.GDROM.Disc;
+const PVRFile = @import("pvr_file.zig");
+
+const Notifications = @import("./ui/notifications.zig");
+pub const common = @import("./ui/common.zig");
+pub const Icons = common.Icons;
+const wait_for = @import("./ui/wait_for_input.zig");
+const GameInfoCache = @import("ui/GameInfoCache.zig");
+const InputRecorder = @import("ui/input_recorder.zig");
+
+const Self = @This();

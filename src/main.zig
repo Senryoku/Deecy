@@ -90,6 +90,7 @@ pub fn main(init: std.process.Init) !void {
     var ip_bin_path: ?[]const u8 = null;
 
     var disc_path: ?[]const u8 = null;
+    var dcm: ?[]const u8 = null;
 
     var start_immediately = false;
     var force_stop = false;
@@ -152,6 +153,11 @@ pub fn main(init: std.process.Init) !void {
                 }
             } else if (std.mem.eql(u8, arg, "--scif")) {
                 try DreamcastModule.SH4Module.SCIF.init(io);
+            } else if (std.mem.eql(u8, arg, "--dcm")) {
+                dcm = args_iterator.next() orelse {
+                    std.log.err(termcolor.red("Expected path to a DCM file after --dcm."), .{});
+                    return error.InvalidArguments;
+                };
             } else if (std.mem.eql(u8, arg, "--attach-console")) {
                 // Argument used to attach the console on Windows in GUI subsystem, see above.
             } else {
@@ -182,6 +188,11 @@ pub fn main(init: std.process.Init) !void {
         start_immediately = true;
     } else {
         try d.launch_async(Deecy.UI.refresh_games, .{d.ui});
+    }
+
+    if (dcm) |path| {
+        try d.input_recorder.load(path);
+        d.input_recorder.state = .Playing;
     }
 
     dc.cpu.set_trapa_callback(trapa_handler, d);
