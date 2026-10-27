@@ -732,7 +732,6 @@ pub fn destroy(self: *@This()) void {
     self.deinit_enabled_cheats();
 
     self.save_config() catch |err| deecy_log.err("Error writing config: {t}", .{err});
-    self.config.deinit(self._allocator);
 
     self.shortcuts.deinit(self._allocator, self.io);
 
@@ -751,6 +750,8 @@ pub fn destroy(self: *@This()) void {
     self.debug_ui.deinit();
     self.ui_deinit();
     self.ui.destroy();
+
+    self.config.deinit(self._allocator);
 
     zaudio.deinit();
 
@@ -1750,7 +1751,7 @@ pub fn on_resize(self: *@This()) void {
     }
 }
 
-/// Locks gctx_queue_mutex.
+/// Locks `gctx_queue_mutex`.
 pub fn draw_ui(self: *@This()) !void {
     {
         // FIXME: Not sure if this is needed, but omitting it can cause a crash on the first frame when submitting the UI commands.
@@ -1882,7 +1883,7 @@ pub fn draw_ui(self: *@This()) !void {
     self.ui.notifications.draw();
 }
 
-/// Locks gctx_queue_mutex.
+/// Locks `gctx_queue_mutex`.
 pub fn submit_ui(self: *@This()) void {
     self.gctx_queue_mutex.lockUncancelable(self.io);
     defer self.gctx_queue_mutex.unlock(self.io);

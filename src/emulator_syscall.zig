@@ -69,7 +69,7 @@ fn launch_game(d: *Deecy, cpu: *Dreamcast.SH4) !void {
 
 fn refresh_game_list(d: *Deecy, cpu: *Dreamcast.SH4) !void {
     log.info("RefreshGameList()", .{});
-    try d.launch_async(Deecy.UI.refresh_games, .{d.ui});
+    try d.ui.scan_library();
     cpu.R(0).* = 0;
 }
 

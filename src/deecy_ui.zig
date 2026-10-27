@@ -70,6 +70,8 @@ notifications: Notifications,
 deecy: *Deecy,
 allocator: std.mem.Allocator,
 
+library_scan_future: ?std.Io.Future(@typeInfo(@TypeOf(scan_library_impl)).@"fn".return_type.?) = null,
+
 pub fn create(allocator: std.mem.Allocator, d: *Deecy) !*@This() {
     var r = try allocator.create(@This());
     r.* = .{
@@ -83,6 +85,8 @@ pub fn create(allocator: std.mem.Allocator, d: *Deecy) !*@This() {
 }
 
 pub fn destroy(self: *@This()) void {
+    self.cancel_library_scan();
+
     for (self.disc_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
     self.disc_files.deinit(self.allocator);
 
@@ -173,9 +177,9 @@ fn update_game_info(self: *@This(), path: []const u8, product_name: []const u8, 
     }
 }
 
-// Locks gctx_queue_mutex.
-fn update_game_texture(self: *@This(), path: []const u8, image_width: u32, image_height: u32, image: []const u8) void {
-    self.deecy.gctx_queue_mutex.lock(self.deecy.io) catch return;
+// Locks `gctx_queue_mutex` and `disc_files_mutex`.
+fn update_game_texture(self: *@This(), path: []const u8, image_width: u32, image_height: u32, image: []const u8) std.Io.Cancelable!void {
+    try self.deecy.gctx_queue_mutex.lock(self.deecy.io);
     const texture = self.deecy.gctx.createTexture(.{
         .usage = .{ .texture_binding = true, .copy_dst = true },
         .size = .{
@@ -215,14 +219,19 @@ fn update_game_texture(self: *@This(), path: []const u8, image_width: u32, image
     self.deecy.gctx.releaseResource(texture);
 }
 
-fn get_game_image(self: *@This(), path: []const u8, cache: ?*GameInfoCache) void {
+fn get_game_image(self: *@This(), path: []const u8, cache: ?*GameInfoCache) std.Io.Cancelable!void {
     var arena = std.heap.ArenaAllocator.init(self.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
     var disc = Disc.init(allocator, self.deecy.io, path) catch |err| {
-        ui_log.err("Failed to load disc '{s}': {t}", .{ path, err });
-        if (cache) |c| c.add(self.deecy.io, path, "NoName", "NoID", .{ .width = 0, .height = 0 }, null) catch {};
+        switch (err) {
+            error.Canceled => return error.Canceled,
+            else => {
+                ui_log.err("Failed to load disc '{s}': {t}", .{ path, err });
+                if (cache) |c| c.add(self.deecy.io, path, "NoName", "NoID", .{ .width = 0, .height = 0 }, null) catch {};
+            },
+        }
         return;
     };
     defer disc.deinit(allocator, self.deecy.io);
@@ -231,16 +240,13 @@ fn get_game_image(self: *@This(), path: []const u8, cache: ?*GameInfoCache) void
     const product_id = disc.get_product_id() orelse "NoID";
     self.update_game_info(path, product_name, product_id);
 
-    const tex_buffer: []u8 = allocator.alloc(u8, 1024 * 1024) catch |err| {
-        ui_log.err("Failed to allocate texture buffer: {t}", .{err});
-        return;
-    };
+    const tex_buffer: []u8 = allocator.alloc(u8, 1024 * 1024) catch return;
     defer allocator.free(tex_buffer);
 
     if (disc.load_file("0GDTEX.PVR;1", tex_buffer)) |len| {
         if (PVRFile.decode(allocator, tex_buffer[0..len])) |result| {
             defer result.deinit(allocator);
-            self.update_game_texture(path, result.width, result.height, result.bgra);
+            try self.update_game_texture(path, result.width, result.height, result.bgra);
             if (cache) |c| c.add(self.deecy.io, path, product_name, product_id, .{ .width = result.width, .height = result.height }, result.bgra) catch {};
         } else |err| {
             ui_log.err("Failed to decode 0GDTEX.PVR for '{s}': {t}", .{ path, err });
@@ -252,11 +258,25 @@ fn get_game_image(self: *@This(), path: []const u8, cache: ?*GameInfoCache) void
     }
 }
 
+pub fn scan_library(self: *@This()) !void {
+    self.cancel_library_scan();
+    self.library_scan_future = try self.deecy.io.concurrent(scan_library_impl, .{self});
+}
+
+pub fn cancel_library_scan(self: *@This()) void {
+    if (self.library_scan_future) |*f| {
+        _ = f.cancel(self.deecy.io) catch |err| ui_log.err("Library scan error: {t}", .{err});
+        self.library_scan_future = null;
+    }
+}
+
 /// Locks gctx_queue_mutex.
-pub fn refresh_games(self: *@This()) !void {
+pub fn scan_library_impl(self: *@This()) !void {
     if (self.deecy.config.game_directory) |dir_path| {
         const start_time = std.Io.Clock.awake.now(self.deecy.io);
-        defer ui_log.info("Checked {d} disc files in {f}", .{ self.disc_files.items.len, start_time.durationTo(std.Io.Clock.awake.now(self.deecy.io)) });
+        var cache_hits: u64 = 0;
+        var cache_misses: u64 = 0;
+        defer ui_log.info("Checked {d} disc files ({d} cache hits, {d} misses) in {f}", .{ cache_hits + cache_misses, cache_hits, cache_misses, start_time.untilNow(self.deecy.io, .awake) });
 
         var cache = try GameInfoCache.create(self.allocator);
         defer cache.destroy(self.allocator);
@@ -266,8 +286,10 @@ pub fn refresh_games(self: *@This()) !void {
             var tmp_disc_files: std.ArrayList(GameFile) = .empty;
             errdefer tmp_disc_files.deinit(self.allocator);
 
-            var dir = host_paths.root().openDir(self.deecy.io, dir_path, .{ .iterate = true }) catch |err|
-                return ui_log.err("Failed to open game directory: {t}", .{err});
+            var dir = host_paths.root().openDir(self.deecy.io, dir_path, .{ .iterate = true }) catch |err| switch (err) {
+                error.Canceled => return,
+                else => return ui_log.err("Failed to open game directory: {t}", .{err}),
+            };
 
             defer dir.close(self.deecy.io);
             var walker = try dir.walk(self.allocator);
@@ -292,29 +314,42 @@ pub fn refresh_games(self: *@This()) !void {
 
             std.mem.sort(GameFile, tmp_disc_files.items, {}, GameFile.sort);
 
-            self.deecy.gctx_queue_mutex.lockUncancelable(self.deecy.io);
-            defer self.deecy.gctx_queue_mutex.unlock(self.deecy.io);
-            self.disc_files_mutex.lockUncancelable(self.deecy.io);
-            defer self.disc_files_mutex.unlock(self.deecy.io);
-            for (self.disc_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
-            self.disc_files.deinit(self.allocator);
-            self.disc_files = tmp_disc_files;
+            {
+                self.disc_files_mutex.lockUncancelable(self.deecy.io);
+                defer self.disc_files_mutex.unlock(self.deecy.io);
+                std.mem.swap(std.ArrayList(GameFile), &tmp_disc_files, &self.disc_files);
+            }
+            {
+                self.deecy.gctx_queue_mutex.lockUncancelable(self.deecy.io);
+                defer self.deecy.gctx_queue_mutex.unlock(self.deecy.io);
+                for (tmp_disc_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
+                tmp_disc_files.deinit(self.allocator);
+            }
         }
 
         var group: std.Io.Group = .init;
         defer group.cancel(self.deecy.io);
 
         for (0..self.disc_files.items.len) |file_idx| {
+            // NOTE: Because we're using `async` and not `concurrent` (as it would spawn an unnecessarily large number of threads),
+            // group tasks can be blocking and this manual cancelation point is required, or we might only reach `await` after
+            // most of the work is already completed.
+            std.Io.checkCancel(self.deecy.io) catch break;
+
             if (cache.get(self.deecy.io, self.disc_files.items[file_idx].path)) |entry| {
                 self.update_game_info(entry.path, entry.product_name, entry.product_id);
                 if (entry.image) |image|
-                    self.update_game_texture(entry.path, entry.image_size.width, entry.image_size.height, image);
+                    self.update_game_texture(entry.path, entry.image_size.width, entry.image_size.height, image) catch break;
+                cache_hits += 1;
             } else {
                 group.async(self.deecy.io, get_game_image, .{ self, self.disc_files.items[file_idx].path, cache });
+                cache_misses += 1;
             }
         }
 
-        try group.await(self.deecy.io);
+        group.await(self.deecy.io) catch |err| switch (err) {
+            error.Canceled => {},
+        };
 
         try cache.save_to_disk(self.deecy.io);
     }
@@ -1240,7 +1275,7 @@ pub fn draw_game_library(self: *@This()) !void {
             if (zgui.isItemHovered(.{})) zgui.setMouseCursor(.hand);
             zgui.sameLine(.{ .spacing = 24.0 });
             if (zgui.button(Icons.ArrowRotateLeft, .{}))
-                try self.deecy.launch_async(refresh_games, .{self});
+                try self.deecy.ui.scan_library();
             if (zgui.isItemHovered(.{})) zgui.setMouseCursor(.hand);
             zgui.setItemTooltip("Refresh the library", .{});
             zgui.sameLine(.{});
@@ -1455,6 +1490,6 @@ fn select_game_directory(self: *@This()) !void {
         defer nfd.freePath(path);
         if (self.deecy.config.game_directory) |old_dir| self.allocator.free(old_dir);
         self.deecy.config.game_directory = try self.allocator.dupe(u8, path);
-        try self.deecy.launch_async(refresh_games, .{self});
+        try self.deecy.ui.scan_library();
     }
 }
