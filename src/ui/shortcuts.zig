@@ -250,7 +250,8 @@ fn deserialize(self: *@This(), allocator: std.mem.Allocator, io: std.Io) !void {
     const zon = std.zon.parse.fromSlice([]const SerializedShortcut, .{ .gpa = arena_allocator, .arena = arena_allocator, .source = data, .diagnostics = &diagnostics, .ignore_unknown_fields = true }) catch |err| {
         log.err("Failed to parse shortcuts file: {t}.", .{err});
         diagnostics.log(config_path);
-        return err;
+        try self.load_default_shortcuts();
+        return;
     };
 
     self.shortcuts.clearRetainingCapacity();
