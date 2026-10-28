@@ -41,7 +41,7 @@ fn get_game_list(d: *Deecy, cpu: *Dreamcast.SH4) !void {
     const offset = cpu.R(7).*;
     log.info("GetGameList(dest={X:0>8}, max={d}, offset={d})", .{ dest, max, offset });
 
-    d.wait_async_jobs();
+    d.ui.await_library_scan();
 
     try d.ui.disc_files_mutex.lock(d.io);
     defer d.ui.disc_files_mutex.unlock(d.io);
@@ -69,7 +69,7 @@ fn launch_game(d: *Deecy, cpu: *Dreamcast.SH4) !void {
 
 fn refresh_game_list(d: *Deecy, cpu: *Dreamcast.SH4) !void {
     log.info("RefreshGameList()", .{});
-    try d.launch_async(Deecy.UI.refresh_games, .{d.ui});
+    try d.ui.scan_library();
     cpu.R(0).* = 0;
 }
 

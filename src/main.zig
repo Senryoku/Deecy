@@ -181,7 +181,7 @@ pub fn main(init: std.process.Init) !void {
         try d.load_launcher();
         start_immediately = true;
     } else {
-        try d.launch_async(Deecy.UI.refresh_games, .{d.ui});
+        try d.ui.scan_library();
     }
 
     dc.cpu.set_trapa_callback(trapa_handler, d);
