@@ -61,7 +61,7 @@ vmu_displays: [4]@import("./ui/vmu.zig") = @splat(.{}),
 
 binary_loaded: bool = false, // Indicates if we're running a raw binary loaded directly in RAM (not from a disc) (FIXME: Used to avoid drawing the game library when pausing without a disc. Clunky.)
 disc_files: std.ArrayList(GameFile) = .empty,
-disc_files_mutex: std.Io.Mutex = .init, // Used during disc_files population (then assumed to be constant outside of refresh_games)
+disc_files_mutex: std.Io.Mutex = .init, // Used during disc_files population (then assumed to be constant outside of `scan_library_impl`)
 
 game_settings: @import("./ui/game_settings.zig") = .{},
 
@@ -165,6 +165,7 @@ pub fn draw_vmu_screens(self: *@This(), editable: bool) void {
     zgui.popStyleVar(.{});
 }
 
+/// Locks `disc_files_mutex`.
 fn update_game_info(self: *@This(), path: []const u8, product_name: []const u8, product_id: []const u8) void {
     self.disc_files_mutex.lock(self.deecy.io) catch return;
     defer self.disc_files_mutex.unlock(self.deecy.io);
@@ -177,7 +178,7 @@ fn update_game_info(self: *@This(), path: []const u8, product_name: []const u8, 
     }
 }
 
-// Locks `gctx_queue_mutex` and `disc_files_mutex`.
+/// Locks `gctx_queue_mutex` and `disc_files_mutex`.
 fn update_game_texture(self: *@This(), path: []const u8, image_width: u32, image_height: u32, image: []const u8) void {
     self.deecy.gctx_queue_mutex.lockUncancelable(self.deecy.io);
     const texture = self.deecy.gctx.createTexture(.{
@@ -258,8 +259,22 @@ fn get_game_image(self: *@This(), path: []const u8, cache: ?*GameInfoCache) std.
     }
 }
 
+/// Locks `gctx_queue_mutex` and `disc_files_mutex`.
 pub fn scan_library(self: *@This()) !void {
     self.cancel_library_scan();
+
+    {
+        self.disc_files_mutex.lockUncancelable(self.deecy.io);
+        defer self.disc_files_mutex.unlock(self.deecy.io);
+        {
+            self.deecy.gctx_queue_mutex.lockUncancelable(self.deecy.io);
+            defer self.deecy.gctx_queue_mutex.unlock(self.deecy.io);
+            for (self.disc_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
+        }
+        self.disc_files.deinit(self.allocator);
+        self.disc_files = .empty;
+    }
+
     self.library_scan_future = try self.deecy.io.concurrent(scan_library_impl, .{self});
 }
 
@@ -279,6 +294,7 @@ pub fn await_library_scan(self: *@This()) void {
 
 /// Locks gctx_queue_mutex.
 pub fn scan_library_impl(self: *@This()) !void {
+    std.debug.assert(self.disc_files.capacity == 0); // Should be deinit before launching the library scan. This greatly simplifies synchronization.
     if (self.deecy.config.game_directory) |dir_path| {
         const start_time = std.Io.Clock.awake.now(self.deecy.io);
         var cache_hits: u64 = 0;
@@ -291,9 +307,7 @@ pub fn scan_library_impl(self: *@This()) !void {
 
         {
             var tmp_disc_files: std.ArrayList(GameFile) = .empty;
-            defer {
-                self.deecy.gctx_queue_mutex.lockUncancelable(self.deecy.io);
-                defer self.deecy.gctx_queue_mutex.unlock(self.deecy.io);
+            errdefer {
                 for (tmp_disc_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
                 tmp_disc_files.deinit(self.allocator);
             }
@@ -1496,6 +1510,7 @@ fn select_game_directory(self: *@This()) !void {
         defer nfd.freePath(path);
         if (self.deecy.config.game_directory) |old_dir| self.allocator.free(old_dir);
         self.deecy.config.game_directory = try self.allocator.dupe(u8, path);
-        try self.deecy.ui.scan_library();
+
+        try self.scan_library();
     }
 }
